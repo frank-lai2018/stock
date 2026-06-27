@@ -1,0 +1,12 @@
+FinMind>=1.7
+pandas>=2.0
+SQLAlchemy>=2.0
+psycopg2-binary>=2.9
+openai>=1.0
+python-dotenv>=1.0
+
+# 選用：technical_signals.py 的「K棒型態」用 TA-Lib。
+# 沒裝也沒關係——均線/量能/突破訊號照跑，只會略過 K棒那 5 種。
+# Windows 安裝較麻煩：先試 `pip install TA-Lib`（新版 PyPI 多半有預編譯 wheel），
+# 失敗再裝 C 函式庫或找對應 wheel。
+# TA-Lib>=0.4
