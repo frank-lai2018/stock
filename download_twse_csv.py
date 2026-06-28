@@ -22,7 +22,7 @@ from datetime import date
 
 BASE_URL = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-ROC_ROW = re.compile(r'^"?\d{2,3}/\d{2}/\d{2}')   # 民國日期資料列，用來判斷該月有無資料
+ROC_ROW = re.compile(r'^"?\s*\d{2,3}/\d{2}/\d{2}')   # 民國日期資料列；\s* 容忍2位數年份前的空白，如 " 99/01/04"（2010 以前）
 
 # TWSE 的 SSL 憑證有瑕疵（Missing Subject Key Identifier），新版 OpenSSL 會驗證失敗。
 # 這是公開政府資料，對它關掉憑證驗證（TWSE 爬蟲的通用做法）。
