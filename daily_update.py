@@ -1,12 +1,13 @@
-r"""daily_update.py — 每日一鍵：更新當日股價 → 重算還原價 → 增量入庫。
+r"""daily_update.py — 每日一鍵：更新當日股價 → 重算還原價 → 增量入庫 → 更新法人/融資/PER。
 
-把原本要手動跑的三步（見 README「步驟 5：每日一條龍」）串成一支，收盤後跑一次即可：
+把原本要手動跑的步驟串成一支，收盤後跑一次即可：
   1) update_prices.run       抓「指定交易日」全市場收盤，併入各股月檔 CSV，回傳當天有更新的股號
   2) build_adjusted_price    只對「當天有更新的個股」重算 <股號>_adj.csv（含最新日 + 還原價）
   3) load_to_db.py --since   只把當天的 price_daily upsert 進 PostgreSQL（增量，DB 寫入量最小）
+  4) update_chips.py --date  by-date 抓全市場法人/融資/PER 直接入庫 + 存原始快照（inst_trades/margin_trading/valuation_daily）
 
 為什麼要照這順序：跳過 (2)，load_to_db 讀不到當天的還原價 → price_daily 就缺這一天。
-非交易日 (1) 會回空 → 自動跳過 (2)(3)。三步都可重跑（月檔依日期去重、DB upsert）。
+非交易日 (1) 會回空 → 自動跳過後續。全部可重跑（月檔依日期去重、DB upsert）。
 
 連線（要入庫才需要）：設環境變數 DATABASE_URL，或帶 --dsn。
 用法：
@@ -30,6 +31,7 @@ import update_prices as up
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LOAD_SCRIPT = os.path.join(HERE, "load_to_db.py")
+CHIPS_SCRIPT = os.path.join(HERE, "update_chips.py")
 
 
 def main():
@@ -41,8 +43,9 @@ def main():
     ap.add_argument("--tables", default="price_daily", help="入庫哪些表（傳給 load_to_db；預設只灌 price_daily）")
     ap.add_argument("--only", nargs="*", help="只跑指定代碼（預設全市場）")
     ap.add_argument("--all", action="store_true", help="更新股價時連沒下載過的新股/ETF 也建檔")
-    ap.add_argument("--dry-run", action="store_true", help="步驟 3 只驗證不寫 DB（步驟 1、2 照常更新 CSV）")
-    ap.add_argument("--skip-load", action="store_true", help="只做步驟 1、2（純 CSV，完全不碰 DB）")
+    ap.add_argument("--dry-run", action="store_true", help="入庫步驟只驗證不寫 DB（步驟 1、2 照常更新 CSV，籌碼仍存快照）")
+    ap.add_argument("--skip-load", action="store_true", help="只做步驟 1、2（純 CSV，完全不碰 DB；籌碼仍存快照不入庫）")
+    ap.add_argument("--skip-chips", action="store_true", help="略過步驟 4（法人/融資/PER）")
     args = ap.parse_args()
 
     try:                                   # 行緩衝：進度即時可見、且與子行程 load_to_db 輸出不會亂序（cron 導向 log 也對）
@@ -84,18 +87,29 @@ def main():
             print(f"  … {i}/{len(codes)}")
     print(f"  還原完成：成功 {ok}、失敗 {fail}")
 
-    # 3) 增量入庫（只灌當天的列）
+    # 3) 增量入庫股價（只灌當天的列）
     if args.skip_load:
-        print("\n[3/3] --skip-load：略過入庫，CSV 已更新完成。")
-        return
-    print(f"\n[3/3] 入庫 {args.tables}（--since {args.date}）…")
-    cmd = [sys.executable, LOAD_SCRIPT, "--root", args.out, "--since", args.date, "--tables", args.tables]
-    codes_arg = ",".join(codes)
-    if len(codes_arg) <= 20000:            # 只讀/灌當天有更新的檔（台股 ~1900 檔約 9千字元，遠低於命令列上限）
-        cmd += ["--codes", codes_arg]
-    cmd += ["--dry-run"] if args.dry_run else ["--dsn", args.dsn]
-    if subprocess.run(cmd, cwd=HERE).returncode != 0:
-        raise SystemExit("load_to_db 失敗，請看上方輸出。")
+        print("\n[3/4] --skip-load：略過股價入庫（CSV 已更新完成）。")
+    else:
+        print(f"\n[3/4] 入庫 {args.tables}（--since {args.date}）…")
+        cmd = [sys.executable, LOAD_SCRIPT, "--root", args.out, "--since", args.date, "--tables", args.tables]
+        codes_arg = ",".join(codes)
+        if len(codes_arg) <= 20000:        # 只讀/灌當天有更新的檔（台股 ~1900 檔約 9千字元，遠低於命令列上限）
+            cmd += ["--codes", codes_arg]
+        cmd += ["--dry-run"] if args.dry_run else ["--dsn", args.dsn]
+        if subprocess.run(cmd, cwd=HERE).returncode != 0:
+            raise SystemExit("load_to_db 失敗，請看上方輸出。")
+
+    # 4) 法人/融資/PER（by-date 全市場，直接入庫 + 存原始快照）
+    if args.skip_chips:
+        print("\n[4/4] --skip-chips：略過法人/融資/PER。")
+    else:
+        print(f"\n[4/4] 更新法人/融資/PER（{args.date}）…")
+        cmd = [sys.executable, CHIPS_SCRIPT, "--date", args.date]
+        # dry-run 或 skip-load → 只存快照不寫 DB；否則正式入庫
+        cmd += ["--dry-run"] if (args.dry_run or args.skip_load) else ["--dsn", args.dsn]
+        if subprocess.run(cmd, cwd=HERE).returncode != 0:
+            raise SystemExit("update_chips 失敗，請看上方輸出。")
 
     print(f"\n=== 完成 {args.date} ===")
 

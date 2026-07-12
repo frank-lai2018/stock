@@ -53,6 +53,17 @@ def rev_available(month_first):
     nm = date(d.year + (d.month == 12), 1 if d.month == 12 else d.month + 1, 1)
     return nm.replace(day=10).isoformat()
 
+def rev_month(year, month):
+    """由 FinMind revenue_year / revenue_month 欄組真實營收月份首日 YYYY-MM-01。
+       （注意：FinMind 的 date 欄是「公告月」，比真實營收月多一個月，故不可拿 date 當月份。）"""
+    try:
+        y, m = int(str(year).strip()), int(str(month).strip())
+        if y > 1900 and 1 <= m <= 12:
+            return f"{y:04d}-{m:02d}-01"
+    except (ValueError, TypeError):
+        pass
+    return None
+
 def fin_available(period_date):
     """財報可得日（公告慣例）：Q1→5/15、Q2→8/14、Q3→11/14、年報→次年 3/31。"""
     d = date.fromisoformat(period_date)
@@ -112,7 +123,7 @@ def load_revenue(fdir, code):
     df = pd.read_csv(path, dtype=str)
     rows = []
     for _, r in df.iterrows():
-        mon = iso(r["date"])
+        mon = rev_month(r.get("revenue_year"), r.get("revenue_month")) or iso(r.get("date"))
         if not mon:
             continue
         rows.append((code, mon, bigint(r.get("revenue")), num(r.get("月增率(%)")), num(r.get("年增率(%)")),
