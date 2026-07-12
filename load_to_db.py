@@ -266,6 +266,7 @@ TABLES = {
     "margin_trading": (["stock_id", "trade_date", "margin_balance", "short_balance", "margin_buy", "margin_sell", "short_sell", "short_buy"], ["stock_id", "trade_date"]),
     "shareholding": (["stock_id", "trade_date", "foreign_ratio", "foreign_shares", "shares_issued"], ["stock_id", "trade_date"]),
     "valuation_daily": (["stock_id", "trade_date", "per", "pbr", "dividend_yield"], ["stock_id", "trade_date"]),
+    "shareholding_dist": (["stock_id", "data_date", "level", "holders", "shares", "pct"], ["stock_id", "data_date", "level"]),
 }
 
 
