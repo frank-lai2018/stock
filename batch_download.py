@@ -88,7 +88,7 @@ def main():
     ap.add_argument("--out", default=r"H:\data", help=r"下載輸出根目錄（預設 H:\data）")
     ap.add_argument("--start", default="2010-01", help="上市最早回溯月份 YYYY-MM（floor，預設 2010-01）")
     ap.add_argument("--start-otc", default="1994-01", help="上櫃最早回溯月份 YYYY-MM（floor，預設 1994-01）")
-    ap.add_argument("--end", default="2026-06", help="結束月份 YYYY-MM（預設本月）")
+    ap.add_argument("--end", default="2026-07", help="結束月份 YYYY-MM（預設本月）")
     ap.add_argument("--delay", type=float, default=4.0, help="每請求間隔秒數")
     ap.add_argument("--limit", type=int, default=0, help="只跑前 N 檔（0=全部；手動測試用）")
     args = ap.parse_args()

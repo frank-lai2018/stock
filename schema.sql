@@ -1,48 +1,144 @@
--- 台股選股系統最小 schema（PostgreSQL + pgvector）
--- 對應 stock_screener.md 的「三個地基工程」：還原價、point-in-time、發布時間
+-- 台股選股系統 schema（PostgreSQL）— 核心表（不含向量/RAG）
+-- 設計說明見 資料庫設計.md
+--
+-- 執行順序：
+--   1) 建 database：  psql -U postgres -c "CREATE DATABASE twstock ENCODING 'UTF8';"
+--   2) 建核心表：     psql -U postgres -d twstock -f schema.sql
+--   3) RAG 向量表：   裝好 pgvector 後再跑 schema_rag.sql
+--
+-- 全部 CREATE ... IF NOT EXISTS，可重複執行。
 
-CREATE EXTENSION IF NOT EXISTS vector;
+-- ========== 維度 ==========
+CREATE TABLE IF NOT EXISTS stock (
+    stock_id    VARCHAR(10) PRIMARY KEY,   -- 股票代碼（保留前導零）
+    name        TEXT NOT NULL,             -- 中文名稱
+    market      VARCHAR(16),               -- 上市 / 上櫃 / 上市臺灣創新板 …
+    list_date   DATE,                      -- 上市櫃日期
+    industry    TEXT                       -- 產業別
+);
 
--- 日K（地基①：存「還原股價」，算報酬/技術指標才不會錯）
+-- ========== 行情 ==========
 CREATE TABLE IF NOT EXISTS price_daily (
-  stock_id TEXT             NOT NULL,
-  date     DATE             NOT NULL,
-  open     DOUBLE PRECISION,
-  high     DOUBLE PRECISION,
-  low      DOUBLE PRECISION,
-  close    DOUBLE PRECISION,            -- 還原收盤價
-  volume   BIGINT,
-  PRIMARY KEY (stock_id, date)
+    stock_id    VARCHAR(10) NOT NULL REFERENCES stock(stock_id),
+    trade_date  DATE        NOT NULL,
+    open NUMERIC(12,4), high NUMERIC(12,4), low NUMERIC(12,4), close NUMERIC(12,4),
+    volume      BIGINT,        -- 成交股數（股，已正規化）
+    amount      BIGINT,        -- 成交金額（元，已正規化）
+    trades      INTEGER,       -- 成交筆數
+    adj_open NUMERIC(12,4), adj_high NUMERIC(12,4), adj_low NUMERIC(12,4), adj_close NUMERIC(12,4),
+    adj_factor  NUMERIC(16,10),-- 還原因子（cumfactor）
+    PRIMARY KEY (stock_id, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_price_date ON price_daily (trade_date);
+
+CREATE TABLE IF NOT EXISTS market_index (
+    index_id    VARCHAR(16) NOT NULL,      -- TAIEX 等
+    trade_date  DATE        NOT NULL,
+    close       NUMERIC(14,4),
+    PRIMARY KEY (index_id, trade_date)
 );
 
--- 月營收（地基②：point-in-time，務必記「公告日」announce_date 供回測對齊）
+-- ========== 基本面 ==========
 CREATE TABLE IF NOT EXISTS monthly_revenue (
-  stock_id      TEXT   NOT NULL,
-  revenue_month DATE   NOT NULL,        -- 營收所屬月份(月初, 如 2026-05-01)
-  revenue       BIGINT,                 -- 當月營收(元)
-  announce_date DATE,                   -- 實際公告日(近似~次月10日;回測只能用此日後的資料)
-  PRIMARY KEY (stock_id, revenue_month)
+    stock_id      VARCHAR(10) NOT NULL REFERENCES stock(stock_id),
+    revenue_month DATE        NOT NULL,    -- 營收月份（該月1日）
+    revenue       BIGINT,                  -- 當月營收（元）
+    mom_pct       NUMERIC(18,2),           -- 成長率；基期近0時可能極大值
+    yoy_pct       NUMERIC(18,2),
+    available_date DATE,                   -- 可得日（次月10日）→ 回測防前視
+    PRIMARY KEY (stock_id, revenue_month)
 );
 
--- 三大法人買賣超
-CREATE TABLE IF NOT EXISTS institutional (
-  stock_id TEXT   NOT NULL,
-  date     DATE   NOT NULL,
-  investor TEXT   NOT NULL,             -- Foreign_Investor / Investment_Trust / Dealer...
-  net      BIGINT,                      -- 買賣超(股) = buy - sell
-  PRIMARY KEY (stock_id, date, investor)
+-- 長表：忠實保存 FinMind 損益/資產負債/現金流所有科目
+CREATE TABLE IF NOT EXISTS financial_statement (
+    stock_id     VARCHAR(10) NOT NULL REFERENCES stock(stock_id),
+    period_date  DATE        NOT NULL,     -- 財報期別日（季底）
+    statement    VARCHAR(10) NOT NULL,     -- income / balance / cashflow
+    item         TEXT        NOT NULL,     -- FinMind 科目 key
+    value        NUMERIC(20,4),
+    available_date DATE,
+    PRIMARY KEY (stock_id, period_date, statement, item)
+);
+CREATE INDEX IF NOT EXISTS idx_fs_item ON financial_statement (stock_id, item, period_date);
+
+-- 寬表：選股常用指標（由長表 + 股本 ETL 彙整）
+CREATE TABLE IF NOT EXISTS fundamentals_quarterly (
+    stock_id       VARCHAR(10) NOT NULL REFERENCES stock(stock_id),
+    period_date    DATE        NOT NULL,
+    available_date DATE,
+    revenue BIGINT, gross_profit BIGINT,
+    operating_income BIGINT, pretax_income BIGINT, net_income BIGINT,
+    eps NUMERIC(10,2),
+    total_assets BIGINT, total_equity BIGINT, total_liabilities BIGINT,
+    operating_cash_flow BIGINT,
+    -- 比率欄位放寬：分母（營收/股本/權益）近0時算出的比率可能極大
+    gross_margin NUMERIC(18,2), op_margin NUMERIC(18,2), net_margin NUMERIC(18,2),
+    roe NUMERIC(18,2), debt_ratio NUMERIC(18,2),
+    PRIMARY KEY (stock_id, period_date)
 );
 
--- 新聞/法說會文本 + 向量（地基③：published_at 供 point-in-time 檢索）
+CREATE TABLE IF NOT EXISTS dividend (
+    stock_id       VARCHAR(10) NOT NULL REFERENCES stock(stock_id),
+    announce_date  DATE        NOT NULL,   -- 公告日（point-in-time 基準）
+    year_label     TEXT,
+    cash_dividend  NUMERIC(10,6),
+    stock_dividend NUMERIC(10,6),
+    ex_cash_date DATE, ex_stock_date DATE, cash_pay_date DATE,
+    PRIMARY KEY (stock_id, announce_date)
+);
+
+CREATE TABLE IF NOT EXISTS capital_reduction (
+    stock_id       VARCHAR(10) NOT NULL REFERENCES stock(stock_id),
+    resume_date    DATE        NOT NULL,   -- 恢復買賣日
+    pre_close      NUMERIC(12,4),
+    post_ref_price NUMERIC(12,4),
+    reason         TEXT,
+    PRIMARY KEY (stock_id, resume_date)
+);
+
+-- ========== 籌碼 / 估值 ==========
+CREATE TABLE IF NOT EXISTS inst_trades (   -- 三大法人淨額（股）
+    stock_id     VARCHAR(10) NOT NULL REFERENCES stock(stock_id),
+    trade_date   DATE        NOT NULL,
+    foreign_net BIGINT, foreign_dealer_net BIGINT,
+    trust_net BIGINT, dealer_self_net BIGINT, dealer_hedge_net BIGINT,
+    PRIMARY KEY (stock_id, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_inst_date ON inst_trades (trade_date);
+
+CREATE TABLE IF NOT EXISTS margin_trading (
+    stock_id       VARCHAR(10) NOT NULL REFERENCES stock(stock_id),
+    trade_date     DATE        NOT NULL,
+    margin_balance BIGINT, short_balance BIGINT,
+    margin_buy BIGINT, margin_sell BIGINT,
+    short_sell BIGINT, short_buy BIGINT,
+    PRIMARY KEY (stock_id, trade_date)
+);
+
+CREATE TABLE IF NOT EXISTS shareholding (
+    stock_id       VARCHAR(10) NOT NULL REFERENCES stock(stock_id),
+    trade_date     DATE        NOT NULL,
+    foreign_ratio  NUMERIC(8,2),
+    foreign_shares BIGINT,
+    shares_issued  BIGINT,
+    PRIMARY KEY (stock_id, trade_date)
+);
+
+CREATE TABLE IF NOT EXISTS valuation_daily (
+    stock_id       VARCHAR(10) NOT NULL REFERENCES stock(stock_id),
+    trade_date     DATE        NOT NULL,
+    per NUMERIC(10,2), pbr NUMERIC(10,2), dividend_yield NUMERIC(8,2),
+    PRIMARY KEY (stock_id, trade_date)
+);
+
+-- ========== 新聞（RAG 的文字部分；向量在 schema_rag.sql）==========
 CREATE TABLE IF NOT EXISTS news (
-  id           BIGSERIAL PRIMARY KEY,
-  stock_id     TEXT       NOT NULL,
-  published_at TIMESTAMP  NOT NULL,     -- 發布時間：回測別偷看未來新聞
-  title        TEXT,
-  content      TEXT,
-  embedding    vector(1536)             -- text-embedding-3-small 的維度
+    news_id      BIGSERIAL PRIMARY KEY,
+    stock_id     VARCHAR(10) REFERENCES stock(stock_id),  -- 可為 NULL（總經新聞）
+    title        TEXT,
+    content      TEXT,
+    source       TEXT,
+    url          TEXT,
+    published_at TIMESTAMPTZ            -- 發布時間（回測檢索防前視）
 );
-
--- 向量索引（cosine 距離）；資料量大才需要，小資料 seq scan 也行
-CREATE INDEX IF NOT EXISTS idx_news_embedding
-  ON news USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX IF NOT EXISTS idx_news_stock_time ON news (stock_id, published_at);

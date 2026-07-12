@@ -3,7 +3,7 @@
 來源：TWSE ISIN 國際證券辨識號碼清單
       上市 strMode=2、上櫃 strMode=4（同一份清單也涵蓋權證/ETF/債券…）
 篩選：CFICode 以 'ES' 開頭 = 普通股（自動排除權證、ETF、特別股、債券等）
-輸出欄位：股票代碼、中文名稱、市場別、上市櫃日期
+輸出欄位：股票代碼、中文名稱、市場別、上市櫃日期、產業別
 
 需求：pip install pandas lxml openpyxl
 用法：
@@ -45,6 +45,7 @@ def fetch_isin(mode):
         "中文名稱": codename[1].str.strip() if codename.shape[1] > 1 else "",
         "市場別": df.iloc[:, 3].astype(str).str.strip(),
         "上市櫃日期": df.iloc[:, 2].astype(str).str.strip().replace("nan", ""),  # ISIN 第2欄=上市/上櫃日(西元)
+        "產業別": df.iloc[:, 4].astype(str).str.strip().replace("nan", ""),      # ISIN 第4欄=產業別
     })
     return out.dropna(subset=["股票代碼"])
 

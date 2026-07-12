@@ -8,7 +8,7 @@ r"""batch_fundamentals.py — 讀 code.xlsx 的股票代碼，批次抓 FinMind 
 Token：FinMind 免費註冊拿 token（https://finmindtrade.com）。批次很多檔，務必帶 token，否則會被限流擋。
        設環境變數 FINMIND_TOKEN，或用 --token。
 
-⚠️ 全部資料集 = 每檔 9 次 API 呼叫。1970 檔 × 9 ≈ 17700 次，在 600/hr 額度下要跑很久（~30hr、分多時段）。
+⚠️ 全部資料集 = 每檔 10 次 API 呼叫。1970 檔 × 10 ≈ 19700 次，在 600/hr 額度下要跑很久（~33hr、分多時段）。
    建議先挑重點：例如 --datasets institutional,per,balance,dividend。可中途停、重跑自動續抓。
 
 需求：pip install pandas openpyxl
