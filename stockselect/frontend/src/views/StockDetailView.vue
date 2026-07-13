@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getStock, getFundamentals } from '../api'
 import PriceChart from '../components/PriceChart.vue'
+import MarginPanel from '../components/MarginPanel.vue'
 
 const cols = ref(4)
 const updateCols = () => {
@@ -18,6 +19,7 @@ const fund = ref(null)
 const pct = (v) => (v == null ? '—' : (Number(v) * 100).toFixed(1) + '%')
 const p1 = (v) => (v == null ? '—' : Number(v).toFixed(2) + '%')
 const num = (v) => (v == null ? '—' : Number(v).toLocaleString('en-US'))
+const clr = (v) => (v == null ? '' : Number(v) >= 0 ? '#EA4C4C' : '#3F9E5A')
 
 onMounted(async () => {
   updateCols()
@@ -56,6 +58,10 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateCols))
       <PriceChart :stock-id="String(route.params.id)" />
     </el-card>
 
+    <el-card shadow="never" style="margin-top: 16px" header="融資融券">
+      <MarginPanel :stock-id="String(route.params.id)" />
+    </el-card>
+
     <div v-if="fund" style="display: flex; gap: 16px; margin-top: 16px; flex-wrap: wrap">
       <el-card style="flex: 1 1 360px; min-width: 300px" shadow="never" header="近12月營收">
         <el-table :data="fund.monthly_revenue" height="320" size="small">
@@ -63,7 +69,12 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateCols))
             <template #default="{ row }">{{ String(row.revenue_month).slice(0, 7) }}</template>
           </el-table-column>
           <el-table-column label="營收(元)"><template #default="{ row }">{{ num(row.revenue) }}</template></el-table-column>
-          <el-table-column label="YoY"><template #default="{ row }">{{ p1(row.yoy_pct) }}</template></el-table-column>
+          <el-table-column label="MoM" width="80">
+            <template #default="{ row }"><span :style="{ color: clr(row.mom_pct) }">{{ p1(row.mom_pct) }}</span></template>
+          </el-table-column>
+          <el-table-column label="YoY" width="80">
+            <template #default="{ row }"><span :style="{ color: clr(row.yoy_pct) }">{{ p1(row.yoy_pct) }}</span></template>
+          </el-table-column>
         </el-table>
       </el-card>
       <el-card style="flex: 1 1 360px; min-width: 300px" shadow="never" header="近季財報">

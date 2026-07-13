@@ -1,5 +1,5 @@
-r"""update_chips.py — 從證交所/櫃買「當日全市場」端點抓 法人買賣超 / 融資融券 / PER，
-直接 upsert 進 PostgreSQL（inst_trades / margin_trading / valuation_daily）。
+r"""update_chips.py — 從證交所/櫃買「當日全市場」端點抓 法人買賣超 / 融資融券 / PER / 外資持股，
+直接 upsert 進 PostgreSQL（inst_trades / margin_trading / valuation_daily / shareholding）。
 
 路線 B：一天只需 6 個請求（上市3 + 上櫃3）即可更新全市場，取代 FinMind 逐檔（~8000 請求）。
 不經 CSV、直接入庫；沿用 load_to_db 的 TABLES / upsert / num / bigint，單位與現有資料一致
@@ -35,8 +35,10 @@ CODE_RE = re.compile(r"^\d{4,6}[A-Z]?$")
 TWSE_T86 = "https://www.twse.com.tw/rwd/zh/fund/T86?date={ymd}&selectType=ALLBUT0999&response=csv"
 TWSE_MARGN = "https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN?date={ymd}&selectType=ALL&response=csv"
 TWSE_BWIBBU = "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d?date={ymd}&selectType=ALL&response=csv"
+TWSE_QFIIS = "https://www.twse.com.tw/rwd/zh/fund/MI_QFIIS?date={ymd}&selectType=ALLBUT0999&response=csv"
 TPEX_INST = "https://www.tpex.org.tw/www/zh-tw/insti/dailyTrade?type=Daily&sect=EW&date={slash}&response=json"
 TPEX_MARGN = "https://www.tpex.org.tw/www/zh-tw/margin/balance?date={slash}&response=json"
+TPEX_QFII = "https://www.tpex.org.tw/www/zh-tw/insti/qfii?date={slash}&response=json"
 # 櫃買 PER：by-date www 端點已全數 404；改用 OpenAPI（但只回「最新一天」）
 TPEX_PER_OPENAPI = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis"
 
@@ -125,6 +127,32 @@ def parse_margin_tpex(data, d):
         if not CODE_RE.match(code):
             continue
         out.append((code, d, L.bigint(r[6]), L.bigint(r[14]), L.bigint(r[3]), L.bigint(r[4]), L.bigint(r[11]), L.bigint(r[12])))
+    return out
+
+
+def parse_foreign_twse(raw, d):
+    """MI_QFIIS：foreign_ratio=col7, foreign_shares=col5, shares_issued=col3。"""
+    out = []
+    for c in twse_rows(raw):
+        if len(c) < 8:
+            continue
+        code = clean_code(c[0])
+        if not CODE_RE.match(code):
+            continue
+        out.append((code, d, L.num(c[7]), L.bigint(c[5]), L.bigint(c[3])))
+    return out
+
+
+def parse_foreign_tpex(data, d):
+    """TPEx qfii：代號=1, 發行股數=3, 持有股數=5, 持股比率=7(含 %)。"""
+    out = []
+    for r in data:
+        if len(r) < 8:
+            continue
+        code = clean_code(r[1])
+        if not CODE_RE.match(code):
+            continue
+        out.append((code, d, L.num(str(r[7]).replace("%", "")), L.bigint(r[5]), L.bigint(r[3])))
     return out
 
 
@@ -223,8 +251,16 @@ def process_date(cur, conn, d, valid, dry, raw_root=None):
     else:
         print("    ⚠️ 上櫃 PER OpenAPI 取得失敗 → 本日上櫃 PER 略過（上市 PER 已抓）")
 
+    r_qf = http_get(TWSE_QFIIS.format(ymd=ymd))
+    save_raw(raw_root, d, "TWSE_QFIIS.csv", r_qf)
+    share = parse_foreign_twse(r_qf, d)
+    r_qft = http_get(TPEX_QFII.format(slash=slash))
+    save_raw(raw_root, d, "TPEX_qfii.json", r_qft)
+    share += parse_foreign_tpex(tpex_data(json.loads(r_qft.decode("utf-8", "ignore"))), d)
+
     result = {}
-    for table, rows in [("inst_trades", inst), ("margin_trading", margin), ("valuation_daily", val)]:
+    for table, rows in [("inst_trades", inst), ("margin_trading", margin),
+                        ("valuation_daily", val), ("shareholding", share)]:
         if valid:                                       # 外鍵過濾：只留 stock 表內代號（valid 空=不過濾，dry-run 用）
             rows = [r for r in rows if r[0] in valid]
         result[table] = len(rows)
@@ -290,7 +326,8 @@ def main():
         if res is None:
             print(f"  {d}  —（非交易日/無資料，略過）")
         else:
-            print(f"  {d}  法人 {res['inst_trades']:>5}｜融資 {res['margin_trading']:>5}｜PER {res['valuation_daily']:>5}"
+            print(f"  {d}  法人 {res['inst_trades']:>5}｜融資 {res['margin_trading']:>5}"
+                  f"｜PER {res['valuation_daily']:>5}｜外資 {res['shareholding']:>5}"
                   + ("（dry-run 未寫入）" if args.dry_run else " ✓"))
         time.sleep(1)                                    # 對端點客氣一點
 

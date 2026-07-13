@@ -79,6 +79,6 @@ onBeforeUnmount(() => {
         MA5/10/20/60/120/240｜量+均量｜MACD｜KD（皆由日線計算）
       </span>
     </div>
-    <div ref="el" style="width: 100%; height: 560px"></div>
+    <div ref="el" style="width: 100%; height: 1120px"></div>
   </div>
 </template>

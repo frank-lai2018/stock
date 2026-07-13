@@ -57,6 +57,35 @@ def chips(stock_id: str, days: int = 60):
     return {"inst": list(reversed(inst)), "margin": list(reversed(margin))}
 
 
+@router.get("/{stock_id}/margin")
+def margin(stock_id: str, tf: str = "D", bars: int = 60):
+    """融資融券明細：餘額 + 增減（餘額差）+ 券資比。tf=D/W/M/Q（週月季取期末餘額）。由舊到新。"""
+    n = max(1, min(int(bars), 2000))
+    params = {"id": stock_id, "n": n}
+    tfu = tf.upper()
+    if tfu == "D":
+        src = "SELECT trade_date, margin_balance, short_balance FROM margin_trading WHERE stock_id=%(id)s"
+    else:
+        unit = {"W": "week", "M": "month", "Q": "quarter"}.get(tfu)
+        if not unit:
+            raise HTTPException(400, "tf 需為 D / W / M / Q")
+        params["u"] = unit
+        src = ("SELECT date_trunc(%(u)s, trade_date)::date AS trade_date, "
+               "(array_agg(margin_balance ORDER BY trade_date DESC))[1] AS margin_balance, "
+               "(array_agg(short_balance ORDER BY trade_date DESC))[1] AS short_balance "
+               "FROM margin_trading WHERE stock_id=%(id)s GROUP BY 1")
+    sql = (
+        "SELECT trade_date, margin_balance, short_balance, margin_chg, short_chg, short_margin_ratio FROM ("
+        "  SELECT trade_date, margin_balance, short_balance, "
+        "    margin_balance - lag(margin_balance) OVER (ORDER BY trade_date) AS margin_chg, "
+        "    short_balance - lag(short_balance) OVER (ORDER BY trade_date) AS short_chg, "
+        "    CASE WHEN margin_balance>0 THEN round(short_balance::numeric/margin_balance*100,4) END AS short_margin_ratio, "
+        "    row_number() OVER (ORDER BY trade_date DESC) AS rn "
+        f"  FROM ({src}) g"
+        ") z WHERE rn <= %(n)s ORDER BY trade_date")
+    return db.query(sql, params)
+
+
 @router.get("/{stock_id}/fundamentals")
 def fundamentals(stock_id: str):
     """月營收 + 季度基本面（近期）。"""
@@ -67,4 +96,4 @@ def fundamentals(stock_id: str):
         "SELECT period_date, revenue, net_income, eps, roe, gross_margin, net_margin, debt_ratio "
         "FROM fundamentals_quarterly WHERE stock_id=%(id)s ORDER BY period_date DESC LIMIT 12",
         {"id": stock_id})
-    return {"monthly_revenue": list(reversed(rev)), "quarterly": list(reversed(fq))}
+    return {"monthly_revenue": rev, "quarterly": list(reversed(fq))}

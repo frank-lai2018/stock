@@ -3,12 +3,15 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import * as echarts from 'echarts'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getMarketOverview, getMarketIndex, getMovers } from '../api'
+import { getMarketOverview, getMarketIndex, getMovers, getSectors, getMoneyflow } from '../api'
 
 const router = useRouter()
 const ov = ref(null)
 const moverType = ref('gainers')
 const movers = ref([])
+const sectorMarket = ref('上市')
+const sectors = ref([])
+const flow = ref([])
 const chartEl = ref(null)
 let chart = null
 
@@ -18,6 +21,11 @@ const up = (v) => (v >= 0 ? '#EA4C4C' : '#3F9E5A')
 
 async function loadMovers() {
   movers.value = await getMovers(moverType.value, 15)
+}
+
+async function loadSectors() {
+  sectors.value = await getSectors(sectorMarket.value)
+  flow.value = await getMoneyflow(sectorMarket.value)
 }
 
 function renderChart(rows) {
@@ -41,6 +49,7 @@ onMounted(async () => {
     ov.value = await getMarketOverview()
     renderChart(await getMarketIndex(120))
     await loadMovers()
+    await loadSectors()
   } catch (e) {
     ElMessage.error('載入大盤失敗：' + (e?.response?.data?.detail || e.message))
   }
@@ -108,5 +117,46 @@ function go(id) { router.push(`/stock/${id}`) }
         <el-table-column label="成交值"><template #default="{ row }">{{ yi(row.amount) }}</template></el-table-column>
       </el-table>
     </el-card>
+
+    <div style="display: flex; gap: 16px; flex-wrap: wrap; margin-top: 16px">
+      <el-card shadow="never" style="flex: 2 1 460px">
+        <template #header>
+          類股漲跌
+          <el-radio-group v-model="sectorMarket" size="small" style="margin-left: 12px" @change="loadSectors">
+            <el-radio-button value="上市">上市</el-radio-button>
+            <el-radio-button value="上櫃">上櫃</el-radio-button>
+          </el-radio-group>
+          <span style="margin-left: 10px; color: #999; font-size: 12px">成員股等權平均｜點列看代表股</span>
+        </template>
+        <el-table :data="sectors" height="380" stripe style="cursor: pointer" @row-click="(r) => go(r.top_id)">
+          <el-table-column prop="industry" label="產業" width="150" show-overflow-tooltip />
+          <el-table-column label="平均漲跌" width="110">
+            <template #default="{ row }"><span :style="{ color: up(row.avg_pct) }">{{ pct(row.avg_pct) }}</span></template>
+          </el-table-column>
+          <el-table-column label="檔數" width="70" prop="n" />
+          <el-table-column label="代表股">
+            <template #default="{ row }">
+              {{ row.top_id }} {{ row.top_name }}
+              <span :style="{ color: up(row.top_pct) }">&nbsp;{{ pct(row.top_pct) }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+
+      <el-card shadow="never" style="flex: 1 1 320px" header="資金流向（成交值佔比）">
+        <el-table :data="flow" height="380" stripe>
+          <el-table-column prop="industry" label="產業" width="140" show-overflow-tooltip />
+          <el-table-column label="佔比">
+            <template #default="{ row }">
+              <el-progress :percentage="Math.min(Number(row.share_pct) || 0, 100)" :stroke-width="12" :show-text="false" />
+              <span style="font-size: 12px; color: #666">{{ row.share_pct }}%</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="較前一日" width="100">
+            <template #default="{ row }"><span :style="{ color: up(row.chg_pct) }">{{ pct(row.chg_pct) }}</span></template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+    </div>
   </div>
 </template>

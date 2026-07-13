@@ -50,6 +50,42 @@ def index_series(days: int = 120):
         {"n": n})
 
 
+@router.get("/sectors")
+def sectors(market: str = "上市"):
+    """細產業當日漲跌（成員股等權平均）+ 代表股（漲最多者）。market=上市/上櫃。"""
+    mkt = "上市%" if market == "上市" else "上櫃"     # 上市含臺灣創新板
+    sql = (
+        "SELECT s.industry, round(avg(z.chg*100)::numeric,2) AS avg_pct, count(*) AS n, "
+        "(array_agg(s.stock_id ORDER BY z.chg DESC))[1] AS top_id, "
+        "(array_agg(s.name ORDER BY z.chg DESC))[1] AS top_name, "
+        "round((max(z.chg)*100)::numeric,2) AS top_pct "
+        f"FROM ({_LATEST}) z JOIN stock s USING(stock_id) "
+        "WHERE z.rn=1 AND z.chg IS NOT NULL AND s.market LIKE %(mkt)s AND s.industry IS NOT NULL "
+        "GROUP BY s.industry ORDER BY avg_pct DESC")
+    return db.query(sql, {"mkt": mkt})
+
+
+@router.get("/moneyflow")
+def moneyflow(market: str = "上市"):
+    """各細產業成交值佔比 + 較前一日變化（百分點）。market=上市/上櫃。"""
+    mkt = "上市%" if market == "上市" else "上櫃"
+    sql = (
+        "SELECT industry, "
+        "round((today_amt::numeric / NULLIF(sum(today_amt) OVER (),0) * 100),2) AS share_pct, "
+        "round(((today_amt::numeric/NULLIF(sum(today_amt) OVER (),0)) "
+        "     - (prev_amt::numeric/NULLIF(sum(prev_amt) OVER (),0)))*100,2) AS chg_pct "
+        "FROM (SELECT s.industry, "
+        "        sum(p.amount) FILTER (WHERE p.rn=1) AS today_amt, "
+        "        sum(p.amount) FILTER (WHERE p.rn=2) AS prev_amt "
+        "      FROM (SELECT stock_id, amount, row_number() OVER (PARTITION BY stock_id ORDER BY trade_date DESC) rn "
+        "            FROM price_daily WHERE trade_date > (SELECT max(trade_date)-15 FROM price_daily)) p "
+        "      JOIN stock s USING(stock_id) "
+        "      WHERE s.market LIKE %(mkt)s AND s.industry IS NOT NULL AND p.rn<=2 "
+        "      GROUP BY s.industry) z "
+        "ORDER BY share_pct DESC")
+    return db.query(sql, {"mkt": mkt})
+
+
 @router.get("/movers")
 def movers(type: str = "gainers", limit: int = 15):
     n = max(1, min(int(limit), 50))
