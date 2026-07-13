@@ -1,0 +1,112 @@
+<script setup>
+import { ref, onMounted, onBeforeUnmount } from 'vue'
+import * as echarts from 'echarts'
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { getMarketOverview, getMarketIndex, getMovers } from '../api'
+
+const router = useRouter()
+const ov = ref(null)
+const moverType = ref('gainers')
+const movers = ref([])
+const chartEl = ref(null)
+let chart = null
+
+const yi = (v) => (v == null ? '—' : (Number(v) / 1e8).toFixed(0) + ' 億')
+const pct = (v) => (v == null ? '—' : (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%')
+const up = (v) => (v >= 0 ? '#EA4C4C' : '#3F9E5A')
+
+async function loadMovers() {
+  movers.value = await getMovers(moverType.value, 15)
+}
+
+function renderChart(rows) {
+  if (!chart) chart = echarts.init(chartEl.value)
+  chart.setOption({
+    grid: { left: 64, right: 20, top: 20, bottom: 30 },
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'category', boundaryGap: false, data: rows.map((r) => String(r.trade_date).slice(0, 10)) },
+    yAxis: { type: 'value', scale: true },
+    series: [{
+      type: 'line', showSymbol: false, data: rows.map((r) => +r.close),
+      lineStyle: { color: '#EA4C4C', width: 2 },
+      areaStyle: { color: 'rgba(234,76,76,0.08)' },
+    }],
+  })
+}
+function onResize() { if (chart) chart.resize() }
+
+onMounted(async () => {
+  try {
+    ov.value = await getMarketOverview()
+    renderChart(await getMarketIndex(120))
+    await loadMovers()
+  } catch (e) {
+    ElMessage.error('載入大盤失敗：' + (e?.response?.data?.detail || e.message))
+  }
+  window.addEventListener('resize', onResize)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onResize)
+  if (chart) chart.dispose()
+})
+
+function go(id) { router.push(`/stock/${id}`) }
+</script>
+
+<template>
+  <div>
+    <div style="display: flex; gap: 16px; flex-wrap: wrap">
+      <el-card shadow="never" style="flex: 1 1 260px">
+        <div style="color: #999">加權指數 TAIEX</div>
+        <template v-if="ov?.taiex">
+          <div style="font-size: 30px; font-weight: 700" :style="{ color: up(ov.taiex.change) }">
+            {{ ov.taiex.close.toFixed(2) }}
+          </div>
+          <div :style="{ color: up(ov.taiex.change) }">
+            {{ ov.taiex.change >= 0 ? '▲' : '▼' }}
+            {{ ov.taiex.change != null ? ov.taiex.change.toFixed(2) : '—' }} ({{ pct(ov.taiex.pct) }})
+          </div>
+        </template>
+        <div style="color: #999; font-size: 12px; margin-top: 6px">資料日 {{ ov?.as_of || '—' }}</div>
+      </el-card>
+
+      <el-card shadow="never" style="flex: 1 1 260px">
+        <div style="color: #999">漲跌家數</div>
+        <div style="font-size: 20px; margin-top: 6px">
+          <span style="color: #EA4C4C">▲ {{ ov?.breadth?.up ?? '—' }}</span>
+          <span style="margin: 0 12px; color: #999">平 {{ ov?.breadth?.flat ?? '—' }}</span>
+          <span style="color: #3F9E5A">▼ {{ ov?.breadth?.down ?? '—' }}</span>
+        </div>
+        <div style="color: #999; font-size: 12px; margin-top: 10px">
+          全市場總成交值 {{ yi(ov?.total_amount) }}
+        </div>
+      </el-card>
+    </div>
+
+    <el-card shadow="never" header="加權指數走勢（近 120 交易日）" style="margin-top: 16px">
+      <div ref="chartEl" style="width: 100%; height: 320px"></div>
+    </el-card>
+
+    <el-card shadow="never" style="margin-top: 16px">
+      <template #header>
+        <el-radio-group v-model="moverType" size="small" @change="loadMovers">
+          <el-radio-button value="gainers">漲幅榜</el-radio-button>
+          <el-radio-button value="losers">跌幅榜</el-radio-button>
+          <el-radio-button value="active">成交值榜</el-radio-button>
+        </el-radio-group>
+        <span style="margin-left: 12px; color: #999; font-size: 12px">日均額 ≥ 2000 萬｜點列看個股</span>
+      </template>
+      <el-table :data="movers" stripe height="360" style="cursor: pointer" @row-click="(r) => go(r.stock_id)">
+        <el-table-column prop="stock_id" label="代碼" width="80" />
+        <el-table-column prop="name" label="名稱" width="120" />
+        <el-table-column prop="industry" label="產業" width="140" show-overflow-tooltip />
+        <el-table-column label="收盤" width="100"><template #default="{ row }">{{ row.close }}</template></el-table-column>
+        <el-table-column label="漲跌幅" width="110">
+          <template #default="{ row }"><span :style="{ color: up(row.chg_pct) }">{{ pct(row.chg_pct) }}</span></template>
+        </el-table-column>
+        <el-table-column label="成交值"><template #default="{ row }">{{ yi(row.amount) }}</template></el-table-column>
+      </el-table>
+    </el-card>
+  </div>
+</template>
