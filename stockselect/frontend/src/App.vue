@@ -11,6 +11,7 @@ const route = useRoute()
       <el-menu mode="horizontal" :router="true" :default-active="route.path" style="border: 0; flex: 1; min-width: 0">
         <el-menu-item index="/">首頁</el-menu-item>
         <el-menu-item index="/screener">選股器</el-menu-item>
+        <el-menu-item index="/patterns">型態選股</el-menu-item>
       </el-menu>
       <SearchBox />
     </el-header>

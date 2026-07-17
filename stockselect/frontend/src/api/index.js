@@ -23,5 +23,12 @@ export const getMargin = (id, tf = 'D', bars = 60) =>
   api.get(`/stock/${id}/margin`, { params: { tf, bars } }).then((r) => r.data)
 export const getFundamentals = (id) =>
   api.get(`/stock/${id}/fundamentals`).then((r) => r.data)
+export const getPatterns = () => api.get('/patterns').then((r) => r.data)
+export const screenPattern = (pattern, limit = 100) =>
+  api.get('/screen/pattern', { params: { pattern, limit } }).then((r) => r.data)
+export const getStockPatterns = (id, days = 90) =>
+  api.get(`/stock/${id}/patterns`, { params: { days } }).then((r) => r.data)
+export const getLevels = (id, bars = 120) =>
+  api.get(`/stock/${id}/levels`, { params: { bars } }).then((r) => r.data)
 
 export default api

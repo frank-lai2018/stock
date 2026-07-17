@@ -2,9 +2,13 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getStock, getFundamentals } from '../api'
+import { getStock, getFundamentals, getStockPatterns } from '../api'
 import PriceChart from '../components/PriceChart.vue'
 import MarginPanel from '../components/MarginPanel.vue'
+
+const pats = ref([])
+const dirColor = { bull: '#EA4C4C', bear: '#3F9E5A', neutral: '#909399' }
+const dirText = { bull: '偏多', bear: '偏空', neutral: '中性' }
 
 const cols = ref(4)
 const updateCols = () => {
@@ -27,6 +31,7 @@ onMounted(async () => {
   try {
     s.value = await getStock(route.params.id)
     fund.value = await getFundamentals(route.params.id)
+    pats.value = (await getStockPatterns(route.params.id, 90)).reverse()   // 新到舊
   } catch (e) {
     ElMessage.error('載入失敗：' + (e?.response?.data?.detail || e.message))
   }
@@ -56,6 +61,21 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateCols))
 
     <el-card shadow="never" style="margin-top: 16px" header="技術線圖">
       <PriceChart :stock-id="String(route.params.id)" />
+    </el-card>
+
+    <el-card shadow="never" style="margin-top: 16px" header="近90日 K 棒型態（陰陽線）">
+      <div v-if="pats.length" style="display: flex; flex-wrap: wrap; gap: 8px">
+        <el-tag v-for="(p, i) in pats" :key="i" :color="dirColor[p.dir]"
+                style="color: #fff; border: 0">
+          {{ String(p.date).slice(5, 10) }} {{ p.name }}
+        </el-tag>
+      </div>
+      <span v-else style="color: #999">近 90 日無明顯型態</span>
+      <div style="margin-top: 8px; color: #999; font-size: 12px">
+        <span style="color: #EA4C4C">■</span> 偏多
+        <span style="color: #3F9E5A; margin-left: 8px">■</span> 偏空
+        <span style="color: #909399; margin-left: 8px">■</span> 中性
+      </div>
     </el-card>
 
     <el-card shadow="never" style="margin-top: 16px" header="融資融券">

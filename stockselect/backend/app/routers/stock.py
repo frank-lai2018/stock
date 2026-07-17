@@ -1,7 +1,7 @@
 """個股 API：快照 / K 線 / 籌碼 / 基本面。"""
 from fastapi import APIRouter, HTTPException
 
-from .. import db
+from .. import db, patterns
 
 router = APIRouter(prefix="/api/stock", tags=["stock"])
 
@@ -84,6 +84,66 @@ def margin(stock_id: str, tf: str = "D", bars: int = 60):
         f"  FROM ({src}) g"
         ") z WHERE rn <= %(n)s ORDER BY trade_date")
     return db.query(sql, params)
+
+
+@router.get("/{stock_id}/levels")
+def levels(stock_id: str, bars: int = 120):
+    """自動偵測近期壓力(現價上方)與頸線/支撐(現價下方)：轉折高低點群集，回傳價位。"""
+    n = max(30, min(int(bars), 800))
+    rows = db.query(
+        "SELECT * FROM (SELECT trade_date, adj_high AS h, adj_low AS l, adj_close AS c "
+        "FROM price_daily WHERE stock_id=%(id)s ORDER BY trade_date DESC LIMIT %(n)s) z "
+        "ORDER BY trade_date", {"id": stock_id, "n": n})
+    if len(rows) < 20:
+        return []
+    highs = [float(r["h"]) for r in rows]
+    lows = [float(r["l"]) for r in rows]
+    close = float(rows[-1]["c"])
+    k = 3                                                # pivot：±k 根內的極值
+    ph = [highs[i] for i in range(k, len(rows) - k) if highs[i] == max(highs[i - k:i + k + 1])]
+    pl = [lows[i] for i in range(k, len(rows) - k) if lows[i] == min(lows[i - k:i + k + 1])]
+
+    def cluster(vals):
+        out = []
+        for v in sorted(vals):
+            if out and abs(v - out[-1]["m"]) <= 0.02 * out[-1]["m"]:   # 2% 內視為同一價位
+                c = out[-1]; c["v"].append(v); c["m"] = sum(c["v"]) / len(c["v"])
+            else:
+                out.append({"v": [v], "m": v})
+        return [{"price": round(c["m"], 2), "n": len(c["v"])} for c in out]
+
+    res = [c for c in cluster(ph) if c["price"] > close * 1.005]        # 壓力：現價上方
+    sup = [c for c in cluster(pl) if c["price"] < close * 0.995]        # 支撐群：現價下方
+    out = []
+    if res:
+        res.sort(key=lambda c: (-c["n"], c["price"] - close))          # 多測試優先、其次最近
+        out.append({"type": "resistance", "label": "壓力", "price": res[0]["price"], "touches": res[0]["n"]})
+    if sup:
+        neck = sorted(sup, key=lambda c: (-c["n"], close - c["price"]))[0]   # 頸線＝測試最多次
+        out.append({"type": "neckline", "label": "頸線", "price": neck["price"], "touches": neck["n"]})
+        near = sorted(sup, key=lambda c: close - c["price"])[0]              # 近期支撐＝離現價最近
+        if abs(near["price"] - neck["price"]) > 0.02 * neck["price"]:        # 與頸線不同價才另畫
+            out.append({"type": "support", "label": "近期支撐", "price": near["price"], "touches": near["n"]})
+    return out
+
+
+@router.get("/{stock_id}/patterns")
+def stock_patterns(stock_id: str, days: int = 90):
+    """近 N 交易日每根 K 棒偵測到的陰陽線型態（由舊到新）。"""
+    n = max(10, min(int(days), 500))
+    rows = db.query(
+        "SELECT trade_date, adj_open AS open, adj_high AS high, adj_low AS low, adj_close AS close "
+        "FROM price_daily WHERE stock_id=%(id)s ORDER BY trade_date DESC LIMIT %(n)s",
+        {"id": stock_id, "n": n})
+    bars = list(reversed(rows))
+    out = []
+    for i in range(len(bars)):
+        window = bars[max(0, i - 8):i + 1]          # 帶前文（含趨勢判斷）
+        for key in patterns.detect(window):
+            d = bars[i]["trade_date"]
+            out.append({"date": d.isoformat() if hasattr(d, "isoformat") else str(d),
+                        "pattern": key, "name": patterns.CATALOG[key][0], "dir": patterns.CATALOG[key][1]})
+    return out
 
 
 @router.get("/{stock_id}/fundamentals")

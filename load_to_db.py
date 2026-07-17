@@ -336,26 +336,39 @@ def main():
     # 2) 大盤
     sink("market_index", load_index(args.root))
 
-    # 3) 逐檔
-    codes = [c.strip() for c in args.codes.split(",") if c.strip()] or sorted(market)
-    froot = os.path.join(args.root, "Fundamentals")
-    for i, code in enumerate(codes, 1):
-        sdir = os.path.join(args.root, code)
-        fdir = os.path.join(froot, code)
-        sink("price_daily", load_prices(sdir, code, market.get(code)))
-        sink("monthly_revenue", load_revenue(fdir, code))
-        fs_rows, items = load_financials(fdir, code)
-        sink("financial_statement", fs_rows)
-        sink("fundamentals_quarterly", build_fundamentals_q(code, items))
-        sink("dividend", load_dividend(fdir, code))
-        sink("capital_reduction", load_capreduction(fdir, code))
-        sink("inst_trades", load_inst(fdir, code))
-        sink("margin_trading", load_margin(fdir, code))
-        sink("shareholding", load_shareholding(fdir, code))
-        sink("valuation_daily", load_per(fdir, code))
-        if not args.dry_run and i % 50 == 0:
-            conn.commit()
-            print(f"  ...已處理 {i}/{len(codes)} 檔")
+    # 3) 逐檔（只讀 --tables 要的資料集；沒有任何逐檔表就整段跳過，省大量讀檔）
+    PERSTOCK = {"price_daily", "monthly_revenue", "financial_statement", "fundamentals_quarterly",
+                "dividend", "capital_reduction", "inst_trades", "margin_trading",
+                "shareholding", "valuation_daily"}
+    if want & PERSTOCK:
+        codes = [c.strip() for c in args.codes.split(",") if c.strip()] or sorted(market)
+        froot = os.path.join(args.root, "Fundamentals")
+        for i, code in enumerate(codes, 1):
+            sdir = os.path.join(args.root, code)
+            fdir = os.path.join(froot, code)
+            if "price_daily" in want:
+                sink("price_daily", load_prices(sdir, code, market.get(code)))
+            if "monthly_revenue" in want:
+                sink("monthly_revenue", load_revenue(fdir, code))
+            if {"financial_statement", "fundamentals_quarterly"} & want:
+                fs_rows, items = load_financials(fdir, code)
+                sink("financial_statement", fs_rows)
+                sink("fundamentals_quarterly", build_fundamentals_q(code, items))
+            if "dividend" in want:
+                sink("dividend", load_dividend(fdir, code))
+            if "capital_reduction" in want:
+                sink("capital_reduction", load_capreduction(fdir, code))
+            if "inst_trades" in want:
+                sink("inst_trades", load_inst(fdir, code))
+            if "margin_trading" in want:
+                sink("margin_trading", load_margin(fdir, code))
+            if "shareholding" in want:
+                sink("shareholding", load_shareholding(fdir, code))
+            if "valuation_daily" in want:
+                sink("valuation_daily", load_per(fdir, code))
+            if not args.dry_run and i % 200 == 0:
+                conn.commit()
+                print(f"  ...已處理 {i}/{len(codes)} 檔")
 
     if not args.dry_run:
         conn.commit(); cur.close(); conn.close()
