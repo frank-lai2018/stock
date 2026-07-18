@@ -81,7 +81,8 @@ def load_stock(xlsx):
         if not code:
             continue
         rows.append((code, r.get("中文名稱", "").strip(), r.get("市場別", "").strip() or None,
-                     iso(r.get("上市櫃日期", "")), r.get("產業別", "").strip() or None))
+                     iso(r.get("上市櫃日期", "")), r.get("產業別", "").strip() or None,
+                     (r.get("證券類別", "").strip() or "stock")))   # 無此欄(舊 Excel)→ 預設 stock
     return rows
 
 def load_prices(folder, code, market):
@@ -250,7 +251,7 @@ def load_per(fdir, code):
 
 # 表定義：name -> (欄位, 主鍵)
 TABLES = {
-    "stock": (["stock_id", "name", "market", "list_date", "industry"], ["stock_id"]),
+    "stock": (["stock_id", "name", "market", "list_date", "industry", "security_type"], ["stock_id"]),
     "price_daily": (["stock_id", "trade_date", "open", "high", "low", "close", "volume", "amount", "trades",
                      "adj_open", "adj_high", "adj_low", "adj_close", "adj_factor"], ["stock_id", "trade_date"]),
     "market_index": (["index_id", "trade_date", "close"], ["index_id", "trade_date"]),
@@ -291,6 +292,7 @@ def main():
     ap.add_argument("--root", default=r"H:\data", help="資料根目錄")
     ap.add_argument("--xlsx", default="台股股票代碼NEW.xlsx", help="代碼 Excel")
     ap.add_argument("--codes", default="", help="只灌指定代碼（逗號分隔）")
+    ap.add_argument("--codes-file", default="", help="從檔案讀代碼（每行一個），與 --codes 合併")
     ap.add_argument("--tables", default="all", help="只灌指定表（逗號分隔）；all=全部")
     ap.add_argument("--since", default="", help="增量：只 upsert 日期>=此日(YYYY-MM-DD)的資料列；維度表 stock 不受限")
     ap.add_argument("--dry-run", action="store_true", help="不連 DB，只驗證讀檔/轉換")
@@ -341,7 +343,11 @@ def main():
                 "dividend", "capital_reduction", "inst_trades", "margin_trading",
                 "shareholding", "valuation_daily"}
     if want & PERSTOCK:
-        codes = [c.strip() for c in args.codes.split(",") if c.strip()] or sorted(market)
+        codes = [c.strip() for c in args.codes.split(",") if c.strip()]
+        if args.codes_file:
+            with open(args.codes_file, encoding="utf-8") as f:
+                codes += [c for c in f.read().replace(",", " ").split() if c]
+        codes = sorted(dict.fromkeys(codes)) or sorted(market)   # 去重；未指定→全市場
         froot = os.path.join(args.root, "Fundamentals")
         for i, code in enumerate(codes, 1):
             sdir = os.path.join(args.root, code)

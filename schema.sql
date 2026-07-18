@@ -10,12 +10,14 @@
 
 -- ========== 維度 ==========
 CREATE TABLE IF NOT EXISTS stock (
-    stock_id    VARCHAR(10) PRIMARY KEY,   -- 股票代碼（保留前導零）
-    name        TEXT NOT NULL,             -- 中文名稱
-    market      VARCHAR(16),               -- 上市 / 上櫃 / 上市臺灣創新板 …
-    list_date   DATE,                      -- 上市櫃日期
-    industry    TEXT                       -- 產業別
+    stock_id      VARCHAR(10) PRIMARY KEY,   -- 股票代碼（保留前導零）
+    name          TEXT NOT NULL,             -- 中文名稱
+    market        VARCHAR(16),               -- 上市 / 上櫃 / 上市臺灣創新板 …
+    list_date     DATE,                      -- 上市櫃日期
+    industry      TEXT,                      -- 產業別
+    security_type VARCHAR(8) DEFAULT 'stock' -- stock=普通股 / etf=指數股票型基金
 );
+-- 既有資料庫升級：ALTER TABLE stock ADD COLUMN IF NOT EXISTS security_type VARCHAR(8) DEFAULT 'stock';
 
 -- ========== 行情 ==========
 CREATE TABLE IF NOT EXISTS price_daily (

@@ -110,7 +110,8 @@ def parse_ym(s):
 
 def main():
     ap = argparse.ArgumentParser(description="下載 TWSE 個股日成交資訊每月 CSV")
-    ap.add_argument("stocks", nargs="+", help="股票代碼（可多個），如 2330 2317")
+    ap.add_argument("stocks", nargs="*", help="股票代碼（可多個），如 2330 2317")
+    ap.add_argument("--codes-file", default="", help="從檔案讀代碼（每行一個，可含逗號/空白），與位置參數合併")
     ap.add_argument("--start", default="2011-01", help="起始月份 YYYY-MM（預設 2010-01）")
     ap.add_argument("--end", default=None, help="結束月份 YYYY-MM（預設本月）")
     ap.add_argument("--out", default=r"H:\data", help=r"輸出根目錄（預設 H:\data）")
@@ -118,12 +119,20 @@ def main():
                     help="每次請求間隔秒數（預設 4；別調太低，會被 TWSE 封）")
     args = ap.parse_args()
 
+    codes = list(args.stocks)
+    if args.codes_file:
+        with open(args.codes_file, encoding="utf-8") as f:
+            codes += [c for c in f.read().replace(",", " ").split() if c]
+    codes = sorted(dict.fromkeys(codes))              # 去重保序
+    if not codes:
+        ap.error("請提供代碼（位置參數或 --codes-file）")
+
     start_ym = parse_ym(args.start)
     end_ym = parse_ym(args.end) if args.end else (date.today().year, date.today().month)
 
     print(f"輸出根目錄：{args.out}")
-    print(f"範圍：{start_ym[0]}/{start_ym[1]:02d} ~ {end_ym[0]}/{end_ym[1]:02d}｜間隔 {args.delay}s｜共 {len(args.stocks)} 檔")
-    for s in args.stocks:
+    print(f"範圍：{start_ym[0]}/{start_ym[1]:02d} ~ {end_ym[0]}/{end_ym[1]:02d}｜間隔 {args.delay}s｜共 {len(codes)} 檔")
+    for s in codes:
         print(f"\n=== 下載 {s} ===")
         download_stock(s, start_ym, end_ym, args.out, args.delay)
     print("\n全部完成。")

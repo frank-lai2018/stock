@@ -186,11 +186,16 @@ def build_one(code, price_root, div_root):
 def main():
     ap = argparse.ArgumentParser(description="用原始日K+股利算還原股價，輸出 <股號>_adj.csv")
     ap.add_argument("stocks", nargs="*", help="股票代碼（可多個）；不給則掃 price-root 全部")
+    ap.add_argument("--codes-file", default="", help="從檔案讀代碼（每行一個，可含逗號/空白），與位置參數合併")
     ap.add_argument("--price-root", default=r"H:\data", help=r"原始日K根目錄（預設 H:\data）")
     ap.add_argument("--div-root", default=r"H:\data\Fundamentals", help=r"股利根目錄（預設 H:\data\Fundamentals）")
     args = ap.parse_args()
 
-    codes = args.stocks or find_stock_codes(args.price_root)
+    codes = list(args.stocks)
+    if args.codes_file:
+        with open(args.codes_file, encoding="utf-8") as f:
+            codes += [c for c in f.read().replace(",", " ").split() if c]
+    codes = sorted(dict.fromkeys(codes)) or find_stock_codes(args.price_root)
     if not codes:
         raise SystemExit(f"在 {args.price_root} 找不到任何個股資料夾。")
     print(f"還原：{len(codes)} 檔｜日K {args.price_root}｜股利 {args.div_root}")
