@@ -24,7 +24,7 @@ def _ensure():
         " stock_id   VARCHAR(16) NOT NULL,"
         " action     VARCHAR(4)  NOT NULL,"       # buy / sell
         " trade_date DATE        NOT NULL,"
-        " lots       NUMERIC     NOT NULL,"       # 張（1張=1000股）
+        " shares     NUMERIC     NOT NULL,"       # 股數
         " price      NUMERIC     NOT NULL,"       # 每股價
         " fee        NUMERIC,"                    # 手續費（該筆總額）
         " tax        NUMERIC,"                    # 證交稅（賣出）
@@ -38,7 +38,7 @@ class Trade(BaseModel):
     stock_id: str
     action: str                       # buy / sell
     trade_date: str                   # YYYY-MM-DD
-    lots: float
+    shares: float
     price: float
     fee: float | None = None
     tax: float | None = None
@@ -65,7 +65,7 @@ def _last_patterns(ids):
 def portfolio():
     """未平倉持股 + 每檔診斷 + 未實現損益，及組合總覽（含已實現）。"""
     _ensure()
-    txns = db.query("SELECT id, stock_id, action, trade_date, lots, price, fee, tax FROM trade_log")
+    txns = db.query("SELECT id, stock_id, action, trade_date, shares, price, fee, tax FROM trade_log")
     if not txns:
         return {"items": [], "summary": None, "realized": [], "as_of": None}
 
@@ -74,7 +74,7 @@ def portfolio():
         by.setdefault(t["stock_id"], []).append(t)
     leds = {sid: ledger.build(ts) for sid, ts in by.items()}
 
-    open_ids = [sid for sid, l in leds.items() if l["net_lots"] > 1e-9]
+    open_ids = [sid for sid, l in leds.items() if l["net_shares"] > 1e-9]
     snaps = {r["stock_id"]: r for r in
              db.query("SELECT * FROM mv_stock_snapshot WHERE stock_id = ANY(%(ids)s)", {"ids": open_ids})} \
         if open_ids else {}
@@ -89,10 +89,9 @@ def portfolio():
         l = leds[sid]
         s = snaps.get(sid)
         close = float(s["close"]) if s and s.get("close") is not None else None
-        net_lots, avg_cost = l["net_lots"], l["avg_cost"]
-        shares = net_lots * 1000
-        mkt_val = shares * close if close is not None else None
-        cost_val = shares * avg_cost if avg_cost is not None else None
+        net_shares, avg_cost = l["net_shares"], l["avg_cost"]
+        mkt_val = net_shares * close if close is not None else None
+        cost_val = net_shares * avg_cost if avg_cost is not None else None
         unreal = (mkt_val - cost_val) if (mkt_val is not None and cost_val is not None) else None
         unreal_pct = (close / avg_cost - 1) if (close is not None and avg_cost) else None
 
@@ -109,7 +108,7 @@ def portfolio():
             as_of = s["as_of_date"].isoformat()
         items.append({
             "stock_id": sid, "name": s["name"] if s else sid, "industry": s.get("industry") if s else None,
-            "lots": net_lots, "cost": avg_cost, "close": close,
+            "shares": net_shares, "cost": avg_cost, "close": close,
             "market_value": mkt_val, "unrealized": unreal, "unrealized_pct": unreal_pct,
             "realized": l["realized_pnl"],
             "score": dg["score"], "level": dg["level"], "facets": dg["facets"], "reasons": dg["reasons"],
@@ -172,7 +171,7 @@ def list_trades():
     """原始交易明細（新到舊）。"""
     _ensure()
     rows = db.query(
-        "SELECT t.id, t.stock_id, s.name, t.action, t.trade_date, t.lots, t.price, t.fee, t.tax, t.note "
+        "SELECT t.id, t.stock_id, s.name, t.action, t.trade_date, t.shares, t.price, t.fee, t.tax, t.note "
         "FROM trade_log t LEFT JOIN stock s USING(stock_id) "
         "ORDER BY t.trade_date DESC, t.id DESC")
     return rows
@@ -187,13 +186,13 @@ def add_trade(t: Trade):
         raise HTTPException(400, "action 需為 buy 或 sell")
     if not db.query("SELECT 1 FROM stock WHERE stock_id=%(id)s", {"id": sid}):
         raise HTTPException(404, f"查無此股：{sid}")
-    if t.lots is None or t.lots <= 0 or t.price is None or t.price < 0:
-        raise HTTPException(400, "張數需 >0、價格需 ≥0")
+    if t.shares is None or t.shares <= 0 or t.price is None or t.price < 0:
+        raise HTTPException(400, "股數需 >0、價格需 ≥0")
     rows = db.execute(
-        "INSERT INTO trade_log (stock_id, action, trade_date, lots, price, fee, tax, note) "
-        "VALUES (%(id)s, %(act)s, %(d)s::date, %(lots)s, %(price)s, %(fee)s, %(tax)s, %(note)s) "
+        "INSERT INTO trade_log (stock_id, action, trade_date, shares, price, fee, tax, note) "
+        "VALUES (%(id)s, %(act)s, %(d)s::date, %(shares)s, %(price)s, %(fee)s, %(tax)s, %(note)s) "
         "RETURNING id",
-        {"id": sid, "act": act, "d": t.trade_date, "lots": t.lots, "price": t.price,
+        {"id": sid, "act": act, "d": t.trade_date, "shares": t.shares, "price": t.price,
          "fee": t.fee, "tax": t.tax, "note": t.note}, returning=True)
     return {"ok": True, "id": rows[0]["id"]}
 

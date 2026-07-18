@@ -9,7 +9,7 @@ const data = ref({ items: [], summary: null, realized: [], as_of: null })
 const trades = ref([])
 const loading = ref(false)
 const tab = ref('holdings')
-const form = ref({ stock_id: '', label: '', action: 'buy', trade_date: '', lots: null, price: null, fee: null, tax: null, note: '' })
+const form = ref({ stock_id: '', label: '', action: 'buy', trade_date: '', shares: null, price: null, fee: null, tax: null, note: '' })
 
 // 評級 → 台股慣例上色（strong=紅偏多、reduce=綠偏空）
 const LEVEL = {
@@ -51,16 +51,16 @@ function onPick(item) {
 async function add() {
   if (!form.value.stock_id) return ElMessage.warning('請先搜尋並選擇股票')
   if (!form.value.trade_date) return ElMessage.warning('請選擇交易日期')
-  if (!form.value.lots || !form.value.price) return ElMessage.warning('請填張數與價格')
+  if (!form.value.shares || !form.value.price) return ElMessage.warning('請填股數與價格')
   try {
     await addTrade({
       stock_id: form.value.stock_id, action: form.value.action, trade_date: form.value.trade_date,
-      lots: form.value.lots, price: form.value.price,
+      shares: form.value.shares, price: form.value.price,
       fee: form.value.fee, tax: form.value.tax, note: form.value.note || null,
     })
     ElMessage.success('已記錄')
     form.value = { stock_id: '', label: '', action: form.value.action, trade_date: form.value.trade_date,
-                   lots: null, price: null, fee: null, tax: null, note: '' }
+                   shares: null, price: null, fee: null, tax: null, note: '' }
     await load()
   } catch (e) {
     ElMessage.error('儲存失敗：' + (e?.response?.data?.detail || e.message))
@@ -70,7 +70,7 @@ async function add() {
 async function delTrade(row) {
   try {
     await ElMessageBox.confirm(
-      `刪除這筆交易？${row.stock_id} ${row.action === 'buy' ? '買' : '賣'} ${row.lots}張 @${row.price}`,
+      `刪除這筆交易？${row.stock_id} ${row.action === 'buy' ? '買' : '賣'} ${row.shares}股 @${row.price}`,
       '刪除交易', { type: 'warning' })
   } catch { return }
   await deleteTrade(row.id)
@@ -142,7 +142,7 @@ onMounted(load)
                       :color="dirColor[r.dir]" style="color: #fff; border: 0; margin: 1px 2px">{{ r.text }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="張數" width="76"><template #default="{ row }">{{ row.lots }}</template></el-table-column>
+          <el-table-column label="股數" width="90"><template #default="{ row }">{{ money(row.shares) }}</template></el-table-column>
           <el-table-column label="均成本" width="84"><template #default="{ row }">{{ row.cost ?? '—' }}</template></el-table-column>
           <el-table-column label="現價" width="76"><template #default="{ row }">{{ row.close ?? '—' }}</template></el-table-column>
           <el-table-column label="未實現" width="150">
@@ -188,8 +188,8 @@ onMounted(load)
             </el-autocomplete>
             <el-date-picker v-model="form.trade_date" type="date" value-format="YYYY-MM-DD"
                             placeholder="交易日" style="width: 150px" />
-            <el-input-number v-model="form.lots" :min="0" :step="1" :precision="3" controls-position="right"
-                             placeholder="張數" style="width: 120px" /><span style="color: #999">張</span>
+            <el-input-number v-model="form.shares" :min="0" :step="1000" controls-position="right"
+                             placeholder="股數" style="width: 130px" /><span style="color: #999">股</span>
             <el-input-number v-model="form.price" :min="0" :step="0.5" :precision="2" controls-position="right"
                              placeholder="價格" style="width: 120px" /><span style="color: #999">元</span>
             <el-input-number v-model="form.fee" :min="0" :step="1" controls-position="right"
@@ -214,7 +214,7 @@ onMounted(load)
           <el-table-column label="股票" width="140">
             <template #default="{ row }">{{ row.stock_id }} {{ row.name }}</template>
           </el-table-column>
-          <el-table-column label="張數" width="90" prop="lots" />
+          <el-table-column label="股數" width="100"><template #default="{ row }">{{ money(row.shares) }}</template></el-table-column>
           <el-table-column label="價格" width="90" prop="price" />
           <el-table-column label="手續費" width="90"><template #default="{ row }">{{ row.fee ?? '—' }}</template></el-table-column>
           <el-table-column label="證交稅" width="90"><template #default="{ row }">{{ row.tax ?? '—' }}</template></el-table-column>
@@ -237,7 +237,7 @@ onMounted(load)
           <el-table-column label="買進日" width="120" prop="buy_date" />
           <el-table-column label="賣出日" width="120" prop="sell_date" />
           <el-table-column label="持有天" width="80"><template #default="{ row }">{{ row.days }}</template></el-table-column>
-          <el-table-column label="張數" width="80" prop="lots" />
+          <el-table-column label="股數" width="100"><template #default="{ row }">{{ money(row.shares) }}</template></el-table-column>
           <el-table-column label="買價" width="90" prop="buy_price" />
           <el-table-column label="賣價" width="90" prop="sell_price" />
           <el-table-column label="報酬率" width="100">

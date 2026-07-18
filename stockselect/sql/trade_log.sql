@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS trade_log (
     stock_id   VARCHAR(16) NOT NULL,
     action     VARCHAR(4)  NOT NULL,      -- buy / sell
     trade_date DATE        NOT NULL,      -- 交易日
-    lots       NUMERIC     NOT NULL,      -- 張數（1張=1000股，可零股小數）
+    shares     NUMERIC     NOT NULL,      -- 股數
     price      NUMERIC     NOT NULL,      -- 每股成交價
     fee        NUMERIC,                   -- 手續費（該筆總額，可留空=0）
     tax        NUMERIC,                   -- 證交稅（賣出，可留空=0）
