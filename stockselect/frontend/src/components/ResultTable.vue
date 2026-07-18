@@ -23,6 +23,12 @@ function go(row) {
     <el-table-column prop="stock_id" label="代碼" width="80" fixed />
     <el-table-column prop="name" label="名稱" width="110" fixed />
     <el-table-column prop="industry" label="產業" width="120" show-overflow-tooltip />
+    <el-table-column label="RS評等" width="90" :sort-method="cmp('rs_rating')" sortable>
+      <template #default="{ row }">
+        <b v-if="row.rs_rating != null"
+           :style="{ color: row.rs_rating >= 70 ? '#f56c6c' : '#909399' }">{{ row.rs_rating }}</b>
+      </template>
+    </el-table-column>
     <el-table-column label="近3月" width="90" :sort-method="cmp('ret_3m')" sortable>
       <template #default="{ row }">
         <span :style="{ color: row.ret_3m >= 0 ? '#f56c6c' : '#67c23a' }">{{ pct(row.ret_3m) }}</span>

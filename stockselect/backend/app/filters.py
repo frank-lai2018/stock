@@ -15,6 +15,13 @@ FILTERS = {
     "ma_bull":           ("ma_bull = %(ma_bull)s", _BOOL),
     "dist_52w_high_min": ("dist_52w_high >= %(dist_52w_high_min)s", _NUM),
     "rs_6m_min":         ("rs_6m >= %(rs_6m_min)s", _NUM),
+    # Minervini 趨勢範本
+    "rs_rating_min":     ("rs_rating >= %(rs_rating_min)s", _NUM),
+    "pct_from_low_min":  ("pct_from_low >= %(pct_from_low_min)s", _NUM),
+    "ma200_up":          ("ma200_up = %(ma200_up)s", _BOOL),
+    "trend_template":    ("trend_template = %(trend_template)s", _BOOL),
+    "vcp":               ("vcp = %(vcp)s", _BOOL),
+    "near_pivot_min":    ("near_pivot >= %(near_pivot_min)s", _NUM),
     # 基本面
     "roe_min":           ("roe >= %(roe_min)s", _NUM),
     "eps_min":           ("eps >= %(eps_min)s", _NUM),
@@ -41,7 +48,8 @@ FILTERS = {
 
 # 可排序欄位白名單
 SORT_WHITELIST = {
-    "ret_1m", "ret_3m", "ret_6m", "ret_12m", "ret_12_1", "rs_6m",
+    "ret_1m", "ret_3m", "ret_6m", "ret_12m", "ret_12_1", "rs_6m", "rs_rating", "pct_from_low",
+    "near_pivot", "tight_recent",
     "roe", "eps", "gross_margin", "net_margin", "rev_yoy",
     "per", "pbr", "dividend_yield",
     "inst_net_20d", "margin_chg_20d", "foreign_ratio", "big1000_pct", "amt20",

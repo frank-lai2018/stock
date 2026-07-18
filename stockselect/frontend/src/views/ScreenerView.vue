@@ -51,6 +51,7 @@ function applyStrategy(key) {
   for (const k in filters) delete filters[k]
   Object.assign(filters, s.filters)
   sort.value = s.sort || 'ret_3m'
+  if (s.limit) limit.value = s.limit   // 策略可自帶顯示筆數（趨勢範本=100 供比對）
   search()
 }
 </script>

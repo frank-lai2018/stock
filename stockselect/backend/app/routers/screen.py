@@ -37,6 +37,19 @@ STRATEGIES = {
                     "margin_chg_20d_max": 0, "in_universe": True},
         "sort": "inst_net_20d",
     },
+    "minervini": {
+        "name": "趨勢範本 (Minervini)",
+        "desc": "《超級績效》8 條趨勢範本：站上50/150/200MA、多頭排列、200MA翻揚、距52週高<25%、RS≥70",
+        "filters": {"trend_template": True, "in_universe": True},
+        "sort": "rs_rating",
+        "limit": 100,
+    },
+    "vcp": {
+        "name": "VCP 收縮買點 (Minervini)",
+        "desc": "《超級績效》VCP：趨勢範本成立 + 近期波動收縮(振幅≤10%且較前期更緊) + 量縮 + 貼近平台高點(樞紐)",
+        "filters": {"vcp": True, "in_universe": True},
+        "sort": "rs_rating",
+    },
 }
 
 
