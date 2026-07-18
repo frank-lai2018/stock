@@ -35,3 +35,27 @@ def query(sql, params=None):
     with _cursor() as cur:
         cur.execute(sql, params or {})
         return cur.fetchall()
+
+
+@contextmanager
+def _wcursor():
+    pool = _get_pool()
+    conn = pool.getconn()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            yield cur
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        pool.putconn(conn)
+
+
+def execute(sql, params=None, returning=False):
+    """執行寫入（INSERT/UPDATE/DELETE），commit。returning=True 時回傳 RETURNING 結果。"""
+    with _wcursor() as cur:
+        cur.execute(sql, params or {})
+        if returning:
+            return cur.fetchall()
+        return cur.rowcount

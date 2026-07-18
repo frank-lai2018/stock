@@ -7,6 +7,7 @@ export default createRouter({
     { path: '/', name: 'home', component: HomeView },
     { path: '/screener', name: 'screener', component: () => import('../views/ScreenerView.vue') },
     { path: '/patterns', name: 'patterns', component: () => import('../views/PatternScreenerView.vue') },
+    { path: '/portfolio', name: 'portfolio', component: () => import('../views/PortfolioView.vue') },
     { path: '/stock/:id', name: 'stock', component: () => import('../views/StockDetailView.vue') },
   ],
 })

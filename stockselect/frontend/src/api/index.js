@@ -33,4 +33,9 @@ export const getLevels = (id, bars = 120) =>
 export const getStockVpa = (id, days = 90) =>
   api.get(`/stock/${id}/vpa`, { params: { days } }).then((r) => r.data)
 
+// 持股診斷
+export const getPortfolio = () => api.get('/portfolio').then((r) => r.data)
+export const saveHolding = (h) => api.post('/portfolio', h).then((r) => r.data)
+export const deleteHolding = (id) => api.delete(`/portfolio/${id}`).then((r) => r.data)
+
 export default api
