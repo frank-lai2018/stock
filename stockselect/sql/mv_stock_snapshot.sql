@@ -1,7 +1,7 @@
 SET client_encoding = 'UTF8';   -- 本檔為 UTF-8；Windows psql 預設 BIG5 會讀壞中文，故先宣告
 
 -- mv_stock_snapshot — 選股特徵快照（每檔一列、最新交易日）
--- 動能/基本面/估值/籌碼 + Minervini 趨勢範本 + VCP 波動收縮買點
+-- 動能/基本面/估值/籌碼 + Minervini 趨勢範本 + VCP 收縮 + 主力承接/出貨(VPA)
 -- point-in-time：報酬/均線一律用 adj_close（還原價）、交易日位移（row_number）。
 --
 -- 建立/重建：psql -U frank -d twstock -f stockselect/sql/mv_stock_snapshot.sql
@@ -11,13 +11,26 @@ DROP MATERIALIZED VIEW IF EXISTS mv_stock_snapshot;
 
 CREATE MATERIALIZED VIEW mv_stock_snapshot AS
 SELECT v.*,
-    -- VCP 波動收縮買點（《超級績效》）：趨勢範本成立 + 波動收縮 + 量縮 + 貼近平台高點(樞紐)
-    (v.trend_template                                        -- 前提：8 條趨勢範本
-     AND v.tight_recent <= 0.10                              -- 近 15 日振幅 ≤10%（已收斂到位）
-     AND v.tight_recent < v.tight_prior * 0.85               -- 近期明顯比前期更緊（波動收縮）
-     AND v.vol_dry < 0.80                                    -- 近 10 日均量 < 前期八成（量縮）
-     AND v.near_pivot >= 0.90                                -- 收盤貼近 60 日平台高點（樞紐 10% 內）
-    ) AS vcp
+    -- VCP 波動收縮買點（《超級績效》）：趨勢範本 + 波動收縮 + 量縮 + 貼近平台高點
+    (v.trend_template
+     AND v.tight_recent <= 0.10
+     AND v.tight_recent < v.tight_prior * 0.85
+     AND v.vol_dry < 0.80
+     AND v.near_pivot >= 0.90
+    ) AS vcp,
+    -- 主力承接（VPA 偏多）：近20日承接訊號淨多 + 大戶或法人進場
+    (v.in_universe
+     AND v.vpa_accum_20d > v.vpa_distrib_20d
+     AND v.vpa_accum_20d >= 2
+     AND (coalesce(v.big1000_chg, 0) > 0 OR coalesce(v.inst_net_20d, 0) > 0)
+    ) AS mf_accumulate,
+    -- 主力出貨（VPA 偏空・警示）：近20日出貨訊號淨多 + 大戶或法人退場 + 高檔
+    (v.in_universe
+     AND v.vpa_distrib_20d > v.vpa_accum_20d
+     AND v.vpa_distrib_20d >= 2
+     AND (coalesce(v.big1000_chg, 0) < 0 OR coalesce(v.inst_net_20d, 0) < 0)
+     AND v.near_pivot >= 0.85
+    ) AS mf_distribute
 FROM (
     SELECT u.*,
         -- Minervini 趨勢範本 8 條（RS 第8條用 rs_rating>=70）
@@ -36,7 +49,8 @@ FROM (
         FROM (
             WITH d AS (SELECT max(trade_date) AS td FROM price_daily),
             ranked AS (
-                SELECT p.stock_id, p.trade_date, p.close, p.adj_close, p.amount, p.volume,
+                SELECT p.stock_id, p.trade_date, p.close, p.adj_close, p.adj_high, p.adj_low,
+                       p.amount, p.volume,
                        row_number() OVER (PARTITION BY p.stock_id ORDER BY p.trade_date DESC) AS rn
                 FROM price_daily p CROSS JOIN d
                 WHERE p.trade_date > d.td - 400
@@ -69,6 +83,41 @@ FROM (
                     avg(volume)    FILTER (WHERE rn BETWEEN 11 AND 50)  AS vol_prior,
                     count(*)                                AS trading_days
                 FROM ranked GROUP BY stock_id
+            ),
+            -- VPA 每根訊號（門檻同 vpa.py）：以「前20根」均量/均振幅為基準
+            vpabars AS (
+                SELECT stock_id, rn,
+                    adj_close AS c, adj_high AS hi, adj_low AS lo, volume AS vol,
+                    avg(volume)            OVER w AS vavg,
+                    avg(adj_high - adj_low) OVER w AS savg,
+                    lag(adj_close) OVER (PARTITION BY stock_id ORDER BY trade_date) AS pc
+                FROM ranked
+                WINDOW w AS (PARTITION BY stock_id ORDER BY trade_date ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING)
+            ),
+            vpasig AS (
+                SELECT stock_id, rn,
+                    (down AND ((vr >= 2.0 AND sr >= 1.5 AND pos >= 0.45)   -- 停損量
+                            OR (vr >= 1.5 AND pos >= 0.6)                  -- 承接量
+                            OR (vr <= 0.6 AND sr <= 0.6))) AS accum        -- 測試無賣壓
+                    ,
+                    ((up AND vr <= 0.6 AND sr <= 0.6)                      -- 無買氣
+                     OR (vr >= 1.5 AND sr <= 0.6)                          -- 量價背離
+                     OR (up AND vr >= 2.0 AND sr >= 1.5 AND pos <= 0.5)) AS distrib  -- 買盤高潮
+                FROM (
+                    SELECT stock_id, rn,
+                        vol / NULLIF(vavg, 0)      AS vr,
+                        (hi - lo) / NULLIF(savg, 0) AS sr,
+                        (c - lo) / NULLIF(hi - lo, 0) AS pos,
+                        c > pc AS up, c < pc AS down
+                    FROM vpabars
+                    WHERE vavg > 0 AND savg > 0 AND (hi - lo) > 0 AND pc IS NOT NULL
+                ) q
+            ),
+            vpa AS (
+                SELECT stock_id,
+                    count(*) FILTER (WHERE rn <= 20 AND accum)   AS vpa_accum_20d,
+                    count(*) FILTER (WHERE rn <= 20 AND distrib) AS vpa_distrib_20d
+                FROM vpasig GROUP BY stock_id
             ),
             idx AS (
                 SELECT max(close) FILTER (WHERE rn = 1)   AS i0,
@@ -107,8 +156,14 @@ FROM (
             ),
             sh AS (SELECT DISTINCT ON (stock_id) stock_id, foreign_ratio
                    FROM shareholding ORDER BY stock_id, trade_date DESC),
-            big AS (SELECT DISTINCT ON (stock_id) stock_id, pct AS big1000_pct
-                    FROM shareholding_dist WHERE level = 15 ORDER BY stock_id, data_date DESC)
+            -- 千張大戶%（最新）+ 近5期(約一月)變化
+            big AS (
+                SELECT stock_id,
+                       (array_agg(pct ORDER BY data_date DESC))[1] AS big1000_pct,
+                       (array_agg(pct ORDER BY data_date DESC))[1]
+                         - (array_agg(pct ORDER BY data_date DESC))[5] AS big1000_chg
+                FROM shareholding_dist WHERE level = 15 GROUP BY stock_id
+            )
 
             SELECT
                 s.stock_id, s.name, s.market, s.industry,
@@ -132,11 +187,14 @@ FROM (
                 (px.c0/NULLIF(px.c6m,0)) / NULLIF((SELECT i0/NULLIF(i6m,0) FROM idx),0) - 1 AS rs_6m,
                 -- RS 原始分數（近季加權；外層轉百分位 rs_rating）
                 (2 * px.c0/NULLIF(px.c3m,0) + px.c0/NULLIF(px.c6m,0) + px.c0/NULLIF(px.c12m,0)) AS rs_raw,
-                -- VCP 特徵：近15日振幅 / 前期(16-40日)振幅 / 近10日量對前期量 / 貼近60日平台高點
+                -- VCP 特徵
                 round((px.hi15 - px.lo15) / NULLIF(px.c0,0), 4)                    AS tight_recent,
                 round((px.hi_prior - px.lo_prior) / NULLIF(px.c0,0), 4)            AS tight_prior,
                 round(px.vol10 / NULLIF(px.vol_prior,0), 3)                        AS vol_dry,
                 round(px.c0 / NULLIF(px.hi60,0), 4)                               AS near_pivot,
+                -- VPA 主力訊號（近20日承接/出貨計數）
+                coalesce(vpa.vpa_accum_20d, 0)                  AS vpa_accum_20d,
+                coalesce(vpa.vpa_distrib_20d, 0)                AS vpa_distrib_20d,
                 -- 量能/品質
                 round(px.amt20)                                 AS amt20,
                 px.trading_days,
@@ -147,10 +205,11 @@ FROM (
                 val.per, val.pbr, val.dividend_yield,
                 -- 籌碼
                 inst.inst_net_20d, mg.margin_balance, mg.margin_chg_20d,
-                sh.foreign_ratio, big.big1000_pct,
+                sh.foreign_ratio, big.big1000_pct, round(big.big1000_chg, 4) AS big1000_chg,
                 (px.trading_days >= 60 AND px.amt20 >= 5000000) AS in_universe
             FROM stock s
             JOIN px            ON px.stock_id = s.stock_id
+            LEFT JOIN vpa      ON vpa.stock_id = s.stock_id
             LEFT JOIN fq       ON fq.stock_id = s.stock_id
             LEFT JOIN rev      ON rev.stock_id = s.stock_id
             LEFT JOIN val      ON val.stock_id = s.stock_id
@@ -166,3 +225,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_snapshot_stock ON mv_stock_snapshot (stock_
 CREATE INDEX IF NOT EXISTS idx_snapshot_universe ON mv_stock_snapshot (in_universe);
 CREATE INDEX IF NOT EXISTS idx_snapshot_trend ON mv_stock_snapshot (trend_template);
 CREATE INDEX IF NOT EXISTS idx_snapshot_vcp ON mv_stock_snapshot (vcp);
+CREATE INDEX IF NOT EXISTS idx_snapshot_accum ON mv_stock_snapshot (mf_accumulate);
+CREATE INDEX IF NOT EXISTS idx_snapshot_distrib ON mv_stock_snapshot (mf_distribute);

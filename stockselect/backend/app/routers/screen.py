@@ -50,6 +50,18 @@ STRATEGIES = {
         "filters": {"vcp": True, "in_universe": True},
         "sort": "rs_rating",
     },
+    "mf_accumulate": {
+        "name": "主力承接",
+        "desc": "《不說謊的價量》VPA：近20日承接訊號(停損量/承接量/測試無賣壓)淨多 + 大戶或法人進場",
+        "filters": {"mf_accumulate": True, "in_universe": True},
+        "sort": "vpa_accum_20d",
+    },
+    "mf_distribute": {
+        "name": "主力出貨",
+        "desc": "《不說謊的價量》VPA 警示：近20日出貨訊號(無買氣/量價背離/買盤高潮)淨多 + 大戶或法人退場 + 高檔",
+        "filters": {"mf_distribute": True, "in_universe": True},
+        "sort": "vpa_distrib_20d",
+    },
 }
 
 

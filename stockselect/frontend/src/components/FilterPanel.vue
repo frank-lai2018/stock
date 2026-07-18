@@ -10,6 +10,7 @@ const emit = defineEmits(['search', 'apply', 'update:sort', 'update:limit'])
 const sortCols = [
   'ret_3m', 'ret_12_1', 'rs_rating', 'roe', 'per', 'dividend_yield',
   'rev_yoy', 'inst_net_20d', 'big1000_pct', 'amt20',
+  'vpa_accum_20d', 'vpa_distrib_20d',
 ]
 </script>
 
@@ -38,6 +39,8 @@ const sortCols = [
       </el-form-item>
       <el-form-item label="趨勢範本"><el-switch v-model="filters.trend_template" /></el-form-item>
       <el-form-item label="VCP 收縮"><el-switch v-model="filters.vcp" /></el-form-item>
+      <el-form-item label="主力承接"><el-switch v-model="filters.mf_accumulate" /></el-form-item>
+      <el-form-item label="主力出貨"><el-switch v-model="filters.mf_distribute" /></el-form-item>
       <el-form-item label="ROE≥"><el-input-number v-model="filters.roe_min" controls-position="right" /></el-form-item>
       <el-form-item label="營收YoY≥"><el-input-number v-model="filters.rev_yoy_min" controls-position="right" /></el-form-item>
       <el-form-item label="負債比≤"><el-input-number v-model="filters.debt_ratio_max" controls-position="right" /></el-form-item>

@@ -22,6 +22,11 @@ FILTERS = {
     "trend_template":    ("trend_template = %(trend_template)s", _BOOL),
     "vcp":               ("vcp = %(vcp)s", _BOOL),
     "near_pivot_min":    ("near_pivot >= %(near_pivot_min)s", _NUM),
+    # 主力 VPA
+    "mf_accumulate":     ("mf_accumulate = %(mf_accumulate)s", _BOOL),
+    "mf_distribute":     ("mf_distribute = %(mf_distribute)s", _BOOL),
+    "vpa_accum_min":     ("vpa_accum_20d >= %(vpa_accum_min)s", _NUM),
+    "vpa_distrib_min":   ("vpa_distrib_20d >= %(vpa_distrib_min)s", _NUM),
     # 基本面
     "roe_min":           ("roe >= %(roe_min)s", _NUM),
     "eps_min":           ("eps >= %(eps_min)s", _NUM),
@@ -52,7 +57,8 @@ SORT_WHITELIST = {
     "near_pivot", "tight_recent",
     "roe", "eps", "gross_margin", "net_margin", "rev_yoy",
     "per", "pbr", "dividend_yield",
-    "inst_net_20d", "margin_chg_20d", "foreign_ratio", "big1000_pct", "amt20",
+    "inst_net_20d", "margin_chg_20d", "foreign_ratio", "big1000_pct", "big1000_chg", "amt20",
+    "vpa_accum_20d", "vpa_distrib_20d",
 }
 
 

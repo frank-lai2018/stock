@@ -57,6 +57,13 @@ function go(row) {
     <el-table-column label="千張大戶%" width="100" :sort-method="cmp('big1000_pct')" sortable>
       <template #default="{ row }">{{ row.big1000_pct }}</template>
     </el-table-column>
+    <el-table-column label="承接/出貨" width="100" :sort-method="cmp('vpa_accum_20d')" sortable>
+      <template #default="{ row }">
+        <span style="color: #f56c6c">{{ row.vpa_accum_20d ?? 0 }}</span>
+        <span style="color: #999"> / </span>
+        <span style="color: #67c23a">{{ row.vpa_distrib_20d ?? 0 }}</span>
+      </template>
+    </el-table-column>
     <el-table-column label="站季線" width="80">
       <template #default="{ row }">
         <el-tag v-if="row.above_ma60" type="success" size="small">是</el-tag>
