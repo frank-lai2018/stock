@@ -178,4 +178,4 @@ def fundamentals(stock_id: str):
         "SELECT period_date, revenue, net_income, eps, roe, gross_margin, net_margin, debt_ratio "
         "FROM fundamentals_quarterly WHERE stock_id=%(id)s ORDER BY period_date DESC LIMIT 12",
         {"id": stock_id})
-    return {"monthly_revenue": rev, "quarterly": list(reversed(fq))}
+    return {"monthly_revenue": rev, "quarterly": fq}   # 皆降序（新→舊）

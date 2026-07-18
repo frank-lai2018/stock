@@ -11,6 +11,7 @@ const pct = (v) => (v == null ? '' : (Number(v) * 100).toFixed(1) + '%')
 const pct1 = (v) => (v == null ? '' : Number(v).toFixed(2) + '%')
 const num = (v) => (v == null ? '' : Number(v).toLocaleString('en-US'))
 const cmp = (k) => (a, b) => (a[k] ?? -Infinity) - (b[k] ?? -Infinity)
+const dirColor = { bull: '#EA4C4C', bear: '#3F9E5A', neutral: '#909399' }   // 紅多綠空
 
 function go(row) {
   router.push(`/stock/${row.stock_id}`)
@@ -27,6 +28,13 @@ function go(row) {
       <template #default="{ row }">
         <b v-if="row.rs_rating != null"
            :style="{ color: row.rs_rating >= 70 ? '#f56c6c' : '#909399' }">{{ row.rs_rating }}</b>
+      </template>
+    </el-table-column>
+    <el-table-column label="K棒型態" width="130">
+      <template #default="{ row }">
+        <el-tag v-for="(p, i) in (row.last_patterns || [])" :key="i"
+                :color="dirColor[p.dir]" size="small"
+                style="color: #fff; border: 0; margin: 1px 2px">{{ p.name }}</el-tag>
       </template>
     </el-table-column>
     <el-table-column label="近3月" width="90" :sort-method="cmp('ret_3m')" sortable>

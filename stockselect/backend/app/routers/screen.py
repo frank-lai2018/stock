@@ -1,9 +1,28 @@
 """選股 API：預設策略 + 條件篩選。"""
 from fastapi import APIRouter
 
-from .. import db
+from .. import db, patterns
 from ..filters import SORT_WHITELIST, build_where
 from ..schemas import ScreenRequest
+
+
+def _attach_last_pattern(rows):
+    """為每列附上「最後交易日 K 棒」的陰陽線型態（無則空清單）。單次查詢批次處理。"""
+    ids = [r["stock_id"] for r in rows]
+    if not ids:
+        return
+    bars_rows = db.query(
+        "SELECT stock_id, trade_date, adj_open AS open, adj_high AS high, adj_low AS low, adj_close AS close "
+        "FROM (SELECT stock_id, trade_date, adj_open, adj_high, adj_low, adj_close, "
+        "  row_number() OVER (PARTITION BY stock_id ORDER BY trade_date DESC) AS rn "
+        "  FROM price_daily WHERE stock_id = ANY(%(ids)s)) z "
+        "WHERE rn <= 12 ORDER BY stock_id, trade_date", {"ids": ids})
+    by = {}
+    for b in bars_rows:
+        by.setdefault(b["stock_id"], []).append(b)
+    for r in rows:
+        keys = patterns.detect(by.get(r["stock_id"], []))     # 回傳「最後一根」的型態
+        r["last_patterns"] = [{"name": patterns.CATALOG[k][0], "dir": patterns.CATALOG[k][1]} for k in keys]
 
 router = APIRouter(prefix="/api", tags=["screen"])
 
@@ -94,5 +113,6 @@ def screen(req: ScreenRequest):
     sql = (f"SELECT * FROM mv_stock_snapshot{where} "
            f"ORDER BY {sort} {order} NULLS LAST LIMIT {limit}")
     rows = db.query(sql, params)
+    _attach_last_pattern(rows)
     as_of = rows[0]["as_of_date"].isoformat() if rows and rows[0].get("as_of_date") else None
     return {"count": len(rows), "as_of": as_of, "items": rows}
