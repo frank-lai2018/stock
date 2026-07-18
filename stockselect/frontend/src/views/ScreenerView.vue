@@ -13,6 +13,10 @@ const items = ref([])
 const count = ref(0)
 const asOf = ref('')
 const loading = ref(false)
+const appliedTag = ref('')   // 目前套用的策略 tag（手動篩選則清空）
+
+// 策略 tag 顯示名對應（其他未列者顯示策略原名）
+const TAG_LABELS = { minervini: 'VCP口袋名單' }
 
 onMounted(async () => {
   try {
@@ -31,7 +35,8 @@ function cleanFilters() {
   return out
 }
 
-async function search() {
+async function search(fromStrategy = false) {
+  if (!fromStrategy) appliedTag.value = ''   // 手動篩選 → 非具名策略，清掉 tag
   loading.value = true
   try {
     const res = await runScreen({ filters: cleanFilters(), sort: sort.value, desc: true, limit: limit.value })
@@ -52,7 +57,8 @@ function applyStrategy(key) {
   Object.assign(filters, s.filters)
   sort.value = s.sort || 'ret_3m'
   if (s.limit) limit.value = s.limit   // 策略可自帶顯示筆數（趨勢範本=100 供比對）
-  search()
+  appliedTag.value = TAG_LABELS[key] || s.name   // 標題列顯示套用的 tag
+  search(true)
 }
 </script>
 
@@ -67,6 +73,8 @@ function applyStrategy(key) {
       <div style="margin-bottom: 8px">
         <el-tag v-if="asOf">資料日 {{ asOf }}</el-tag>
         <el-tag type="success" style="margin-left: 8px">符合 {{ count }} 檔</el-tag>
+        <el-tag v-if="appliedTag" type="danger" effect="dark" size="large"
+                style="margin-left: 8px">{{ appliedTag }}</el-tag>
         <span style="margin-left: 12px; color: #999">點任一列看個股 K 線</span>
       </div>
       <ResultTable :items="items" :loading="loading" />
