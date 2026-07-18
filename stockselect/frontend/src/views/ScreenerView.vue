@@ -1,6 +1,7 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import * as XLSX from 'xlsx'
 import { getStrategies, runScreen } from '../api'
 import FilterPanel from '../components/FilterPanel.vue'
 import ResultTable from '../components/ResultTable.vue'
@@ -73,6 +74,9 @@ function csvEscape(s) {
   s = String(s)
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s
 }
+function fname(ext) {
+  return `screen_${(asOf.value || '').replace(/-/g, '') || 'result'}.${ext}`
+}
 function download() {
   if (!items.value.length) return ElMessage.warning('目前沒有結果可下載')
   const header = EXPORT_COLS.map((c) => c[1]).join(',')
@@ -81,9 +85,25 @@ function download() {
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
   const a = document.createElement('a')
   a.href = url
-  a.download = `screen_${(asOf.value || '').replace(/-/g, '') || 'result'}.csv`
+  a.download = fname('csv')
   a.click()
   URL.revokeObjectURL(url)
+}
+function downloadXlsx() {
+  if (!items.value.length) return ElMessage.warning('目前沒有結果可下載')
+  const aoa = [EXPORT_COLS.map((c) => c[1])]                 // 表頭
+  for (const r of items.value) {
+    aoa.push(EXPORT_COLS.map((c) => {
+      const v = cell(r, c[0], c[2])                          // 數值欄回傳數字型，讓 Excel 當數字
+      return (c[2] === 'pct' || ['rs_rating', 'roe', 'per', 'dividend_yield', 'rev_yoy',
+        'inst_net_20d', 'big1000_pct', 'vpa_accum_20d', 'vpa_distrib_20d', 'close'].includes(c[0]))
+        && v !== '' ? Number(v) : v
+    }))
+  }
+  const ws = XLSX.utils.aoa_to_sheet(aoa)
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, '選股結果')
+  XLSX.writeFile(wb, fname('xlsx'))
 }
 
 function applyStrategy(key) {
@@ -113,9 +133,10 @@ function applyStrategy(key) {
         <el-tag type="success" style="margin-left: 8px">符合 {{ count }} 檔</el-tag>
         <el-tag v-if="appliedTag" type="danger" effect="dark" size="large"
                 style="margin-left: 8px">{{ appliedTag }}</el-tag>
-        <el-button size="small" style="margin-left: 12px" :disabled="!items.length" @click="download">
-          ⬇ 下載 CSV
+        <el-button size="small" type="success" style="margin-left: 12px" :disabled="!items.length" @click="downloadXlsx">
+          ⬇ 下載 Excel
         </el-button>
+        <el-button size="small" :disabled="!items.length" @click="download">⬇ CSV</el-button>
         <span style="margin-left: 12px; color: #999">點任一列看個股 K 線</span>
       </div>
       <ResultTable :items="items" :loading="loading" />
