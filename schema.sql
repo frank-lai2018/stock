@@ -19,6 +19,18 @@ CREATE TABLE IF NOT EXISTS stock (
 );
 -- 既有資料庫升級：ALTER TABLE stock ADD COLUMN IF NOT EXISTS security_type VARCHAR(8) DEFAULT 'stock';
 
+-- ETF 每日淨值 / 規模（來源：mis.twse all_etf.txt 揭露淨值；折溢價由市價與淨值計算）
+CREATE TABLE IF NOT EXISTS etf_daily (
+    stock_id    VARCHAR(10) NOT NULL,
+    trade_date  DATE        NOT NULL,
+    nav         NUMERIC,                   -- 每單位淨值（揭露/估計，收盤後≈官方）
+    prev_nav    NUMERIC,                   -- 前一交易日淨值
+    units       NUMERIC,                   -- 發行受益權單位數
+    aum         NUMERIC,                   -- 規模 = units × nav
+    nav_chg_pct NUMERIC,                   -- 淨值漲跌%
+    PRIMARY KEY (stock_id, trade_date)
+);
+
 -- ========== 行情 ==========
 CREATE TABLE IF NOT EXISTS price_daily (
     stock_id    VARCHAR(10) NOT NULL REFERENCES stock(stock_id),

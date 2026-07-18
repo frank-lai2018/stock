@@ -2,13 +2,14 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getStock, getFundamentals, getStockPatterns, getStockVpa, getDividends } from '../api'
+import { getStock, getFundamentals, getStockPatterns, getStockVpa, getDividends, getEtfInfo } from '../api'
 import PriceChart from '../components/PriceChart.vue'
 import MarginPanel from '../components/MarginPanel.vue'
 
 const pats = ref([])
 const vpa = ref([])
 const div = ref(null)
+const etf = ref(null)
 const dirColor = { bull: '#EA4C4C', bear: '#3F9E5A', neutral: '#909399' }
 const dirText = { bull: '偏多', bear: '偏空', neutral: '中性' }
 const PHASES = ['承接', '測試', '出貨']
@@ -37,6 +38,7 @@ onMounted(async () => {
     pats.value = (await getStockPatterns(route.params.id, 90)).reverse()   // 新到舊
     vpa.value = (await getStockVpa(route.params.id, 90)).reverse()          // 新到舊
     div.value = await getDividends(route.params.id)
+    if (s.value?.security_type === 'etf') etf.value = await getEtfInfo(route.params.id)
   } catch (e) {
     ElMessage.error('載入失敗：' + (e?.response?.data?.detail || e.message))
   }
@@ -63,6 +65,29 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateCols))
       <el-descriptions-item label="外資持股%">{{ s.foreign_ratio ?? '—' }}</el-descriptions-item>
       <el-descriptions-item label="千張大戶%">{{ s.big1000_pct ?? '—' }}</el-descriptions-item>
     </el-descriptions>
+
+    <el-card v-if="etf && etf.latest" shadow="never" style="margin-top: 16px" header="ETF 淨值 / 折溢價 / 規模">
+      <el-descriptions :column="cols" border>
+        <el-descriptions-item label="淨值">{{ etf.latest.nav ?? '—' }}</el-descriptions-item>
+        <el-descriptions-item label="市價">{{ etf.latest.close ?? '—' }}</el-descriptions-item>
+        <el-descriptions-item label="折溢價">
+          <span :style="{ color: (etf.latest.premium_discount || 0) >= 0 ? '#EA4C4C' : '#3F9E5A' }">
+            {{ etf.latest.premium_discount == null ? '—'
+              : (etf.latest.premium_discount > 0 ? '+' : '') + etf.latest.premium_discount + '%' }}
+          </span>
+        </el-descriptions-item>
+        <el-descriptions-item label="規模(AUM)">
+          {{ etf.latest.aum ? (etf.latest.aum / 1e8).toFixed(2) + ' 億' : '—' }}
+        </el-descriptions-item>
+        <el-descriptions-item label="單位數">
+          {{ etf.latest.units ? Number(etf.latest.units).toLocaleString('en-US') : '—' }}
+        </el-descriptions-item>
+        <el-descriptions-item label="淨值日">{{ String(etf.latest.trade_date).slice(0, 10) }}</el-descriptions-item>
+      </el-descriptions>
+      <div style="margin-top: 6px; color: #999; font-size: 12px">
+        折溢價 = (市價 − 淨值) / 淨值；淨值為投信揭露值，僅供參考。
+      </div>
+    </el-card>
 
     <el-card shadow="never" style="margin-top: 16px" header="技術線圖">
       <PriceChart :stock-id="String(route.params.id)" />

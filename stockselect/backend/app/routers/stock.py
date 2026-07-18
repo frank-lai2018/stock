@@ -168,6 +168,27 @@ def stock_vpa(stock_id: str, days: int = 90):
     return out
 
 
+@router.get("/{stock_id}/etf")
+def etf_info(stock_id: str):
+    """ETF 淨值/規模 + 折溢價（折溢價 = (收盤市價 − 淨值)/淨值）。無資料回 latest=None。"""
+    rows = db.query(
+        "SELECT trade_date, nav, prev_nav, units, aum, nav_chg_pct FROM etf_daily "
+        "WHERE stock_id=%(id)s ORDER BY trade_date DESC LIMIT 60", {"id": stock_id})
+    if not rows:
+        return {"latest": None, "history": []}
+    latest = dict(rows[0])
+    px = db.query("SELECT close FROM price_daily WHERE stock_id=%(id)s AND trade_date=%(d)s",
+                  {"id": stock_id, "d": latest["trade_date"]})
+    if not px:                                        # 淨值日無對應收盤 → 取最近收盤
+        px = db.query("SELECT close FROM price_daily WHERE stock_id=%(id)s "
+                      "ORDER BY trade_date DESC LIMIT 1", {"id": stock_id})
+    close = float(px[0]["close"]) if px and px[0].get("close") is not None else None
+    nav = float(latest["nav"]) if latest.get("nav") is not None else None
+    latest["close"] = close
+    latest["premium_discount"] = round((close - nav) / nav * 100, 3) if (close and nav) else None
+    return {"latest": latest, "history": list(reversed(rows))}
+
+
 @router.get("/{stock_id}/dividends")
 def dividends(stock_id: str):
     """配息/配股歷史（近 3 年）+ 近 12 個月現金配息合計與年化配息率（ETF/個股皆適用）。"""

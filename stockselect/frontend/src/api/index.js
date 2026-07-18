@@ -34,6 +34,8 @@ export const getStockVpa = (id, days = 90) =>
   api.get(`/stock/${id}/vpa`, { params: { days } }).then((r) => r.data)
 export const getDividends = (id) =>
   api.get(`/stock/${id}/dividends`).then((r) => r.data)
+export const getEtfInfo = (id) =>
+  api.get(`/stock/${id}/etf`).then((r) => r.data)
 
 // 持股診斷 / 交易帳
 export const getPortfolio = () => api.get('/portfolio').then((r) => r.data)
