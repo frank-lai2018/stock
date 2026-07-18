@@ -5,7 +5,7 @@ import { getStrategies, runScreen } from '../api'
 import FilterPanel from '../components/FilterPanel.vue'
 import ResultTable from '../components/ResultTable.vue'
 
-const filters = reactive({ in_universe: true })
+const filters = reactive({ in_universe: true, security_type: '' })
 const sort = ref('ret_3m')
 const limit = ref(50)
 const strategies = ref({})
@@ -53,8 +53,10 @@ async function search(fromStrategy = false) {
 function applyStrategy(key) {
   const s = strategies.value[key]
   if (!s) return
+  const keepType = filters.security_type          // 套用策略保留「證券類別」選擇
   for (const k in filters) delete filters[k]
   Object.assign(filters, s.filters)
+  filters.security_type = keepType ?? ''
   sort.value = s.sort || 'ret_3m'
   if (s.limit) limit.value = s.limit   // 策略可自帶顯示筆數（趨勢範本=100 供比對）
   appliedTag.value = TAG_LABELS[key] || s.name   // 標題列顯示套用的 tag

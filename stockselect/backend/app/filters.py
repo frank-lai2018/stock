@@ -48,6 +48,7 @@ FILTERS = {
     "amt20_min":         ("amt20 >= %(amt20_min)s", _NUM),
     "industry":          ("industry = %(industry)s", _STR),
     "market":            ("market = %(market)s", _STR),
+    "security_type":     ("security_type = %(security_type)s", _STR),   # stock / etf
     "in_universe":       ("in_universe = %(in_universe)s", _BOOL),
 }
 

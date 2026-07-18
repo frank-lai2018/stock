@@ -22,7 +22,12 @@ function go(row) {
   <el-table :data="items" v-loading="loading" height="74vh" stripe @row-click="go"
             style="cursor: pointer" :default-sort="{ prop: '', order: '' }">
     <el-table-column prop="stock_id" label="代碼" width="80" fixed />
-    <el-table-column prop="name" label="名稱" width="110" fixed />
+    <el-table-column label="名稱" width="130" fixed>
+      <template #default="{ row }">
+        {{ row.name }}
+        <el-tag v-if="row.security_type === 'etf'" size="small" type="warning" effect="plain">ETF</el-tag>
+      </template>
+    </el-table-column>
     <el-table-column prop="industry" label="產業" width="120" show-overflow-tooltip />
     <el-table-column label="RS評等" width="90" :sort-method="cmp('rs_rating')" sortable>
       <template #default="{ row }">

@@ -24,6 +24,13 @@ const sortCols = [
 
     <el-divider>條件</el-divider>
     <el-form label-width="96px" size="small">
+      <el-form-item label="證券類別">
+        <el-select v-model="filters.security_type" style="width: 160px">
+          <el-option label="全部（含 ETF）" value="" />
+          <el-option label="只看個股" value="stock" />
+          <el-option label="只看 ETF" value="etf" />
+        </el-select>
+      </el-form-item>
       <el-form-item label="近3月報酬≥">
         <el-input-number v-model="filters.ret_3m_min" :step="0.05" :precision="2" controls-position="right" />
         <span style="margin-left:6px;color:#999">0.1=10%</span>

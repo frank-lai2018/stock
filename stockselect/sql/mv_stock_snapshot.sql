@@ -166,7 +166,7 @@ FROM (
             )
 
             SELECT
-                s.stock_id, s.name, s.market, s.industry,
+                s.stock_id, s.name, s.market, s.industry, s.security_type,
                 (SELECT td FROM d)                              AS as_of_date,
                 px.close, round(px.c0, 4)                       AS adj_close,
                 -- 動能
