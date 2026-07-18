@@ -14,17 +14,26 @@ _LATEST = (
 )
 
 
+INDEX_IDS = {"TAIEX", "TWSE", "TPEx"}    # 報酬指數 / 加權股價指數 / 櫃買指數
+
+
+def _quote(index_id):
+    """某指數最新收盤 + 當日漲跌/漲跌幅。"""
+    idx = db.query("SELECT trade_date, close FROM market_index "
+                   "WHERE index_id=%(id)s ORDER BY trade_date DESC LIMIT 2", {"id": index_id})
+    if not idx:
+        return None
+    c0 = float(idx[0]["close"])
+    c1 = float(idx[1]["close"]) if len(idx) > 1 else None
+    return {"date": idx[0]["trade_date"].isoformat(), "close": c0,
+            "change": (c0 - c1) if c1 else None,
+            "pct": ((c0 / c1 - 1) * 100) if c1 else None}
+
+
 @router.get("/overview")
 def overview():
-    idx = db.query("SELECT trade_date, close FROM market_index "
-                   "WHERE index_id='TAIEX' ORDER BY trade_date DESC LIMIT 2")
-    taiex = None
-    if idx:
-        c0 = float(idx[0]["close"])
-        c1 = float(idx[1]["close"]) if len(idx) > 1 else None
-        taiex = {"date": idx[0]["trade_date"].isoformat(), "close": c0,
-                 "change": (c0 - c1) if c1 else None,
-                 "pct": ((c0 / c1 - 1) * 100) if c1 else None}
+    taiex = _quote("TAIEX")
+    tpex = _quote("TPEx")            # 櫃買指數
     br = db.query(
         "SELECT max(trade_date) AS as_of, "
         "count(*) FILTER (WHERE chg>0) AS up, "
@@ -35,6 +44,7 @@ def overview():
     b = br[0] if br else {}
     return {
         "taiex": taiex,
+        "tpex": tpex,
         "breadth": {"up": b.get("up"), "down": b.get("down"), "flat": b.get("flat")},
         "total_amount": b.get("total_amount"),
         "as_of": b["as_of"].isoformat() if b.get("as_of") else None,
@@ -42,12 +52,13 @@ def overview():
 
 
 @router.get("/index")
-def index_series(days: int = 120):
+def index_series(days: int = 120, index_id: str = "TAIEX"):
     n = max(1, min(int(days), 2000))
+    iid = index_id if index_id in INDEX_IDS else "TAIEX"     # 白名單
     return db.query(
         "SELECT * FROM (SELECT trade_date, close FROM market_index "
-        "WHERE index_id='TAIEX' ORDER BY trade_date DESC LIMIT %(n)s) z ORDER BY trade_date",
-        {"n": n})
+        "WHERE index_id=%(id)s ORDER BY trade_date DESC LIMIT %(n)s) z ORDER BY trade_date",
+        {"id": iid, "n": n})
 
 
 @router.get("/sectors")

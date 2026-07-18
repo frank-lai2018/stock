@@ -14,6 +14,12 @@ const sectors = ref([])
 const flow = ref([])
 const chartEl = ref(null)
 let chart = null
+const idxSel = ref('TAIEX')                       // 走勢圖選擇的指數
+const IDX_NAME = { TAIEX: '加權指數', TPEx: '櫃買指數' }
+
+async function loadIndex() {
+  renderChart(await getMarketIndex(120, idxSel.value))
+}
 
 const yi = (v) => (v == null ? '—' : (Number(v) / 1e8).toFixed(0) + ' 億')
 const pct = (v) => (v == null ? '—' : (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%')
@@ -30,6 +36,8 @@ async function loadSectors() {
 
 function renderChart(rows) {
   if (!chart) chart = echarts.init(chartEl.value)
+  const rise = rows.length > 1 && +rows[rows.length - 1].close >= +rows[0].close   // 期間漲跌決定顏色
+  const col = rise ? '234,76,76' : '63,158,90'                                       // 紅漲綠跌
   chart.setOption({
     grid: { left: 64, right: 20, top: 20, bottom: 30 },
     tooltip: { trigger: 'axis' },
@@ -37,17 +45,17 @@ function renderChart(rows) {
     yAxis: { type: 'value', scale: true },
     series: [{
       type: 'line', showSymbol: false, data: rows.map((r) => +r.close),
-      lineStyle: { color: '#EA4C4C', width: 2 },
-      areaStyle: { color: 'rgba(234,76,76,0.08)' },
+      lineStyle: { color: `rgb(${col})`, width: 2 },
+      areaStyle: { color: `rgba(${col},0.08)` },
     }],
-  })
+  }, true)
 }
 function onResize() { if (chart) chart.resize() }
 
 onMounted(async () => {
   try {
     ov.value = await getMarketOverview()
-    renderChart(await getMarketIndex(120))
+    await loadIndex()
     await loadMovers()
     await loadSectors()
   } catch (e) {
@@ -81,6 +89,20 @@ function go(id) { router.push(`/stock/${id}`) }
       </el-card>
 
       <el-card shadow="never" style="flex: 1 1 260px">
+        <div style="color: #999">櫃買指數 TPEx</div>
+        <template v-if="ov?.tpex">
+          <div style="font-size: 30px; font-weight: 700" :style="{ color: up(ov.tpex.change) }">
+            {{ ov.tpex.close.toFixed(2) }}
+          </div>
+          <div :style="{ color: up(ov.tpex.change) }">
+            {{ ov.tpex.change >= 0 ? '▲' : '▼' }}
+            {{ ov.tpex.change != null ? ov.tpex.change.toFixed(2) : '—' }} ({{ pct(ov.tpex.pct) }})
+          </div>
+        </template>
+        <div style="color: #999; font-size: 12px; margin-top: 6px">資料日 {{ ov?.tpex?.date || '—' }}</div>
+      </el-card>
+
+      <el-card shadow="never" style="flex: 1 1 260px">
         <div style="color: #999">漲跌家數</div>
         <div style="font-size: 20px; margin-top: 6px">
           <span style="color: #EA4C4C">▲ {{ ov?.breadth?.up ?? '—' }}</span>
@@ -93,7 +115,14 @@ function go(id) { router.push(`/stock/${id}`) }
       </el-card>
     </div>
 
-    <el-card shadow="never" header="加權指數走勢（近 120 交易日）" style="margin-top: 16px">
+    <el-card shadow="never" style="margin-top: 16px">
+      <template #header>
+        指數走勢（近 120 交易日）
+        <el-radio-group v-model="idxSel" size="small" style="margin-left: 12px" @change="loadIndex">
+          <el-radio-button value="TAIEX">加權指數</el-radio-button>
+          <el-radio-button value="TPEx">櫃買指數</el-radio-button>
+        </el-radio-group>
+      </template>
       <div ref="chartEl" style="width: 100%; height: 320px"></div>
     </el-card>
 

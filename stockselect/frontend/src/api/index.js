@@ -5,8 +5,8 @@ const api = axios.create({ baseURL: '/api' })
 export const getStrategies = () => api.get('/strategies').then((r) => r.data)
 export const searchStocks = (q) => api.get('/search', { params: { q } }).then((r) => r.data)
 export const getMarketOverview = () => api.get('/market/overview').then((r) => r.data)
-export const getMarketIndex = (days = 120) =>
-  api.get('/market/index', { params: { days } }).then((r) => r.data)
+export const getMarketIndex = (days = 120, index_id = 'TAIEX') =>
+  api.get('/market/index', { params: { days, index_id } }).then((r) => r.data)
 export const getMovers = (type = 'gainers', limit = 15) =>
   api.get('/market/movers', { params: { type, limit } }).then((r) => r.data)
 export const getSectors = (market = '上市') =>
