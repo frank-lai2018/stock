@@ -2,12 +2,13 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getStock, getFundamentals, getStockPatterns, getStockVpa } from '../api'
+import { getStock, getFundamentals, getStockPatterns, getStockVpa, getDividends } from '../api'
 import PriceChart from '../components/PriceChart.vue'
 import MarginPanel from '../components/MarginPanel.vue'
 
 const pats = ref([])
 const vpa = ref([])
+const div = ref(null)
 const dirColor = { bull: '#EA4C4C', bear: '#3F9E5A', neutral: '#909399' }
 const dirText = { bull: '偏多', bear: '偏空', neutral: '中性' }
 const PHASES = ['承接', '測試', '出貨']
@@ -35,6 +36,7 @@ onMounted(async () => {
     fund.value = await getFundamentals(route.params.id)
     pats.value = (await getStockPatterns(route.params.id, 90)).reverse()   // 新到舊
     vpa.value = (await getStockVpa(route.params.id, 90)).reverse()          // 新到舊
+    div.value = await getDividends(route.params.id)
   } catch (e) {
     ElMessage.error('載入失敗：' + (e?.response?.data?.detail || e.message))
   }
@@ -132,5 +134,31 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateCols))
         </el-table>
       </el-card>
     </div>
+
+    <el-card v-if="div && div.items.length" shadow="never" style="margin-top: 16px">
+      <template #header>
+        配息紀錄
+        <el-tag type="danger" effect="dark" size="small" style="margin-left: 8px">
+          近12月現金配息 {{ div.ttm_cash }} 元
+          <template v-if="div.ttm_yield"> ・年化 {{ div.ttm_yield }}%</template>
+        </el-tag>
+        <span style="margin-left: 10px; color: #999; font-size: 12px">{{ div.ttm_count }} 次/年</span>
+      </template>
+      <el-table :data="div.items" height="300" size="small" stripe>
+        <el-table-column label="除息日" width="120">
+          <template #default="{ row }">{{ row.ex_cash_date ? String(row.ex_cash_date).slice(0, 10) : '—' }}</template>
+        </el-table-column>
+        <el-table-column label="現金股利" width="100">
+          <template #default="{ row }"><span style="color: #EA4C4C">{{ row.cash_dividend ?? '—' }}</span></template>
+        </el-table-column>
+        <el-table-column label="股票股利" width="100">
+          <template #default="{ row }">{{ row.stock_dividend || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="發放日" width="120">
+          <template #default="{ row }">{{ row.cash_pay_date ? String(row.cash_pay_date).slice(0, 10) : '—' }}</template>
+        </el-table-column>
+        <el-table-column label="所屬" min-width="90"><template #default="{ row }">{{ row.year_label }}</template></el-table-column>
+      </el-table>
+    </el-card>
   </template>
 </template>

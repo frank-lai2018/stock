@@ -168,6 +168,32 @@ def stock_vpa(stock_id: str, days: int = 90):
     return out
 
 
+@router.get("/{stock_id}/dividends")
+def dividends(stock_id: str):
+    """配息/配股歷史（近 3 年）+ 近 12 個月現金配息合計與年化配息率（ETF/個股皆適用）。"""
+    rows = db.query(
+        "SELECT announce_date, year_label, cash_dividend, stock_dividend, "
+        "ex_cash_date, ex_stock_date, cash_pay_date FROM dividend "
+        "WHERE stock_id=%(id)s ORDER BY COALESCE(ex_cash_date, announce_date) DESC LIMIT 36",
+        {"id": stock_id})
+    # 近 12 個月現金配息合計（以除息日為準）
+    ttm = db.query(
+        "SELECT COALESCE(sum(cash_dividend),0) AS ttm_cash, count(*) AS n "
+        "FROM dividend WHERE stock_id=%(id)s AND ex_cash_date >= "
+        "(SELECT max(trade_date) FROM price_daily) - 365", {"id": stock_id})
+    px = db.query("SELECT close FROM price_daily WHERE stock_id=%(id)s "
+                  "ORDER BY trade_date DESC LIMIT 1", {"id": stock_id})
+    for r in rows:                                    # 去除 FinMind 小數雜訊（6.000036 → 6）
+        for k in ("cash_dividend", "stock_dividend"):
+            if r.get(k) is not None:
+                r[k] = round(float(r[k]), 4)
+    ttm_cash = round(float(ttm[0]["ttm_cash"]), 4) if ttm else 0.0
+    close = float(px[0]["close"]) if px and px[0].get("close") else None
+    yld = (ttm_cash / close * 100) if (close and ttm_cash) else None
+    return {"items": rows, "ttm_cash": ttm_cash, "ttm_count": ttm[0]["n"] if ttm else 0,
+            "ttm_yield": round(yld, 2) if yld is not None else None}
+
+
 @router.get("/{stock_id}/fundamentals")
 def fundamentals(stock_id: str):
     """月營收 + 季度基本面（近期）。"""
