@@ -30,5 +30,7 @@ export const getStockPatterns = (id, days = 90) =>
   api.get(`/stock/${id}/patterns`, { params: { days } }).then((r) => r.data)
 export const getLevels = (id, bars = 120) =>
   api.get(`/stock/${id}/levels`, { params: { bars } }).then((r) => r.data)
+export const getStockVpa = (id, days = 90) =>
+  api.get(`/stock/${id}/vpa`, { params: { days } }).then((r) => r.data)
 
 export default api

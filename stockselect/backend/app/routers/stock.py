@@ -1,7 +1,7 @@
 """個股 API：快照 / K 線 / 籌碼 / 基本面。"""
 from fastapi import APIRouter, HTTPException
 
-from .. import db, patterns
+from .. import db, patterns, vpa
 
 router = APIRouter(prefix="/api/stock", tags=["stock"])
 
@@ -143,6 +143,28 @@ def stock_patterns(stock_id: str, days: int = 90):
             d = bars[i]["trade_date"]
             out.append({"date": d.isoformat() if hasattr(d, "isoformat") else str(d),
                         "pattern": key, "name": patterns.CATALOG[key][0], "dir": patterns.CATALOG[key][1]})
+    return out
+
+
+@router.get("/{stock_id}/vpa")
+def stock_vpa(stock_id: str, days: int = 90):
+    """近 N 交易日每根 K 棒的 VPA 價量訊號（主力承接/測試/出貨；由舊到新）。"""
+    n = max(30, min(int(days), 500))
+    rows = db.query(
+        "SELECT trade_date, adj_open AS open, adj_high AS high, adj_low AS low, "
+        "adj_close AS close, volume FROM price_daily WHERE stock_id=%(id)s "
+        "ORDER BY trade_date DESC LIMIT %(n)s",
+        {"id": stock_id, "n": n + 25})            # 多取 25 根供前文計算均量
+    bars = list(reversed(rows))
+    start = max(0, len(bars) - n)                  # 只回報近 n 根的訊號
+    out = []
+    for i in range(start, len(bars)):
+        window = bars[max(0, i - 24):i + 1]        # 帶前文（均量/均振幅/趨勢）
+        for key in vpa.detect(window):
+            name, direction, phase = vpa.CATALOG[key]
+            d = bars[i]["trade_date"]
+            out.append({"date": d.isoformat() if hasattr(d, "isoformat") else str(d),
+                        "signal": key, "name": name, "dir": direction, "phase": phase})
     return out
 
 

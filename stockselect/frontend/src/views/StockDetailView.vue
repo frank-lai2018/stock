@@ -2,13 +2,15 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getStock, getFundamentals, getStockPatterns } from '../api'
+import { getStock, getFundamentals, getStockPatterns, getStockVpa } from '../api'
 import PriceChart from '../components/PriceChart.vue'
 import MarginPanel from '../components/MarginPanel.vue'
 
 const pats = ref([])
+const vpa = ref([])
 const dirColor = { bull: '#EA4C4C', bear: '#3F9E5A', neutral: '#909399' }
 const dirText = { bull: '偏多', bear: '偏空', neutral: '中性' }
+const PHASES = ['承接', '測試', '出貨']
 
 const cols = ref(4)
 const updateCols = () => {
@@ -32,6 +34,7 @@ onMounted(async () => {
     s.value = await getStock(route.params.id)
     fund.value = await getFundamentals(route.params.id)
     pats.value = (await getStockPatterns(route.params.id, 90)).reverse()   // 新到舊
+    vpa.value = (await getStockVpa(route.params.id, 90)).reverse()          // 新到舊
   } catch (e) {
     ElMessage.error('載入失敗：' + (e?.response?.data?.detail || e.message))
   }
@@ -61,6 +64,27 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateCols))
 
     <el-card shadow="never" style="margin-top: 16px" header="技術線圖">
       <PriceChart :stock-id="String(route.params.id)" />
+    </el-card>
+
+    <el-card shadow="never" style="margin-top: 16px" header="價量診斷（主力承接／測試／出貨・近90日）">
+      <div v-if="vpa.length">
+        <div v-for="ph in PHASES" :key="ph" style="margin-bottom: 10px">
+          <b :style="{ color: ph === '承接' ? '#EA4C4C' : ph === '出貨' ? '#3F9E5A' : '#909399' }">{{ ph }}</b>
+          <span style="margin-left: 8px">
+            <template v-for="(v, i) in vpa.filter((x) => x.phase === ph)" :key="i">
+              <el-tag :color="dirColor[v.dir]" style="color: #fff; border: 0; margin: 2px 4px 2px 0"
+                      :title="v.name">
+                {{ String(v.date).slice(5, 10) }} {{ v.name }}
+              </el-tag>
+            </template>
+            <span v-if="!vpa.some((x) => x.phase === ph)" style="color: #ccc">—</span>
+          </span>
+        </div>
+      </div>
+      <span v-else style="color: #999">近 90 日無明顯價量訊號</span>
+      <div style="margin-top: 4px; color: #999; font-size: 12px">
+        訊號源自《不說謊的價量》VPA：量能倍數×振幅×收盤位置判讀。承接偏多、出貨偏空，僅供籌碼參考。
+      </div>
     </el-card>
 
     <el-card shadow="never" style="margin-top: 16px" header="近90日 K 棒型態（陰陽線）">
