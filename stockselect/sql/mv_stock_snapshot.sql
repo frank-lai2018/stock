@@ -45,7 +45,8 @@ FROM (
         ) AS trend_template
     FROM (
         SELECT t.*,
-               round(percent_rank() OVER (ORDER BY t.rs_raw NULLS FIRST) * 100)::int AS rs_rating
+               -- RS 評等依證券類別分池排名（股票 vs 股票、ETF vs ETF），避免 ETF 汙染個股 RS
+               round(percent_rank() OVER (PARTITION BY t.security_type ORDER BY t.rs_raw NULLS FIRST) * 100)::int AS rs_rating
         FROM (
             WITH d AS (SELECT max(trade_date) AS td FROM price_daily),
             ranked AS (
