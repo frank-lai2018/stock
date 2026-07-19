@@ -9,7 +9,8 @@ const data = ref({ items: [], summary: null, realized: [], as_of: null })
 const trades = ref([])
 const loading = ref(false)
 const tab = ref('holdings')
-const form = ref({ stock_id: '', label: '', action: 'buy', trade_date: '', shares: null, price: null, fee: null, tax: null, note: '' })
+const form = ref({ stock_id: '', label: '', action: 'buy', trade_date: '', shares: null, price: null, fee: null, tax: null, trade_type: '現股', note: '' })
+const TRADE_TYPES = ['現股', '現股當沖', '融資', '融券']
 
 // 評級 → 台股慣例上色（strong=紅偏多、reduce=綠偏空）
 const LEVEL = {
@@ -56,11 +57,12 @@ async function add() {
     await addTrade({
       stock_id: form.value.stock_id, action: form.value.action, trade_date: form.value.trade_date,
       shares: form.value.shares, price: form.value.price,
-      fee: form.value.fee, tax: form.value.tax, note: form.value.note || null,
+      fee: form.value.fee, tax: form.value.tax,
+      trade_type: form.value.trade_type || null, note: form.value.note || null,
     })
     ElMessage.success('已記錄')
     form.value = { stock_id: '', label: '', action: form.value.action, trade_date: form.value.trade_date,
-                   shares: null, price: null, fee: null, tax: null, note: '' }
+                   shares: null, price: null, fee: null, tax: null, trade_type: form.value.trade_type, note: '' }
     await load()
   } catch (e) {
     ElMessage.error('儲存失敗：' + (e?.response?.data?.detail || e.message))
@@ -186,6 +188,10 @@ onMounted(load)
                              style="width: 200px" @select="onPick">
               <template #default="{ item }"><b style="color: #ea4c4c">{{ item.stock_id }}</b>&nbsp;{{ item.name }}</template>
             </el-autocomplete>
+            <el-select v-model="form.trade_type" placeholder="交易類別" allow-create filterable
+                       default-first-option style="width: 130px">
+              <el-option v-for="t in TRADE_TYPES" :key="t" :label="t" :value="t" />
+            </el-select>
             <el-date-picker v-model="form.trade_date" type="date" value-format="YYYY-MM-DD"
                             placeholder="交易日" style="width: 150px" />
             <el-input-number v-model="form.shares" :min="0" :step="1000" controls-position="right"
@@ -213,6 +219,9 @@ onMounted(load)
           </el-table-column>
           <el-table-column label="股票" width="140">
             <template #default="{ row }">{{ row.stock_id }} {{ row.name }}</template>
+          </el-table-column>
+          <el-table-column label="類別" width="90">
+            <template #default="{ row }">{{ row.trade_type || '—' }}</template>
           </el-table-column>
           <el-table-column label="股數" width="100"><template #default="{ row }">{{ money(row.shares) }}</template></el-table-column>
           <el-table-column label="價格" width="90" prop="price" />

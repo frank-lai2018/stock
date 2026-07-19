@@ -16,7 +16,9 @@ CREATE TABLE IF NOT EXISTS trade_log (
     price      NUMERIC     NOT NULL,      -- 每股成交價
     fee        NUMERIC,                   -- 手續費（該筆總額，可留空=0）
     tax        NUMERIC,                   -- 證交稅（賣出，可留空=0）
+    trade_type VARCHAR(20),               -- 交易類別（現股/現股當沖/融資/融券…）
     note       VARCHAR(200),
     created_at TIMESTAMP DEFAULT now()
 );
+-- 既有資料庫升級：ALTER TABLE trade_log ADD COLUMN IF NOT EXISTS trade_type VARCHAR(20);
 CREATE INDEX IF NOT EXISTS idx_trade_stock ON trade_log(stock_id);

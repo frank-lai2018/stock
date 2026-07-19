@@ -4,7 +4,7 @@ r"""import_trades.py — 把券商「成交明細」CSV 匯入 trade_log（持�
   0 成交日期  1 代號  2 名稱  3 交易種類(整股)  4 買/賣  5 交易類別(現股/現股當沖…)
   6 數量(股)  7 單價  8 價金  9 手續費  10 交易稅  … 19 損益  20 交割日  21 幣別
 對應 trade_log：stock_id=代號、action=買→buy/賣→sell、trade_date=成交日期、
-                shares=數量、price=單價、fee=手續費、tax=交易稅、note=交易類別。
+                shares=數量、price=單價、fee=手續費、tax=交易稅、trade_type=交易類別(現股/當沖…)。
 
 連線：環境變數 DATABASE_URL 或 --dsn。
 用法：
@@ -47,7 +47,7 @@ def parse(path, encoding):
                 skipped += 1
                 continue
             rows.append((c[1].strip(), action, td, shares, price,
-                         num(c[9]), num(c[10]), c[5].strip() or None))
+                         num(c[9]), num(c[10]), c[5].strip() or None))   # 末欄=交易類別 trade_type
     return rows, skipped
 
 
@@ -86,12 +86,14 @@ def main():
         "CREATE TABLE IF NOT EXISTS trade_log ("
         " id SERIAL PRIMARY KEY, stock_id VARCHAR(16) NOT NULL, action VARCHAR(4) NOT NULL,"
         " trade_date DATE NOT NULL, shares NUMERIC NOT NULL, price NUMERIC NOT NULL,"
-        " fee NUMERIC, tax NUMERIC, note VARCHAR(200), created_at TIMESTAMP DEFAULT now())")
+        " fee NUMERIC, tax NUMERIC, trade_type VARCHAR(20), note VARCHAR(200),"
+        " created_at TIMESTAMP DEFAULT now())")
+    cur.execute("ALTER TABLE trade_log ADD COLUMN IF NOT EXISTS trade_type VARCHAR(20)")  # 舊表補欄
     if args.clear:
         cur.execute("DELETE FROM trade_log")
         print(f"已清空 trade_log（{cur.rowcount} 筆）")
     execute_values(cur,
-                   "INSERT INTO trade_log (stock_id, action, trade_date, shares, price, fee, tax, note) VALUES %s",
+                   "INSERT INTO trade_log (stock_id, action, trade_date, shares, price, fee, tax, trade_type) VALUES %s",
                    rows)
     conn.commit()
     print(f"匯入 trade_log：{len(rows)} 筆")

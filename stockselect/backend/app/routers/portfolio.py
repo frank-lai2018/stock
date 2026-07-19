@@ -28,8 +28,10 @@ def _ensure():
         " price      NUMERIC     NOT NULL,"       # 每股價
         " fee        NUMERIC,"                    # 手續費（該筆總額）
         " tax        NUMERIC,"                    # 證交稅（賣出）
+        " trade_type VARCHAR(20),"               # 交易類別（現股/當沖/融資/融券）
         " note       VARCHAR(200),"
         " created_at TIMESTAMP DEFAULT now())")
+    db.execute("ALTER TABLE trade_log ADD COLUMN IF NOT EXISTS trade_type VARCHAR(20)")  # 舊表補欄
     db.execute("CREATE INDEX IF NOT EXISTS idx_trade_stock ON trade_log(stock_id)")
     _ensured = True
 
@@ -42,6 +44,7 @@ class Trade(BaseModel):
     price: float
     fee: float | None = None
     tax: float | None = None
+    trade_type: str | None = None     # 現股 / 現股當沖 / 融資 / 融券…
     note: str | None = None
 
 
@@ -171,7 +174,8 @@ def list_trades():
     """原始交易明細（新到舊）。"""
     _ensure()
     rows = db.query(
-        "SELECT t.id, t.stock_id, s.name, t.action, t.trade_date, t.shares, t.price, t.fee, t.tax, t.note "
+        "SELECT t.id, t.stock_id, s.name, t.action, t.trade_date, t.shares, t.price, "
+        "t.fee, t.tax, t.trade_type, t.note "
         "FROM trade_log t LEFT JOIN stock s USING(stock_id) "
         "ORDER BY t.trade_date DESC, t.id DESC")
     return rows
@@ -189,11 +193,11 @@ def add_trade(t: Trade):
     if t.shares is None or t.shares <= 0 or t.price is None or t.price < 0:
         raise HTTPException(400, "股數需 >0、價格需 ≥0")
     rows = db.execute(
-        "INSERT INTO trade_log (stock_id, action, trade_date, shares, price, fee, tax, note) "
-        "VALUES (%(id)s, %(act)s, %(d)s::date, %(shares)s, %(price)s, %(fee)s, %(tax)s, %(note)s) "
+        "INSERT INTO trade_log (stock_id, action, trade_date, shares, price, fee, tax, trade_type, note) "
+        "VALUES (%(id)s, %(act)s, %(d)s::date, %(shares)s, %(price)s, %(fee)s, %(tax)s, %(tt)s, %(note)s) "
         "RETURNING id",
         {"id": sid, "act": act, "d": t.trade_date, "shares": t.shares, "price": t.price,
-         "fee": t.fee, "tax": t.tax, "note": t.note}, returning=True)
+         "fee": t.fee, "tax": t.tax, "tt": t.trade_type, "note": t.note}, returning=True)
     return {"ok": True, "id": rows[0]["id"]}
 
 
