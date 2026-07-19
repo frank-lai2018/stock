@@ -29,9 +29,11 @@ def _ensure():
         " fee        NUMERIC,"                    # 手續費（該筆總額）
         " tax        NUMERIC,"                    # 證交稅（賣出）
         " trade_type VARCHAR(20),"               # 交易類別（現股/當沖/融資/融券）
+        " pnl        NUMERIC,"                    # 券商申報損益（賣出，匯入用）
         " note       VARCHAR(200),"
         " created_at TIMESTAMP DEFAULT now())")
     db.execute("ALTER TABLE trade_log ADD COLUMN IF NOT EXISTS trade_type VARCHAR(20)")  # 舊表補欄
+    db.execute("ALTER TABLE trade_log ADD COLUMN IF NOT EXISTS pnl NUMERIC")
     db.execute("CREATE INDEX IF NOT EXISTS idx_trade_stock ON trade_log(stock_id)")
     _ensured = True
 
@@ -175,7 +177,7 @@ def list_trades():
     _ensure()
     rows = db.query(
         "SELECT t.id, t.stock_id, s.name, t.action, t.trade_date, t.shares, t.price, "
-        "t.fee, t.tax, t.trade_type, t.note "
+        "t.fee, t.tax, t.trade_type, t.pnl, t.note "
         "FROM trade_log t LEFT JOIN stock s USING(stock_id) "
         "ORDER BY t.trade_date DESC, t.id DESC")
     return rows

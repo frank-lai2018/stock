@@ -225,9 +225,15 @@ onMounted(load)
           </el-table-column>
           <el-table-column label="股數" width="100"><template #default="{ row }">{{ money(row.shares) }}</template></el-table-column>
           <el-table-column label="價格" width="90" prop="price" />
-          <el-table-column label="手續費" width="90"><template #default="{ row }">{{ row.fee ?? '—' }}</template></el-table-column>
-          <el-table-column label="證交稅" width="90"><template #default="{ row }">{{ row.tax ?? '—' }}</template></el-table-column>
-          <el-table-column label="備註" min-width="120"><template #default="{ row }">{{ row.note }}</template></el-table-column>
+          <el-table-column label="手續費" width="80"><template #default="{ row }">{{ row.fee ?? '—' }}</template></el-table-column>
+          <el-table-column label="證交稅" width="80"><template #default="{ row }">{{ row.tax ?? '—' }}</template></el-table-column>
+          <el-table-column label="損益(賣)" width="110">
+            <template #default="{ row }">
+              <b v-if="row.pnl != null" :style="{ color: up(row.pnl) }">{{ money(row.pnl) }}</b>
+              <span v-else style="color: #ccc">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="備註" min-width="110"><template #default="{ row }">{{ row.note }}</template></el-table-column>
           <el-table-column label="操作" width="70" fixed="right">
             <template #default="{ row }">
               <el-button link type="danger" size="small" @click="delTrade(row)">刪除</el-button>

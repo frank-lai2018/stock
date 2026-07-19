@@ -46,8 +46,9 @@ def parse(path, encoding):
             if action is None or not shares or price is None:
                 skipped += 1
                 continue
+            pnl = num(c[19]) if (action == "sell" and len(c) > 19) else None   # 損益(賣出才有)
             rows.append((c[1].strip(), action, td, shares, price,
-                         num(c[9]), num(c[10]), c[5].strip() or None))   # 末欄=交易類別 trade_type
+                         num(c[9]), num(c[10]), c[5].strip() or None, pnl))
     return rows, skipped
 
 
@@ -86,14 +87,15 @@ def main():
         "CREATE TABLE IF NOT EXISTS trade_log ("
         " id SERIAL PRIMARY KEY, stock_id VARCHAR(16) NOT NULL, action VARCHAR(4) NOT NULL,"
         " trade_date DATE NOT NULL, shares NUMERIC NOT NULL, price NUMERIC NOT NULL,"
-        " fee NUMERIC, tax NUMERIC, trade_type VARCHAR(20), note VARCHAR(200),"
+        " fee NUMERIC, tax NUMERIC, trade_type VARCHAR(20), pnl NUMERIC, note VARCHAR(200),"
         " created_at TIMESTAMP DEFAULT now())")
     cur.execute("ALTER TABLE trade_log ADD COLUMN IF NOT EXISTS trade_type VARCHAR(20)")  # 舊表補欄
+    cur.execute("ALTER TABLE trade_log ADD COLUMN IF NOT EXISTS pnl NUMERIC")
     if args.clear:
         cur.execute("DELETE FROM trade_log")
         print(f"已清空 trade_log（{cur.rowcount} 筆）")
     execute_values(cur,
-                   "INSERT INTO trade_log (stock_id, action, trade_date, shares, price, fee, tax, trade_type) VALUES %s",
+                   "INSERT INTO trade_log (stock_id, action, trade_date, shares, price, fee, tax, trade_type, pnl) VALUES %s",
                    rows)
     conn.commit()
     print(f"匯入 trade_log：{len(rows)} 筆")
