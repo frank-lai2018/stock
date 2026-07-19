@@ -1,2 +1,6 @@
 capred_remaining.txt
 nightly_state.json
+run_nightly.bat
+logs/
+etf_codes.txt
+*.xlsx
