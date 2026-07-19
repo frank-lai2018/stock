@@ -11,6 +11,8 @@ r"""nightly.py — 排程大腦：每晚無腦執行這一支，由它依「今�
   quarterly  季報公告後跑 update_fundamentals.py --preset quarterly（重工作）：
                4 月=年報/Q4、5/16 起=Q1、8/15 起=Q2、11/15 起=Q3。
   dividend   股利旺季 5~8 月「週六/日」每週跑一次 update_fundamentals.py --preset dividend（重工作，避開平日）。
+  capreduction 減資（還原價會用到）：綁季報窗口跑（4/5/8/11 月），狀態檔防重（本季一次）。
+  etfnav     每晚固定跑 fetch_etf_nav.py（ETF 淨值/折溢價/規模；mis.twse 單一請求，便宜）。
   refresh    以上跑完後，刷新選股物化視圖 mv_stock_snapshot（選股器同步最新；--skip-refresh 可略過）。
 
 防重複：quarterly / dividend 是 FinMind 逐檔的重工作，用狀態檔 nightly_state.json 記錄
@@ -34,6 +36,7 @@ DAILY = os.path.join(HERE, "daily_update.py")
 REVENUE = os.path.join(HERE, "update_revenue.py")
 FUND = os.path.join(HERE, "update_fundamentals.py")
 HOLDERDIST = os.path.join(HERE, "update_holderdist.py")
+ETFNAV = os.path.join(HERE, "fetch_etf_nav.py")
 HOLDERS_RAW = r"H:\data\Holders"           # 集保週快照封存（往後自建歷史）
 
 
@@ -112,6 +115,25 @@ def plan_jobs(d, state, only):
         run, why = False, "本次 --only 指定其他工作"
     jobs.append(("quarterly", why, run, {"label": q_label, "start": q_start}))
 
+    # capreduction：減資（還原價會用到）；綁季報窗口跑，狀態檔防重（本季只跑一次）
+    done_c = state.get("capreduction")
+    if only == "capreduction":
+        run, why = True, "強制 --only capreduction"
+        c_label = q_label or f"{d.year}Q?"
+        c_start = q_start or f"{d.year - 2}-01-01"
+    elif only is None:
+        c_label, c_start = q_label, q_start
+        if q_label is None:
+            run, why = False, "不在季報窗口（減資綁季報窗口跑）"
+        elif done_c == q_label:
+            run, why = False, f"{q_label} 本季已跑過減資（狀態檔）"
+        else:
+            run, why = True, f"季報窗口 {q_label}，跑減資"
+    else:
+        run, why = False, "本次 --only 指定其他工作"
+        c_label, c_start = q_label, q_start
+    jobs.append(("capreduction", why, run, {"label": c_label, "start": c_start or f"{d.year - 2}-01-01"}))
+
     # dividend：5~8 月每週一次 + 狀態檔防重
     wl = week_label(d)
     done_w = state.get("dividend")
@@ -129,6 +151,10 @@ def plan_jobs(d, state, only):
     else:
         run, why = False, "本次 --only 指定其他工作"
     jobs.append(("dividend", why, run, {"label": wl, "start": f"{d.year}-01-01"}))
+
+    # etfnav：ETF 每日淨值/折溢價/規模（mis.twse 單一請求，便宜；每晚固定，收盤後）
+    run = only in (None, "etfnav")
+    jobs.append(("etfnav", "每晚固定（ETF 淨值/規模，單一請求）", run, {}))
 
     return jobs
 
@@ -169,6 +195,10 @@ def build_cmd(job, d, dsn, extra):
         return [sys.executable, FUND, "--preset", "quarterly", "--start", extra["start"], "--dsn", dsn]
     if job == "dividend":
         return [sys.executable, FUND, "--preset", "dividend", "--start", extra["start"], "--dsn", dsn]
+    if job == "capreduction":
+        return [sys.executable, FUND, "--preset", "capreduction", "--start", extra["start"], "--dsn", dsn]
+    if job == "etfnav":
+        return [sys.executable, ETFNAV, "--dsn", dsn]
     raise ValueError(job)
 
 
@@ -176,7 +206,8 @@ def main():
     ap = argparse.ArgumentParser(description="排程大腦：依今天日期自動決定該跑哪些更新")
     ap.add_argument("--dsn", default=os.environ.get("DATABASE_URL", ""), help="PostgreSQL 連線字串")
     ap.add_argument("--date", default=date.today().isoformat(), help="模擬日期 YYYY-MM-DD（預設今天）")
-    ap.add_argument("--only", choices=["daily", "holderdist", "revenue", "quarterly", "dividend"], help="強制只跑某工作")
+    ap.add_argument("--only", choices=["daily", "holderdist", "revenue", "quarterly", "dividend",
+                                       "capreduction", "etfnav"], help="強制只跑某工作")
     ap.add_argument("--skip-refresh", action="store_true", help="跑完不刷新 mv_stock_snapshot 選股視圖")
     ap.add_argument("--plan", action="store_true", help="只印排程決策，不執行")
     args = ap.parse_args()
@@ -225,7 +256,7 @@ def main():
             print(f"    例外：{msg}")
         ok = rc == 0
         results.append((job, ok))
-        if ok and job in ("quarterly", "dividend"):     # 重工作成功才記狀態，避免跨夜重跑
+        if ok and job in ("quarterly", "dividend", "capreduction"):   # 重工作成功才記狀態，避免跨夜重跑
             state[job] = extra["label"]
             state.setdefault("last_run", {})[job] = f"{args.date} {datetime.now():%H:%M:%S}"
             save_state(state)

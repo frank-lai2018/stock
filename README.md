@@ -327,6 +327,8 @@ python nightly.py --dsn "postgresql://帳號:密碼@localhost:5432/twstock" #每
 | revenue（月營收）| 每月 11~20 號 | 便宜，窗口內每晚跑以補晚申報 |
 | quarterly（財報/EPS）| 4月(年報)、5/16、8/15、11/15 起 | 狀態檔記「本季已跑」，跨夜不重跑 |
 | dividend（股利，重工作 ~3-4hr）| 5~8 月**只在週六/日**每週一次 | 狀態檔記「本週已跑」；平日一律略過 |
+| capreduction（減資，還原價用）| 綁季報窗口（4/5/8/11 月）| 狀態檔記「本季已跑」，跨夜不重跑 |
+| etfnav（ETF 淨值/折溢價/規模）| 每晚固定（mis.twse 單一請求，便宜）| — |
 | refresh | 以上跑完後刷新 `mv_stock_snapshot`（選股器同步最新）| `--skip-refresh` 可略過 |
 
 - **狀態檔 `nightly_state.json`**（自動建立）：記錄 quarterly/dividend 這類 FinMind 逐檔的重工作「本季/本週已完成」，避免跨夜重跑；daily/revenue/holderdist 便宜則照窗口每晚跑。
