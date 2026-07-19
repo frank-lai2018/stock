@@ -35,6 +35,9 @@ function go(row) {
            :style="{ color: row.rs_rating >= 70 ? '#f56c6c' : '#909399' }">{{ row.rs_rating }}</b>
       </template>
     </el-table-column>
+    <el-table-column label="股價" width="88" :sort-method="cmp('close')" sortable>
+      <template #default="{ row }">{{ row.close ?? '—' }}</template>
+    </el-table-column>
     <el-table-column label="K棒型態" width="130">
       <template #default="{ row }">
         <el-tag v-for="(p, i) in (row.last_patterns || [])" :key="i"
