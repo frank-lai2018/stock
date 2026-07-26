@@ -14,8 +14,8 @@ const sectors = ref([])
 const flow = ref([])
 const chartEl = ref(null)
 let chart = null
-const idxSel = ref('TAIEX')                       // 走勢圖選擇的指數
-const IDX_NAME = { TAIEX: '加權指數', TPEx: '櫃買指數' }
+const idxSel = ref('TWSE')                        // 走勢圖選擇的指數（TWSE=加權股價指數）
+const IDX_NAME = { TWSE: '加權指數', TPEx: '櫃買指數' }
 
 async function loadIndex() {
   renderChart(await getMarketIndex(120, idxSel.value))
@@ -75,7 +75,7 @@ function go(id) { router.push(`/stock/${id}`) }
   <div>
     <div style="display: flex; gap: 16px; flex-wrap: wrap">
       <el-card shadow="never" style="flex: 1 1 260px">
-        <div style="color: #999">加權指數 TAIEX</div>
+        <div style="color: #999">加權指數</div>
         <template v-if="ov?.taiex">
           <div style="font-size: 30px; font-weight: 700" :style="{ color: up(ov.taiex.change) }">
             {{ ov.taiex.close.toFixed(2) }}
@@ -119,7 +119,7 @@ function go(id) { router.push(`/stock/${id}`) }
       <template #header>
         指數走勢（近 120 交易日）
         <el-radio-group v-model="idxSel" size="small" style="margin-left: 12px" @change="loadIndex">
-          <el-radio-button value="TAIEX">加權指數</el-radio-button>
+          <el-radio-button value="TWSE">加權指數</el-radio-button>
           <el-radio-button value="TPEx">櫃買指數</el-radio-button>
         </el-radio-group>
       </template>

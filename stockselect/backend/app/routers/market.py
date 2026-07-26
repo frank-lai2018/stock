@@ -32,7 +32,9 @@ def _quote(index_id):
 
 @router.get("/overview")
 def overview():
-    taiex = _quote("TAIEX")
+    # 「加權指數」= 發行量加權股價指數 = 本庫 index_id 'TWSE'（一般看的那個）。
+    # 'TAIEX' 在本庫是「報酬指數(含息)」，數字約 2 倍且更新較不穩，不用於此卡。
+    taiex = _quote("TWSE")
     tpex = _quote("TPEx")            # 櫃買指數
     br = db.query(
         "SELECT max(trade_date) AS as_of, "
