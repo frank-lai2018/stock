@@ -3,6 +3,8 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getPatterns, screenPattern } from '../api'
+import WatchlistAddButton from '../components/WatchlistAddButton.vue'
+import WatchlistBatchAdd from '../components/WatchlistBatchAdd.vue'
 
 const router = useRouter()
 const cat = ref([])
@@ -10,6 +12,10 @@ const pattern = ref('')
 const items = ref([])
 const name = ref('')
 const loading = ref(false)
+const tableRef = ref()
+const selected = ref([])
+function onSel(rows) { selected.value = rows }
+function clearSel() { tableRef.value?.clearSelection(); selected.value = [] }
 
 const dirColor = { bull: '#EA4C4C', bear: '#3F9E5A', neutral: '#909399' }
 const dirText = { bull: '偏多', bear: '偏空', neutral: '中性' }
@@ -38,7 +44,10 @@ async function run() {
     loading.value = false
   }
 }
-function go(row) { router.push(`/stock/${row.stock_id}`) }
+function go(row, column) {
+  if (column && column.type === 'selection') return   // 點勾選格不跳頁
+  router.push(`/stock/${row.stock_id}`)
+}
 </script>
 
 <template>
@@ -56,8 +65,17 @@ function go(row) { router.push(`/stock/${row.stock_id}`) }
       </div>
     </el-card>
 
-    <el-tag style="margin-bottom: 8px">「{{ name }}」符合 {{ items.length }} 檔</el-tag>
-    <el-table :data="items" v-loading="loading" height="72vh" stripe style="cursor: pointer" @row-click="go">
+    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px">
+      <el-tag>「{{ name }}」符合 {{ items.length }} 檔</el-tag>
+      <template v-if="selected.length">
+        <span>已勾選 <b style="color: #EA4C4C">{{ selected.length }}</b> 檔</span>
+        <WatchlistBatchAdd :rows="selected" @done="clearSel" />
+        <el-button size="small" text @click="clearSel">清除勾選</el-button>
+      </template>
+    </div>
+    <el-table ref="tableRef" :data="items" v-loading="loading" height="72vh" stripe style="cursor: pointer"
+              @row-click="go" @selection-change="onSel">
+      <el-table-column type="selection" width="42" fixed />
       <el-table-column prop="stock_id" label="代碼" width="80" />
       <el-table-column prop="name" label="名稱" width="120" />
       <el-table-column prop="industry" label="產業" width="130" show-overflow-tooltip />
@@ -73,6 +91,9 @@ function go(row) { router.push(`/stock/${row.stock_id}`) }
         <span :style="{ color: row.inst_net_20d >= 0 ? '#EA4C4C' : '#3F9E5A' }">{{ num(row.inst_net_20d) }}</span>
       </template></el-table-column>
       <el-table-column label="千張大戶%" width="100"><template #default="{ row }">{{ row.big1000_pct }}</template></el-table-column>
+      <el-table-column label="自選" width="66" fixed="right">
+        <template #default="{ row }"><WatchlistAddButton :row="row" /></template>
+      </el-table-column>
     </el-table>
   </div>
 </template>

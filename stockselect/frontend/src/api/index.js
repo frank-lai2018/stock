@@ -51,4 +51,16 @@ export const getStockTrades = (stockId) =>
 export const addTrade = (t) => api.post('/trades', t).then((r) => r.data)
 export const deleteTrade = (id) => api.delete(`/trades/${id}`).then((r) => r.data)
 
+// 自選股（自建分類 + 成員）
+export const getWatchCategories = () => api.get('/watchlist/categories').then((r) => r.data)
+export const addWatchCategory = (name) => api.post('/watchlist/categories', { name }).then((r) => r.data)
+export const renameWatchCategory = (id, name) =>
+  api.put(`/watchlist/categories/${id}`, { name }).then((r) => r.data)
+export const deleteWatchCategory = (id) => api.delete(`/watchlist/categories/${id}`).then((r) => r.data)
+export const getWatchItems = (cid) => api.get(`/watchlist/${cid}/items`).then((r) => r.data)
+export const addWatchItem = (payload) => api.post('/watchlist/items', payload).then((r) => r.data)
+export const addWatchItemsBulk = (payload) =>
+  api.post('/watchlist/items/bulk', payload).then((r) => r.data)
+export const deleteWatchItem = (id) => api.delete(`/watchlist/items/${id}`).then((r) => r.data)
+
 export default api

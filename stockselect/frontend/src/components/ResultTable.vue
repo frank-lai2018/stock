@@ -1,13 +1,20 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import WatchlistAddButton from './WatchlistAddButton.vue'
+import WatchlistBatchAdd from './WatchlistBatchAdd.vue'
 
 const props = defineProps({
   items: { type: Array, default: () => [] },
   loading: { type: Boolean, default: false },
+  selectable: { type: Boolean, default: false },   // 開勾選欄 + 批次加入自選股
 })
 const router = useRouter()
+const tableRef = ref()
+const selected = ref([])
 const hasBreakout = computed(() => (props.items || []).some((r) => r.breakout))
+function onSel(rows) { selected.value = rows }
+function clearSel() { tableRef.value?.clearSelection(); selected.value = [] }
 
 const pct = (v) => (v == null ? '' : (Number(v) * 100).toFixed(1) + '%')
 const pct1 = (v) => (v == null ? '' : Number(v).toFixed(2) + '%')
@@ -15,14 +22,22 @@ const num = (v) => (v == null ? '' : Number(v).toLocaleString('en-US'))
 const cmp = (k) => (a, b) => (a[k] ?? -Infinity) - (b[k] ?? -Infinity)
 const dirColor = { bull: '#EA4C4C', bear: '#3F9E5A', neutral: '#909399' }   // 紅多綠空
 
-function go(row) {
+function go(row, column) {
+  if (column && column.type === 'selection') return   // 點勾選格不跳頁
   router.push(`/stock/${row.stock_id}`)
 }
 </script>
 
 <template>
-  <el-table :data="items" v-loading="loading" height="74vh" stripe @row-click="go"
-            style="cursor: pointer" :default-sort="{ prop: '', order: '' }">
+  <div v-if="selectable && selected.length"
+       style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px">
+    <span>已勾選 <b style="color: #EA4C4C">{{ selected.length }}</b> 檔</span>
+    <WatchlistBatchAdd :rows="selected" @done="clearSel" />
+    <el-button size="small" text @click="clearSel">清除勾選</el-button>
+  </div>
+  <el-table ref="tableRef" :data="items" v-loading="loading" height="74vh" stripe @row-click="go"
+            @selection-change="onSel" style="cursor: pointer" :default-sort="{ prop: '', order: '' }">
+    <el-table-column v-if="selectable" type="selection" width="42" fixed />
     <el-table-column prop="stock_id" label="代碼" width="80" fixed />
     <el-table-column label="名稱" width="130" fixed>
       <template #default="{ row }">
@@ -100,6 +115,9 @@ function go(row) {
         <el-tag v-if="row.above_ma60" type="success" size="small">是</el-tag>
         <el-tag v-else type="info" size="small">否</el-tag>
       </template>
+    </el-table-column>
+    <el-table-column label="自選" width="66" fixed="right">
+      <template #default="{ row }"><WatchlistAddButton :row="row" /></template>
     </el-table-column>
   </el-table>
 </template>

@@ -1,16 +1,17 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import * as XLSX from 'xlsx'
 import { getBreakoutPatterns, screenBreakout } from '../api'
+import PatternResultTable from './PatternResultTable.vue'
+import WatchlistAddButton from './WatchlistAddButton.vue'
 
 const props = defineProps({
-  group: { type: String, required: true },     // bottom / continuation
+  group: { type: String, required: true },     // bottom / continuation / top
   title: { type: String, default: '型態突破' },
-  showDir: { type: Boolean, default: false },  // 連續型有多空方向
+  showDir: { type: Boolean, default: false },  // 連續/頭部型有多空方向
 })
 
-const router = useRouter()
 const cat = ref([])
 const pattern = ref('all')
 const secType = ref('')
@@ -20,11 +21,6 @@ const items = ref([])
 const count = ref(0)
 const asOf = ref('')
 const loading = ref(false)
-
-const pct = (v) => (v == null ? '' : (Number(v) * 100).toFixed(1) + '%')
-const upc = (v) => (v == null ? '' : Number(v) >= 0 ? '#EA4C4C' : '#3F9E5A')
-// 方向上色（紅漲綠跌）；底部型態一律偏多
-const dirColor = (row) => (row.breakout?.dir === 'bear' ? '#3F9E5A' : '#EA4C4C')
 
 onMounted(async () => {
   try {
@@ -51,9 +47,37 @@ async function run() {
     loading.value = false
   }
 }
-function go(row) { router.push(`/stock/${row.stock_id}`) }
 function pts(row) {
   return (row.breakout?.points || []).map((p) => `${p.label} ${p.date.slice(5)} @${p.price}`).join('　')
+}
+
+// 匯出目前結果為 Excel（數值欄回傳數字型，讓 Excel 當數字）
+function downloadXlsx() {
+  if (!items.value.length) return ElMessage.warning('目前沒有結果可下載')
+  const cols = [
+    ['代碼', (r) => r.stock_id],
+    ['名稱', (r) => r.name],
+    ['類別', (r) => (r.security_type === 'etf' ? 'ETF' : '個股')],
+    ['型態', (r) => r.pattern_name],
+    ['方向', (r) => (r.breakout?.dir === 'bear' ? '空' : '多')],
+    ['突破日', (r) => r.breakout?.breakout_date],
+    ['頸線/突破線', (r) => r.breakout?.neckline],
+    ['突破收盤', (r) => r.breakout?.breakout_close],
+    ['量比', (r) => r.breakout?.vol_ratio],
+    ['量測滿足價', (r) => r.breakout?.target],
+    ['RS評等', (r) => r.rs_rating],
+    ['股價', (r) => r.close],
+    ['近3月%', (r) => (r.ret_3m == null ? '' : Number((r.ret_3m * 100).toFixed(2)))],
+    ['產業', (r) => r.industry],
+    ['關鍵點', (r) => pts(r)],
+  ]
+  const aoa = [cols.map((c) => c[0])]
+  for (const r of items.value) aoa.push(cols.map((c) => { const v = c[1](r); return v == null ? '' : v }))
+  const ws = XLSX.utils.aoa_to_sheet(aoa)
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, '型態突破')
+  const stamp = (asOf.value || '').replace(/-/g, '') || 'result'
+  XLSX.writeFile(wb, `pattern_${props.group}_${stamp}.xlsx`)
 }
 </script>
 
@@ -72,6 +96,7 @@ function pts(row) {
           <el-option label="只 ETF" value="etf" />
         </el-select>
         <el-button type="primary" @click="run">掃描</el-button>
+        <el-button size="small" type="success" :disabled="!items.length" @click="downloadXlsx">⬇ 下載 Excel</el-button>
         <el-checkbox v-model="showTarget" size="small" label="滿足價/方向" border />
         <el-tag v-if="asOf">資料日 {{ asOf }}</el-tag>
         <el-tag type="danger" effect="dark">符合 {{ count }} 檔</el-tag>
@@ -81,56 +106,9 @@ function pts(row) {
       </div>
     </el-card>
 
-    <el-table :data="items" v-loading="loading" height="70vh" stripe
-              style="cursor: pointer" @row-click="go">
-      <el-table-column prop="stock_id" label="代碼" width="76" fixed />
-      <el-table-column label="名稱" width="120" fixed>
-        <template #default="{ row }">
-          {{ row.name }}
-          <el-tag v-if="row.security_type === 'etf'" size="small" type="warning" effect="plain">ETF</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="型態" width="120">
-        <template #default="{ row }">
-          <el-tooltip :content="pts(row)" placement="top" :disabled="!pts(row)">
-            <el-tag :color="dirColor(row)" style="color: #fff; border: 0">{{ row.pattern_name }}</el-tag>
-          </el-tooltip>
-        </template>
-      </el-table-column>
-      <el-table-column v-if="showTarget" label="量測滿足價" width="102">
-        <template #default="{ row }"><b :style="{ color: dirColor(row) }">{{ row.breakout?.target }}</b></template>
-      </el-table-column>
-      <el-table-column v-if="showTarget && showDir" label="方向" width="72">
-        <template #default="{ row }">
-          <span :style="{ color: dirColor(row), fontWeight: 700 }">
-            {{ row.breakout?.dir === 'bear' ? '空 ↓' : '多 ↑' }}
-          </span>
-        </template>
-      </el-table-column>
-      <el-table-column label="突破日" width="104">
-        <template #default="{ row }"><span :style="{ color: dirColor(row) }">{{ row.breakout?.breakout_date?.slice(5) }}</span></template>
-      </el-table-column>
-      <el-table-column :label="showDir ? '突破線' : '頸線/杯口'" width="96">
-        <template #default="{ row }">{{ row.breakout?.neckline }}</template>
-      </el-table-column>
-      <el-table-column label="突破收盤" width="90">
-        <template #default="{ row }">{{ row.breakout?.breakout_close }}</template>
-      </el-table-column>
-      <el-table-column label="量比" width="72">
-        <template #default="{ row }">{{ row.breakout?.vol_ratio }}×</template>
-      </el-table-column>
-      <el-table-column label="RS評等" width="82" sortable :sort-method="(a, b) => (a.rs_rating ?? -1) - (b.rs_rating ?? -1)">
-        <template #default="{ row }">
-          <b :style="{ color: row.rs_rating >= 70 ? '#f56c6c' : '#909399' }">{{ row.rs_rating ?? '—' }}</b>
-        </template>
-      </el-table-column>
-      <el-table-column label="股價" width="78">
-        <template #default="{ row }">{{ row.close ?? '—' }}</template>
-      </el-table-column>
-      <el-table-column label="近3月" width="86" sortable :sort-method="(a, b) => (a.ret_3m ?? -9) - (b.ret_3m ?? -9)">
-        <template #default="{ row }"><span :style="{ color: upc(row.ret_3m) }">{{ pct(row.ret_3m) }}</span></template>
-      </el-table-column>
-      <el-table-column prop="industry" label="產業" min-width="120" show-overflow-tooltip />
-    </el-table>
+    <PatternResultTable :items="items" :loading="loading" :show-target="showTarget"
+                        :show-dir="showDir" selectable>
+      <template #action="{ row }"><WatchlistAddButton :row="row" /></template>
+    </PatternResultTable>
   </div>
 </template>

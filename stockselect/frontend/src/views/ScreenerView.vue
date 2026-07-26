@@ -139,7 +139,7 @@ function applyStrategy(key) {
         <el-button size="small" :disabled="!items.length" @click="download">⬇ CSV</el-button>
         <span style="margin-left: 12px; color: #999">點任一列看個股 K 線</span>
       </div>
-      <ResultTable :items="items" :loading="loading" />
+      <ResultTable :items="items" :loading="loading" selectable />
     </div>
   </div>
 </template>
