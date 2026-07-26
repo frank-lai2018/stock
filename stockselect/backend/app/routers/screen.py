@@ -1,7 +1,7 @@
 """選股 API：預設策略 + 條件篩選。"""
 from fastapi import APIRouter
 
-from .. import db, patterns
+from .. import db, patterns, swings
 from ..filters import SORT_WHITELIST, build_where
 from ..schemas import ScreenRequest
 
@@ -81,6 +81,14 @@ STRATEGIES = {
         "filters": {"mf_distribute": True, "in_universe": True},
         "sort": "vpa_distrib_20d",
     },
+    "pattern_breakout": {
+        "name": "型態突破 (W底)",
+        "desc": "雙重底(W底)突破頸線帶量：最近兩個相近低點＋中間頸線，收盤新鮮突破頸線且量≥前50日均量×1.5（附量測滿足價）",
+        "filters": {"in_universe": True},
+        "sort": "rs_rating",
+        "scan": "double_bottom",   # 前端據此改呼叫 /screen/pattern-breakout（波段偵測，非 MV 篩選）
+        "limit": 100,
+    },
 }
 
 
@@ -116,3 +124,44 @@ def screen(req: ScreenRequest):
     _attach_last_pattern(rows)
     as_of = rows[0]["as_of_date"].isoformat() if rows and rows[0].get("as_of_date") else None
     return {"count": len(rows), "as_of": as_of, "items": rows}
+
+
+@router.get("/screen/pattern-breakout")
+def pattern_breakout(limit: int = 100, security_type: str = "", min_amt: int = 20000000):
+    """全市場掃描 W 底 / 雙重底突破頸線帶量（Python 波段偵測，非 MV 篩選）。
+
+    候選限 in_universe 且 20 日均額 ≥ min_amt（濾掉不流動小型股，控制掃描量）。
+    """
+    cond = ["in_universe = true", "amt20 >= %(amt)s"]
+    params = {"amt": min_amt}
+    if security_type in ("stock", "etf"):
+        cond.append("security_type = %(st)s")
+        params["st"] = security_type
+    snap = {r["stock_id"]: r for r in
+            db.query(f"SELECT * FROM mv_stock_snapshot WHERE {' AND '.join(cond)}", params)}
+    ids = list(snap.keys())
+    if not ids:
+        return {"count": 0, "as_of": None, "items": []}
+
+    bars_rows = db.query(
+        "SELECT stock_id, trade_date, adj_high AS high, adj_low AS low, adj_close AS close, volume "
+        "FROM (SELECT stock_id, trade_date, adj_high, adj_low, adj_close, volume, "
+        "  row_number() OVER (PARTITION BY stock_id ORDER BY trade_date DESC) AS rn "
+        "  FROM price_daily WHERE stock_id = ANY(%(ids)s)) z "
+        "WHERE rn <= 150 ORDER BY stock_id, trade_date", {"ids": ids})
+    by = {}
+    for b in bars_rows:
+        by.setdefault(b["stock_id"], []).append(b)
+
+    out = []
+    for sid, bars in by.items():
+        bk = swings.detect_double_bottom(bars)
+        if bk:
+            row = dict(snap[sid])
+            row["breakout"] = bk
+            out.append(row)
+    out.sort(key=lambda r: (r["breakout"]["breakout_date"], r.get("rs_rating") or 0), reverse=True)
+    out = out[:max(1, min(int(limit), 500))]
+    _attach_last_pattern(out)
+    as_of = out[0]["as_of_date"].isoformat() if out and out[0].get("as_of_date") else None
+    return {"count": len(out), "as_of": as_of, "items": out}

@@ -1,11 +1,13 @@
 <script setup>
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 
-defineProps({
+const props = defineProps({
   items: { type: Array, default: () => [] },
   loading: { type: Boolean, default: false },
 })
 const router = useRouter()
+const hasBreakout = computed(() => (props.items || []).some((r) => r.breakout))
 
 const pct = (v) => (v == null ? '' : (Number(v) * 100).toFixed(1) + '%')
 const pct1 = (v) => (v == null ? '' : Number(v).toFixed(2) + '%')
@@ -43,6 +45,19 @@ function go(row) {
         <el-tag v-for="(p, i) in (row.last_patterns || [])" :key="i"
                 :color="dirColor[p.dir]" size="small"
                 style="color: #fff; border: 0; margin: 1px 2px">{{ p.name }}</el-tag>
+      </template>
+    </el-table-column>
+    <el-table-column v-if="hasBreakout" label="W底突破" width="190">
+      <template #default="{ row }">
+        <template v-if="row.breakout">
+          <div style="font-size: 12px; line-height: 1.5">
+            <span style="color: #EA4C4C">突破 {{ row.breakout.breakout_date?.slice(5) }}</span>
+            ｜頸線 {{ row.breakout.neckline }}
+            <br />
+            滿足價 <b style="color: #EA4C4C">{{ row.breakout.target }}</b>
+            ｜量 {{ row.breakout.vol_ratio }}×
+          </div>
+        </template>
       </template>
     </el-table-column>
     <el-table-column label="近3月" width="90" :sort-method="cmp('ret_3m')" sortable>

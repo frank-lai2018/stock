@@ -5,6 +5,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { getPortfolio, getTrades, addTrade, deleteTrade, searchStocks } from '../api'
 
 const router = useRouter()
+const curYear = new Date().getFullYear()
+const year = ref(curYear)
+const years = ref([curYear])
 const data = ref({ items: [], summary: null, realized: [], as_of: null })
 const trades = ref([])
 const loading = ref(false)
@@ -27,8 +30,10 @@ const up = (v) => (v == null ? '' : Number(v) >= 0 ? '#EA4C4C' : '#3F9E5A')
 async function load() {
   loading.value = true
   try {
-    data.value = await getPortfolio()
-    trades.value = await getTrades()
+    data.value = await getPortfolio(year.value)
+    trades.value = await getTrades(year.value)
+    if (data.value.years?.length) years.value = data.value.years
+    if (data.value.year) year.value = data.value.year
   } catch (e) {
     ElMessage.error('載入失敗：' + (e?.response?.data?.detail || e.message))
   } finally {
@@ -52,7 +57,9 @@ function onPick(item) {
 async function add() {
   if (!form.value.stock_id) return ElMessage.warning('請先搜尋並選擇股票')
   if (!form.value.trade_date) return ElMessage.warning('請選擇交易日期')
-  if (!form.value.shares || !form.value.price) return ElMessage.warning('請填股數與價格')
+  if (!form.value.shares) return ElMessage.warning('請填股數')
+  if (form.value.price === null || form.value.price === undefined || form.value.price < 0)
+    return ElMessage.warning('請填價格（配股填 0）')
   try {
     await addTrade({
       stock_id: form.value.stock_id, action: form.value.action, trade_date: form.value.trade_date,
@@ -86,6 +93,19 @@ onMounted(load)
 
 <template>
   <div>
+    <!-- 年度切換 -->
+    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px">
+      <span style="color: #999; font-size: 13px">年度</span>
+      <el-select v-model="year" style="width: 120px" @change="load">
+        <el-option v-for="y in years" :key="y" :label="`${y} 年`" :value="y" />
+      </el-select>
+      <el-tag v-if="year === curYear" type="danger" effect="plain" size="small">當年度</el-tag>
+      <el-tag v-else type="info" effect="plain" size="small">歷史交易</el-tag>
+      <span style="color: #bbb; font-size: 12px">
+        指標為 {{ year }} 年度；未平倉／未實現／診斷分佈為目前持股當下快照
+      </span>
+    </div>
+
     <!-- 組合總覽 -->
     <div v-if="data.summary" style="display: flex; gap: 12px; flex-wrap: wrap">
       <el-card shadow="never" style="flex: 1 1 200px">
@@ -96,7 +116,7 @@ onMounted(load)
         </div>
       </el-card>
       <el-card shadow="never" style="flex: 1 1 200px">
-        <div style="color: #999">已實現損益</div>
+        <div style="color: #999">已實現損益（{{ year }}）</div>
         <div style="font-size: 22px; font-weight: 700" :style="{ color: up(data.summary.realized_total) }">
           {{ money(data.summary.realized_total) }}
         </div>
@@ -105,7 +125,16 @@ onMounted(load)
         </div>
       </el-card>
       <el-card shadow="never" style="flex: 1 1 200px">
-        <div style="color: #999">總損益（已+未實現）</div>
+        <div style="color: #999">未實現損益</div>
+        <div style="font-size: 22px; font-weight: 700" :style="{ color: up(data.summary.unrealized) }">
+          {{ money(data.summary.unrealized) }}
+        </div>
+        <div style="color: #999; font-size: 12px; margin-top: 4px">
+          報酬率 <b :style="{ color: up(data.summary.unrealized_pct) }">{{ pct(data.summary.unrealized_pct) }}</b>
+        </div>
+      </el-card>
+      <el-card shadow="never" style="flex: 1 1 200px">
+        <div style="color: #999">總損益（{{ year }}已實現＋未實現）</div>
         <div style="font-size: 22px; font-weight: 700" :style="{ color: up(data.summary.total_pnl) }">
           {{ money(data.summary.total_pnl) }}
         </div>
@@ -176,7 +205,7 @@ onMounted(load)
       </el-tab-pane>
 
       <!-- 交易紀錄 -->
-      <el-tab-pane label="交易紀錄" name="trades">
+      <el-tab-pane :label="`交易紀錄（${year}）`" name="trades">
         <el-card shadow="never" style="margin-bottom: 12px">
           <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center">
             <el-radio-group v-model="form.action">
@@ -206,7 +235,7 @@ onMounted(load)
             <el-button type="primary" @click="add">記錄</el-button>
           </div>
           <div style="color: #999; font-size: 12px; margin-top: 6px">
-            手續費/證交稅可留空（視為 0）；賣出以 FIFO 配對買進，自動算已實現損益。日後補歷史紀錄照樣填即可。
+            手續費/證交稅可留空（視為 0）；賣出以 FIFO 配對買進，自動算已實現損益。<b>配股（股票股利）以「買進」記錄、價格填 0</b>，可攤低平均成本。日後補歷史紀錄照樣填即可。
           </div>
         </el-card>
         <el-table :data="trades" v-loading="loading" stripe height="52vh">
@@ -240,11 +269,11 @@ onMounted(load)
             </template>
           </el-table-column>
         </el-table>
-        <el-empty v-if="!loading && !trades.length" description="尚無交易紀錄" />
+        <el-empty v-if="!loading && !trades.length" :description="`${year} 年尚無交易紀錄`" />
       </el-tab-pane>
 
       <!-- 已實現績效 -->
-      <el-tab-pane label="已實現績效" name="realized">
+      <el-tab-pane :label="`已實現績效（${year}）`" name="realized">
         <el-table :data="data.realized" v-loading="loading" stripe height="62vh">
           <el-table-column label="股票" width="140">
             <template #default="{ row }">{{ row.stock_id }} {{ row.name }}</template>
@@ -262,7 +291,7 @@ onMounted(load)
             <template #default="{ row }"><b :style="{ color: up(row.pnl) }">{{ money(row.pnl) }}</b></template>
           </el-table-column>
         </el-table>
-        <el-empty v-if="!loading && !data.realized.length" description="尚無已實現（平倉）交易" />
+        <el-empty v-if="!loading && !data.realized.length" :description="`${year} 年尚無已實現（平倉）交易`" />
       </el-tab-pane>
     </el-tabs>
   </div>

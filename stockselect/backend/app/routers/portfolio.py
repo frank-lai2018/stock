@@ -3,6 +3,8 @@
 交易帳 trade_log（單次買/賣，記日期、手續費、證交稅）為真實來源；
 持股（未平倉部位）與已實現損益皆由 ledger FIFO 引擎推導。
 """
+from datetime import date
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -67,12 +69,20 @@ def _last_patterns(ids):
 
 
 @router.get("/portfolio")
-def portfolio():
-    """未平倉持股 + 每檔診斷 + 未實現損益，及組合總覽（含已實現）。"""
+def portfolio(year: int | None = None):
+    """未平倉持股 + 每檔診斷 + 未實現損益，及組合總覽。
+
+    未平倉部位／未實現／診斷分佈＝目前持股（當下快照）；已實現損益與總損益
+    只計算 `year`（預設當年度）內賣出配對的部分。回傳 years 供前端下拉。
+    """
     _ensure()
     txns = db.query("SELECT id, stock_id, action, trade_date, shares, price, fee, tax FROM trade_log")
+    cur_year = date.today().year
+    years = sorted({t["trade_date"].year for t in txns} | {cur_year}, reverse=True)
+    year = year or cur_year
     if not txns:
-        return {"items": [], "summary": None, "realized": [], "as_of": None}
+        return {"items": [], "summary": None, "realized": [], "as_of": None,
+                "year": year, "years": years}
 
     by = {}
     for t in txns:
@@ -137,7 +147,8 @@ def portfolio():
         if cost_val:
             tot_cost += cost_val
 
-    # 已實現：彙整所有配對完成的交易（新到舊）
+    # 已實現：只取 year 當年賣出配對完成的交易（依賣出日，新到舊）
+    ystr = str(year)
     realized = []
     for sid, l in leds.items():
         nm = snaps.get(sid, {}).get("name") if snaps.get(sid) else None
@@ -145,7 +156,8 @@ def portfolio():
             r = db.query("SELECT name FROM stock WHERE stock_id=%(id)s", {"id": sid})
             nm = r[0]["name"] if r else sid
         for c in l["closed"]:
-            realized.append({**c, "stock_id": sid, "name": nm})
+            if c["sell_date"][:4] == ystr:
+                realized.append({**c, "stock_id": sid, "name": nm})
     realized.sort(key=lambda x: x["sell_date"], reverse=True)
     realized_total = sum(c["pnl"] for c in realized)
     wins = sum(1 for c in realized if c["pnl"] > 0)
@@ -167,19 +179,30 @@ def portfolio():
         "accum_n": accum_n, "distrib_n": distrib_n,
         "top_industry": top_ind[0] if top_ind else None,
         "top_industry_share": round(top_ind[1] / tot_mv * 100, 1) if (top_ind and tot_mv) else None,
+        "year": year,
     }
-    return {"items": items, "summary": summary, "realized": realized, "as_of": as_of}
+    return {"items": items, "summary": summary, "realized": realized, "as_of": as_of,
+            "year": year, "years": years}
 
 
 @router.get("/trades")
-def list_trades():
-    """原始交易明細（新到舊）。"""
+def list_trades(year: int | None = None, stock_id: str | None = None):
+    """原始交易明細（新到舊）。給 year 只回該年度、給 stock_id 只回該檔；不給則全部。"""
     _ensure()
+    conds, params = [], {}
+    if year:
+        conds.append("extract(year FROM t.trade_date) = %(y)s")
+        params["y"] = year
+    if stock_id:
+        conds.append("t.stock_id = %(sid)s")
+        params["sid"] = stock_id.strip()
+    where = ("WHERE " + " AND ".join(conds)) if conds else ""
     rows = db.query(
         "SELECT t.id, t.stock_id, s.name, t.action, t.trade_date, t.shares, t.price, "
         "t.fee, t.tax, t.trade_type, t.pnl, t.note "
         "FROM trade_log t LEFT JOIN stock s USING(stock_id) "
-        "ORDER BY t.trade_date DESC, t.id DESC")
+        f"{where} ORDER BY t.trade_date DESC, t.id DESC",
+        params or None)
     return rows
 
 
