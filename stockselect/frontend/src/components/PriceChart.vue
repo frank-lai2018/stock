@@ -189,26 +189,30 @@ function redrawOverlays() {
   drawLevels(); drawTrades(); drawEvents()
 }
 
-// ---------- 過捲夾制 ----------
+// ---------- 過捲夾制：右邊最多到最新一根、左邊最多到最舊一根 ----------
+// klinecharts 內部：呼叫 setMaxOffset*Distance 會切到 Distance 模式，
+// maxOffsetDistance.right=0 → 右側偏移夾成 0（資料>可見數時不可能有右白）。
+// 注意：applyNewData / setBarSpace 後都要重套，且 maxOffset 要先設（切模式）再設 offset。
 function boundScroll() {
   if (!chart) return
   const safe = (fn, ...a) => { try { if (typeof chart[fn] === 'function') { chart[fn](...a) } } catch (e) { /* ignore */ } }
-  safe('setMaxOffsetLeftDistance', 1)
-  safe('setMaxOffsetRightDistance', 1)
-  safe('setOffsetRightDistance', 1)
-  safe('setLeftMinVisibleBarCount', 3)
-  safe('setRightMinVisibleBarCount', 3)
-  safe('scrollToRealTime')
+  safe('setMaxOffsetLeftDistance', 0)   // 左邊不留白：最多到最舊一根
+  safe('setMaxOffsetRightDistance', 0)  // 右邊不留白：最多到最新一根
+  safe('setOffsetRightDistance', 0)     // 最新一根貼齊右緣
 }
+// 後備硬夾制：萬一某版本 maxOffset 未生效，偵測到露白就同步貼回邊界
 let clamping = false
 function onRangeChange(r) {
   if (clamping || !chart || !dataList.length) return
+  let vr = (r && r.realTo != null) ? r : null
+  if (!vr) { try { vr = chart.getVisibleRange() } catch (e) { return } }
+  if (!vr || vr.realTo == null) return
   const n = dataList.length
   try {
-    if (r && r.realTo != null && r.realTo > n + 1) {
-      clamping = true; chart.scrollToRealTime(); setTimeout(() => { clamping = false }, 30)
-    } else if (r && r.realFrom != null && r.realFrom < -1) {
-      clamping = true; chart.scrollToDataIndex(0, 0); setTimeout(() => { clamping = false }, 30)
+    if (vr.realTo > n) {                 // 右邊露白 → 貼回最新
+      clamping = true; chart.scrollToRealTime(0); clamping = false
+    } else if (vr.realFrom < -1) {       // 左邊露白 → 貼回最舊
+      clamping = true; chart.scrollToDataIndex(0, 0); clamping = false
     }
   } catch (e) { clamping = false }
 }
@@ -241,6 +245,7 @@ async function load() {
     priceLineId = null; levelIds = []; tradeIds = []; eventIds = []
     chart.applyNewData(dataList)
     setRange('6M')            // 預設看近半年，不用手拖
+    boundScroll()            // applyNewData/setBarSpace 會重置限制 → 最後重套過捲邊界
     redrawOverlays()
   } catch (e) {
     ElMessage.error('載入 K 線失敗：' + (e?.response?.data?.detail || e.message))
@@ -264,6 +269,7 @@ onMounted(() => {
   boundScroll()
   applyInteract()
   try { chart.subscribeAction('onVisibleRangeChange', onRangeChange) } catch (e) { /* ignore */ }
+  try { chart.subscribeAction('onScroll', onRangeChange) } catch (e) { /* ignore */ }
   el.value.addEventListener('click', onChartClick)
   load()
   window.addEventListener('resize', onResize)
