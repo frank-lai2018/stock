@@ -32,6 +32,9 @@ const showKdj = ref(false)
 const showTrades = ref(true)
 const showLevels = ref(true)
 const showEvents = ref(false)
+// 互動開關（縮放 / 移動），關掉即鎖住圖不動
+const zoomOn = ref(true)
+const scrollOn = ref(true)
 
 const BARS = { D: 5000, W: 1500, M: 500 }   // 抓「全部」歷史（後端上限 5000）
 const LVBARS = { D: 130, W: 104, M: 60 }    // 壓力/頸線的回看根數（日~半年、週~2年、月~5年）
@@ -40,6 +43,14 @@ const PRESET_DAYS = { '1M': 22, '3M': 66, '6M': 132, '1Y': 252, ALL: null }
 const PER_DIV = { D: 1, W: 5, M: 21 }
 
 function safeRemove(id) { try { chart.removeOverlay(id) } catch (e) { /* ignore */ } }
+
+// 縮放 / 移動 開關（關掉 → 鎖住圖）
+function applyInteract() {
+  if (!chart) return
+  const safe = (fn, v) => { try { if (typeof chart[fn] === 'function') chart[fn](v) } catch (e) { /* ignore */ } }
+  safe('setZoomEnabled', zoomOn.value)
+  safe('setScrollEnabled', scrollOn.value)
+}
 
 // ---------- B：一鍵縮放到最近 N 根 ----------
 function setRange(key) {
@@ -251,6 +262,7 @@ onMounted(() => {
   setSub('MACD', showMacd.value)
   setSub('KDJ', showKdj.value)
   boundScroll()
+  applyInteract()
   try { chart.subscribeAction('onVisibleRangeChange', onRangeChange) } catch (e) { /* ignore */ }
   el.value.addEventListener('click', onChartClick)
   load()
@@ -265,6 +277,7 @@ watch(showKdj, (v) => setSub('KDJ', v))
 watch(showLevels, drawLevels)
 watch(showTrades, drawTrades)
 watch(showEvents, drawEvents)
+watch([zoomOn, scrollOn], applyInteract)
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
@@ -308,6 +321,10 @@ onBeforeUnmount(() => {
       <el-checkbox v-model="showLevels" size="small" label="壓力/支撐" border />
       <el-checkbox v-model="showEvents" size="small" label="除息/財報" border />
       <el-button size="small" @click="clearClickLine">清除點擊線</el-button>
+
+      <!-- 互動鎖：關掉即固定不動 -->
+      <el-checkbox v-model="zoomOn" size="small" label="縮放" border />
+      <el-checkbox v-model="scrollOn" size="small" label="移動" border />
     </div>
 
     <!-- 壓力/頸線/支撐 圖例 -->
