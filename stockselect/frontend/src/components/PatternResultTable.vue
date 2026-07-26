@@ -19,6 +19,7 @@ const pct = (v) => (v == null ? '' : (Number(v) * 100).toFixed(1) + '%')
 const upc = (v) => (v == null ? '' : Number(v) >= 0 ? '#EA4C4C' : '#3F9E5A')
 // 方向上色（紅漲綠跌）；底部型態一律偏多
 const dirColor = (row) => (row.breakout?.dir === 'bear' ? '#3F9E5A' : '#EA4C4C')
+const kbarColor = { bull: '#EA4C4C', bear: '#3F9E5A', neutral: '#909399' }   // 最新K棒型態
 function go(row, column) {
   if (column && column.type === 'selection') return   // 點勾選格不跳頁
   router.push(`/stock/${row.stock_id}`)
@@ -45,6 +46,13 @@ function clearSel() { tableRef.value?.clearSelection(); selected.value = [] }
       <template #default="{ row }">
         {{ row.name }}
         <el-tag v-if="row.security_type === 'etf'" size="small" type="warning" effect="plain">ETF</el-tag>
+      </template>
+    </el-table-column>
+    <el-table-column label="K棒型態" width="130">
+      <template #default="{ row }">
+        <el-tag v-for="(p, i) in (row.last_patterns || [])" :key="i"
+                :color="kbarColor[p.dir]" size="small"
+                style="color: #fff; border: 0; margin: 1px 2px">{{ p.name }}</el-tag>
       </template>
     </el-table-column>
     <el-table-column label="型態" width="120">
