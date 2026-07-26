@@ -5,3 +5,5 @@ run_backup.bat
 logs/
 etf_codes.txt
 *.xlsx
+rclone-*/
+scratchpad_*.sql

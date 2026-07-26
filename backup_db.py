@@ -49,15 +49,21 @@ def parse_dsn(dsn):
     }
 
 
-def exe(pg_bin, name):
-    return os.path.join(pg_bin, name) if pg_bin else name
+def resolve(bin_dir, name):
+    """解析可執行檔路徑：先找 bin_dir 下、再找 PATH（Windows 會自動補 .exe）。找不到回原字串。"""
+    cand = os.path.join(bin_dir, name) if bin_dir else name
+    return shutil.which(cand) or shutil.which(name) or cand
 
 
 def run(cmd, env, dry):
     print(f"    $ {' '.join(cmd)}")
     if dry:
         return 0
-    return subprocess.run(cmd, env=env).returncode
+    try:
+        return subprocess.run(cmd, env=env).returncode
+    except FileNotFoundError:
+        print(f"    ✗ 找不到執行檔：{cmd[0]}")
+        return 127
 
 
 def zip_data(data_src, dest_zip, dry):
@@ -135,7 +141,7 @@ def main():
     # 1) pg_dump → 快照資料夾
     dump_path = os.path.join(snap_dir, f"twstock_{stamp}.dump")
     print(f"\n[1] pg_dump {d['db']} → {dump_path}")
-    rc = run([exe(args.pg_bin, "pg_dump"), "-U", d["user"], "-h", d["host"], "-p", d["port"],
+    rc = run([resolve(args.pg_bin, "pg_dump"), "-U", d["user"], "-h", d["host"], "-p", d["port"],
               "-d", d["db"], "-Fc", "-f", dump_path], env, args.dry_run)
     if rc != 0:
         print(f"    ✗ pg_dump 失敗 (rc={rc})"); fail += 1
@@ -147,7 +153,7 @@ def main():
     if args.globals:
         gpath = os.path.join(snap_dir, f"globals_{stamp}.sql")
         print(f"\n[2] pg_dumpall --globals-only → {gpath}")
-        rc = run([exe(args.pg_bin, "pg_dumpall"), "-U", d["user"], "-h", d["host"], "-p", d["port"],
+        rc = run([resolve(args.pg_bin, "pg_dumpall"), "-U", d["user"], "-h", d["host"], "-p", d["port"],
                   "--globals-only", "-f", gpath], env, args.dry_run)
         if rc != 0:
             print(f"    ✗ 失敗 (rc={rc})（角色備份常需 postgres 超級使用者）"); fail += 1
@@ -176,22 +182,28 @@ def main():
         rotate_folders(args.out_dir, args.keep, args.dry_run)
 
     # 5) rclone 同步到雲端（選配）
-    if args.rclone_remote:
-        rclone = exe(args.rclone_bin, "rclone")
-        if args.rclone_sync:
-            print(f"\n[5] rclone sync（鏡像整個 out-dir）→ {args.rclone_remote}")
-            cmd = [rclone, "sync", args.out_dir, args.rclone_remote, "--progress"]
-        else:
-            dest = f"{args.rclone_remote}/{stamp}"
-            print(f"\n[5] rclone copy（本次快照）→ {dest}")
-            cmd = [rclone, "copy", snap_dir, dest, "--progress"]
-        rc = run(cmd, env, args.dry_run)
-        if rc != 0:
-            print(f"    ✗ rclone 失敗 (rc={rc})（確認已 rclone config 設好 remote）"); fail += 1
-        else:
-            print("    ✓ 雲端同步完成")
-    else:
+    if not args.rclone_remote:
         print("\n[5] （未給 --rclone-remote，略過雲端同步）")
+    else:
+        rclone = resolve(args.rclone_bin, "rclone")
+        if not os.path.isfile(rclone) and shutil.which(rclone) is None:
+            print(f"\n[5] ✗ 找不到 rclone（本機快照已備份完成，僅雲端上傳略過）"
+                  f"\n    請確認已安裝 rclone，並【加入 PATH】或用【--rclone-bin 指到 rclone.exe 所在資料夾】。"
+                  f"\n    事後可手動補傳：rclone copy \"{snap_dir}\" {args.rclone_remote}/{stamp} --progress")
+            fail += 1
+        else:
+            if args.rclone_sync:
+                print(f"\n[5] rclone sync（鏡像整個 out-dir）→ {args.rclone_remote}")
+                cmd = [rclone, "sync", args.out_dir, args.rclone_remote, "--progress"]
+            else:
+                dest = f"{args.rclone_remote}/{stamp}"
+                print(f"\n[5] rclone copy（本次快照）→ {dest}")
+                cmd = [rclone, "copy", snap_dir, dest, "--progress"]
+            rc = run(cmd, env, args.dry_run)
+            if rc != 0:
+                print(f"    ✗ rclone 失敗 (rc={rc})（確認已 rclone config 設好 remote）"); fail += 1
+            else:
+                print("    ✓ 雲端同步完成")
 
     print(f"\n=== {'dry-run 結束' if args.dry_run else '完成'}"
           + (f"，{fail} 個步驟失敗" if fail else "，全部成功") + " ===")
