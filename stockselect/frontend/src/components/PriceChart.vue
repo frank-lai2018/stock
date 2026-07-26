@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
-import { init, dispose } from 'klinecharts'
+import { init, dispose, registerOverlay } from 'klinecharts'
 import { ElMessage } from 'element-plus'
 import { getPrices, getLevels, getStockTrades, getDividends, getFundamentals } from '../api'
 
@@ -43,6 +43,37 @@ const PRESET_DAYS = { '1M': 22, '3M': 66, '6M': 132, '1Y': 252, ALL: null }
 const PER_DIV = { D: 1, W: 5, M: 21 }
 
 function safeRemove(id) { try { chart.removeOverlay(id) } catch (e) { /* ignore */ } }
+
+// 自訂 overlay：整條橫線 + 中文標籤（壓力/頸線/支撐）。只註冊一次。
+let levelOverlayReady = false
+function ensureLevelOverlay() {
+  if (levelOverlayReady) return
+  levelOverlayReady = true
+  try {
+    registerOverlay({
+      name: 'levelLine',
+      totalStep: 1,
+      needDefaultPointFigure: false,
+      needDefaultXAxisFigure: false,
+      needDefaultYAxisFigure: false,
+      createPointFigures: ({ overlay, coordinates, bounding }) => {
+        const c = coordinates && coordinates[0]
+        if (!c) return []
+        const d = overlay.extendData || {}
+        const color = d.color || '#2E7DEE'
+        return [
+          { type: 'line',
+            attrs: { coordinates: [{ x: 0, y: c.y }, { x: bounding.width, y: c.y }] },
+            styles: { color, size: 2, style: 'solid' } },
+          { type: 'text',
+            attrs: { x: 6, y: c.y, text: d.text || '', align: 'left', baseline: 'middle' },
+            styles: { color: '#ffffff', backgroundColor: color, size: 12,
+                      paddingLeft: 5, paddingRight: 5, paddingTop: 2, paddingBottom: 2 } },
+        ]
+      },
+    })
+  } catch (e) { /* 已註冊或不支援 → 略過 */ }
+}
 
 // 縮放 / 移動 開關（關掉 → 鎖住圖）
 function applyInteract() {
@@ -101,13 +132,10 @@ async function drawLevels() {
     for (const x of lv) {
       const color = LVCOLORS[x.type] || '#2E7DEE'
       const id = chart.createOverlay({
-        name: 'priceLine',
+        name: 'levelLine',
+        lock: true,                                   // 自動標線，不可拖動
         points: [{ value: x.price }],
-        styles: {
-          line: { color, size: 3, style: 'solid' },
-          text: { color: '#ffffff', backgroundColor: color, size: 12,
-                  paddingLeft: 4, paddingRight: 4, paddingTop: 2, paddingBottom: 2 },
-        },
+        extendData: { text: `${x.label} ${x.price}`, color },   // 中文標籤 + 價
       })
       if (id) levelIds.push(id)
     }
@@ -255,6 +283,7 @@ async function load() {
 function onResize() { if (chart) chart.resize() }
 
 onMounted(() => {
+  ensureLevelOverlay()
   chart = init(el.value)
   chart.setStyles({
     candle: {
