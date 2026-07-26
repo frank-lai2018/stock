@@ -30,8 +30,8 @@ export const screenPattern = (pattern, limit = 100) =>
   api.get('/screen/pattern', { params: { pattern, limit } }).then((r) => r.data)
 export const getStockPatterns = (id, days = 90) =>
   api.get(`/stock/${id}/patterns`, { params: { days } }).then((r) => r.data)
-export const getLevels = (id, bars = 120) =>
-  api.get(`/stock/${id}/levels`, { params: { bars } }).then((r) => r.data)
+export const getLevels = (id, bars = 120, tf = 'D') =>
+  api.get(`/stock/${id}/levels`, { params: { bars, tf } }).then((r) => r.data)
 export const getStockVpa = (id, days = 90) =>
   api.get(`/stock/${id}/vpa`, { params: { days } }).then((r) => r.data)
 export const getDividends = (id) =>

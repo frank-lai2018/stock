@@ -87,13 +87,27 @@ def margin(stock_id: str, tf: str = "D", bars: int = 60):
 
 
 @router.get("/{stock_id}/levels")
-def levels(stock_id: str, bars: int = 120):
-    """自動偵測近期壓力(現價上方)與頸線/支撐(現價下方)：轉折高低點群集，回傳價位。"""
+def levels(stock_id: str, bars: int = 120, tf: str = "D"):
+    """自動偵測近期壓力(現價上方)與頸線/支撐(現價下方)：轉折高低點群集，回傳價位。
+    tf=D/W/M：依當時週期先聚合再抓轉折，使壓力/支撐符合所看的日/週/月 K 線。"""
     n = max(30, min(int(bars), 800))
-    rows = db.query(
-        "SELECT * FROM (SELECT trade_date, adj_high AS h, adj_low AS l, adj_close AS c "
-        "FROM price_daily WHERE stock_id=%(id)s ORDER BY trade_date DESC LIMIT %(n)s) z "
-        "ORDER BY trade_date", {"id": stock_id, "n": n})
+    tfu = tf.upper()
+    if tfu == "D":
+        rows = db.query(
+            "SELECT * FROM (SELECT trade_date, adj_high AS h, adj_low AS l, adj_close AS c "
+            "FROM price_daily WHERE stock_id=%(id)s ORDER BY trade_date DESC LIMIT %(n)s) z "
+            "ORDER BY trade_date", {"id": stock_id, "n": n})
+    else:
+        unit = {"W": "week", "M": "month"}.get(tfu)
+        if not unit:
+            raise HTTPException(400, "tf 需為 D / W / M")
+        rows = db.query(
+            "SELECT * FROM ("
+            "  SELECT date_trunc(%(u)s, trade_date)::date AS trade_date,"
+            "         max(adj_high) AS h, min(adj_low) AS l,"
+            "         (array_agg(adj_close ORDER BY trade_date DESC))[1] AS c"
+            "  FROM price_daily WHERE stock_id=%(id)s GROUP BY 1 ORDER BY 1 DESC LIMIT %(n)s"
+            ") z ORDER BY trade_date", {"id": stock_id, "u": unit, "n": n})
     if len(rows) < 20:
         return []
     highs = [float(r["h"]) for r in rows]

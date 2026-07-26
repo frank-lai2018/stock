@@ -34,7 +34,7 @@ const showLevels = ref(true)
 const showEvents = ref(false)
 
 const BARS = { D: 5000, W: 1500, M: 500 }   // 抓「全部」歷史（後端上限 5000）
-const LVBARS = { D: 130, W: 130, M: 130 }   // 壓力/頸線只看近 ~130 根，避免抓到很久以前的老底
+const LVBARS = { D: 130, W: 104, M: 60 }    // 壓力/頸線的回看根數（日~半年、週~2年、月~5年）
 // B：區間快捷（以「交易日數」定義，依週期換算成 K 棒數）
 const PRESET_DAYS = { '1M': 22, '3M': 66, '6M': 132, '1Y': 252, ALL: null }
 const PER_DIV = { D: 1, W: 5, M: 21 }
@@ -85,7 +85,7 @@ async function drawLevels() {
   levels.value = []
   if (!showLevels.value) return
   try {
-    const lv = await getLevels(props.stockId, LVBARS[period.value] || 120)
+    const lv = await getLevels(props.stockId, LVBARS[period.value] || 120, period.value)
     levels.value = lv
     for (const x of lv) {
       const color = LVCOLORS[x.type] || '#2E7DEE'
