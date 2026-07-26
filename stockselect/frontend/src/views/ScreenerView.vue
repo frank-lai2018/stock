@@ -2,7 +2,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as XLSX from 'xlsx'
-import { getStrategies, runScreen, screenBreakout } from '../api'
+import { getStrategies, runScreen } from '../api'
 import FilterPanel from '../components/FilterPanel.vue'
 import ResultTable from '../components/ResultTable.vue'
 
@@ -106,24 +106,6 @@ function downloadXlsx() {
   XLSX.writeFile(wb, fname('xlsx'))
 }
 
-async function runScan(s) {
-  // 波段型態掃描（如 W 底突破）走專用端點，非 MV 篩選
-  loading.value = true
-  try {
-    const res = await screenBreakout({
-      limit: s.limit || 100,
-      security_type: filters.security_type || '',
-    })
-    items.value = res.items
-    count.value = res.count
-    asOf.value = res.as_of
-  } catch (e) {
-    ElMessage.error('掃描失敗：' + (e?.response?.data?.detail || e.message))
-  } finally {
-    loading.value = false
-  }
-}
-
 function applyStrategy(key) {
   const s = strategies.value[key]
   if (!s) return
@@ -134,7 +116,6 @@ function applyStrategy(key) {
   sort.value = s.sort || 'ret_3m'
   if (s.limit) limit.value = s.limit   // 策略可自帶顯示筆數（趨勢範本=100 供比對）
   appliedTag.value = TAG_LABELS[key] || s.name   // 標題列顯示套用的 tag
-  if (s.scan) return runScan(s)         // 波段偵測型策略（W 底突破）走掃描端點
   search(true)
 }
 </script>

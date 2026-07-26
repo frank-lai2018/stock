@@ -16,6 +16,8 @@ export const getMoneyflow = (market = '上市') =>
 export const runScreen = (payload) => api.post('/screen', payload).then((r) => r.data)
 export const screenBreakout = (params = {}) =>
   api.get('/screen/pattern-breakout', { params }).then((r) => r.data)
+export const getBreakoutPatterns = (group = 'bottom') =>
+  api.get('/screen/breakout-patterns', { params: { group } }).then((r) => r.data)
 export const getStock = (id) => api.get(`/stock/${id}`).then((r) => r.data)
 export const getPrices = (id, { tf = 'D', bars = 250, adj = 1 } = {}) =>
   api.get(`/stock/${id}/prices`, { params: { tf, bars, adj } }).then((r) => r.data)

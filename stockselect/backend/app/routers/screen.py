@@ -1,5 +1,5 @@
 """選股 API：預設策略 + 條件篩選。"""
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from .. import db, patterns, swings
 from ..filters import SORT_WHITELIST, build_where
@@ -81,14 +81,8 @@ STRATEGIES = {
         "filters": {"mf_distribute": True, "in_universe": True},
         "sort": "vpa_distrib_20d",
     },
-    "pattern_breakout": {
-        "name": "型態突破 (W底)",
-        "desc": "雙重底(W底)突破頸線帶量：最近兩個相近低點＋中間頸線，收盤新鮮突破頸線且量≥前50日均量×1.5（附量測滿足價）",
-        "filters": {"in_universe": True},
-        "sort": "rs_rating",
-        "scan": "double_bottom",   # 前端據此改呼叫 /screen/pattern-breakout（波段偵測，非 MV 篩選）
-        "limit": 100,
-    },
+    # 型態突破（W底/頭肩底/三重底/圓弧底/V反轉/杯柄）改由獨立頁「型態突破」/breakout 掃描，
+    # 走 /screen/pattern-breakout（波段偵測，非 MV 篩選），不放在此策略清單。
 }
 
 
@@ -126,12 +120,30 @@ def screen(req: ScreenRequest):
     return {"count": len(rows), "as_of": as_of, "items": rows}
 
 
-@router.get("/screen/pattern-breakout")
-def pattern_breakout(limit: int = 100, security_type: str = "", min_amt: int = 20000000):
-    """全市場掃描 W 底 / 雙重底突破頸線帶量（Python 波段偵測，非 MV 篩選）。
+@router.get("/screen/breakout-patterns")
+def breakout_patterns(group: str = "bottom"):
+    """型態突破頁的型態目錄（key + 中文名，含掃描優先序）。
+    group=bottom（底部反轉）/ continuation（連續整理）。"""
+    grp = swings.GROUPS.get(group, swings.DETECTORS)
+    return [{"key": k, "name": swings.PATTERN_NAMES[k]} for k in grp]
 
+
+@router.get("/screen/pattern-breakout")
+def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 100,
+                     security_type: str = "", min_amt: int = 20000000):
+    """全市場掃描型態突破帶量（Python 波段偵測，非 MV 篩選）。
+
+    group：bottom（底部反轉）/ continuation（連續整理）。
+    pattern：型態 key，或 all=該組全部（依優先序，每檔取第一個命中）。可逗號多選。
     候選限 in_universe 且 20 日均額 ≥ min_amt（濾掉不流動小型股，控制掃描量）。
     """
+    if pattern in ("", "all"):
+        keys = list(swings.GROUPS.get(group, swings.DETECTORS))
+    else:
+        keys = [p for p in pattern.split(",") if p in swings.ALL]
+    if not keys:
+        raise HTTPException(400, f"未知型態：{pattern}")
+
     cond = ["in_universe = true", "amt20 >= %(amt)s"]
     params = {"amt": min_amt}
     if security_type in ("stock", "etf"):
@@ -155,11 +167,15 @@ def pattern_breakout(limit: int = 100, security_type: str = "", min_amt: int = 2
 
     out = []
     for sid, bars in by.items():
-        bk = swings.detect_double_bottom(bars)
-        if bk:
-            row = dict(snap[sid])
-            row["breakout"] = bk
-            out.append(row)
+        for key in keys:                              # 依優先序，取第一個命中的型態
+            bk = swings.ALL[key](bars)
+            if bk:
+                row = dict(snap[sid])
+                row["breakout"] = bk
+                row["pattern"] = key
+                row["pattern_name"] = swings.PATTERN_NAMES[key]
+                out.append(row)
+                break
     out.sort(key=lambda r: (r["breakout"]["breakout_date"], r.get("rs_rating") or 0), reverse=True)
     out = out[:max(1, min(int(limit), 500))]
     _attach_last_pattern(out)
