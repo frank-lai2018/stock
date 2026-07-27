@@ -152,7 +152,7 @@ def stock_patterns(stock_id: str, days: int = 90):
     bars = list(reversed(rows))
     out = []
     for i in range(len(bars)):
-        window = bars[max(0, i - 8):i + 1]          # 帶前文（含趨勢判斷）
+        window = bars[max(0, i - 20):i + 1]         # 帶前文（約一個月趨勢判斷）
         for key in patterns.detect(window):
             d = bars[i]["trade_date"]
             out.append({"date": d.isoformat() if hasattr(d, "isoformat") else str(d),

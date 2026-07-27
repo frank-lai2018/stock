@@ -16,7 +16,7 @@ def _attach_last_pattern(rows):
         "FROM (SELECT stock_id, trade_date, adj_open, adj_high, adj_low, adj_close, "
         "  row_number() OVER (PARTITION BY stock_id ORDER BY trade_date DESC) AS rn "
         "  FROM price_daily WHERE stock_id = ANY(%(ids)s)) z "
-        "WHERE rn <= 12 ORDER BY stock_id, trade_date", {"ids": ids})
+        "WHERE rn <= 24 ORDER BY stock_id, trade_date", {"ids": ids})   # 含約一個月趨勢回看
     by = {}
     for b in bars_rows:
         by.setdefault(b["stock_id"], []).append(b)

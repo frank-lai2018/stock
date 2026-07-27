@@ -18,7 +18,7 @@ def screen_pattern(pattern: str, limit: int = 100):
         raise HTTPException(400, "未知型態")
     rows = db.query(
         "SELECT stock_id, adj_open AS open, adj_high AS high, adj_low AS low, adj_close AS close "
-        "FROM price_daily WHERE trade_date > (SELECT max(trade_date)-20 FROM price_daily) "
+        "FROM price_daily WHERE trade_date > (SELECT max(trade_date)-40 FROM price_daily) "   # 約一個月趨勢回看
         "ORDER BY stock_id, trade_date")
     groups = {}
     for r in rows:

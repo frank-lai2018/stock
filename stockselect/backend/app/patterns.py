@@ -35,12 +35,24 @@ def _m(b):
             "up": upper, "lo": lower, "white": c > o, "mid": (o + c) / 2}
 
 
-def _trend(bars, upto, look=5):
-    """pattern 之前 look 根的趨勢：1 上升 / -1 下降 / 0 持平。upto=pattern 起始索引（不含）。"""
+def _trend(bars, upto, look=20):
+    """pattern 之前 look 根（約一個月＝20 交易日）的趨勢：1 上升 / -1 下降 / 0 持平。
+    upto=pattern 起始索引（不含）。
+
+    以最小平方法對收盤取斜率符號判方向；不再只比窗口頭尾兩根，避免起點剛好是
+    單一低/高點時被誤導（例：整體下跌但窗口首根恰為低點 → 錯判成上升 → 錘子誤標吊人）。"""
     cs = [float(b["close"]) for b in bars[max(0, upto - look):upto]]
-    if len(cs) < 2:
+    m = len(cs)
+    if m < 2:
         return 0
-    return 1 if cs[-1] > cs[0] else (-1 if cs[-1] < cs[0] else 0)
+    xm = (m - 1) / 2.0
+    ym = sum(cs) / m
+    num = sum((i - xm) * (c - ym) for i, c in enumerate(cs))
+    den = sum((i - xm) ** 2 for i in range(m))
+    if den == 0:
+        return 0
+    slope = num / den
+    return 1 if slope > 0 else (-1 if slope < 0 else 0)
 
 
 def detect(bars):

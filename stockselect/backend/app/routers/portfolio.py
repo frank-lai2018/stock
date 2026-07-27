@@ -59,7 +59,7 @@ def _last_patterns(ids):
         "SELECT stock_id, trade_date, adj_open AS open, adj_high AS high, adj_low AS low, adj_close AS close "
         "FROM (SELECT stock_id, trade_date, adj_open, adj_high, adj_low, adj_close, "
         "  row_number() OVER (PARTITION BY stock_id ORDER BY trade_date DESC) AS rn "
-        "  FROM price_daily WHERE stock_id = ANY(%(ids)s)) z WHERE rn <= 12 ORDER BY stock_id, trade_date",
+        "  FROM price_daily WHERE stock_id = ANY(%(ids)s)) z WHERE rn <= 24 ORDER BY stock_id, trade_date",
         {"ids": ids})
     by = {}
     for b in rows:
