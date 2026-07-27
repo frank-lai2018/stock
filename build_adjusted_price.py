@@ -74,16 +74,27 @@ def parse_rows(text, skip_header):
     return rows
 
 
+def _decode_price(raw):
+    """月檔編碼容錯：TPEx=UTF-8(BOM) / TWSE=Big5。
+    若檔頭有 BOM 但其後其實是 Big5（畸形檔頭，如某些月檔被誤植 BOM），退回 Big5，
+    避免 utf-8-sig 直接崩（資料列為 ASCII，parse_rows 以「首欄民國日期」過濾，仍可完整解析）。"""
+    if raw[:3] == b"\xef\xbb\xbf":
+        try:
+            return raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return raw[3:].decode("big5", errors="ignore")
+    return raw.decode("big5", errors="ignore")
+
+
 def load_prices(folder, code):
-    """讀該股所有月檔並合併；用 BOM 判斷 TPEx(UTF-8)/TWSE(Big5)。"""
+    """讀該股所有月檔並合併；用 BOM 判斷 TPEx(UTF-8)/TWSE(Big5)，編碼異常自動容錯。"""
     pat = re.compile(rf"{re.escape(code)}_\d{{6}}\.csv$")
     files = sorted(f for f in glob.glob(os.path.join(folder, f"{code}_*.csv"))
                    if pat.search(os.path.basename(f)))     # 排除 _adj.csv 等
     all_rows = []
     for f in files:
         raw = open(f, "rb").read()
-        text = raw.decode("utf-8-sig") if raw[:3] == b"\xef\xbb\xbf" else raw.decode("big5", errors="ignore")
-        all_rows.extend(parse_rows(text, skip_header=(raw[:3] == b"\xef\xbb\xbf")))
+        all_rows.extend(parse_rows(_decode_price(raw), skip_header=(raw[:3] == b"\xef\xbb\xbf")))
     df = pd.DataFrame(all_rows)
     if df.empty:
         return df
