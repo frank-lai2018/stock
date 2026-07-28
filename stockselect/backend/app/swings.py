@@ -3,6 +3,44 @@
 單根 K 棒型態在 patterns.py；這裡處理需要「波段」的大型態。
 bars：由舊到新的 list[dict]，含 high/low/close/volume（請用還原價 adj_*）。
 """
+import contextlib
+import contextvars
+
+# 掃描模式：None=需確認突破（收盤穿越頸線帶量）；float=「接近突破」容許帶
+# （如 0.05＝收盤已在頸線 5% 內、但尚未穿越）。以 ContextVar 保存，對併發請求安全。
+_near = contextvars.ContextVar("swings_near", default=None)
+
+
+@contextlib.contextmanager
+def near_mode(band):
+    """在此區塊內所有偵測器改用「接近但尚未突破」判定；band＝容許距離（如 0.05）。"""
+    token = _near.set(band)
+    try:
+        yield
+    finally:
+        _near.reset(token)
+
+
+def _near_up(closes, vols, level, band):
+    """接近向上突破：最新收盤落在 [level*(1-band), level)（頸線下方 band 內、尚未站上）。"""
+    n = len(closes)
+    last = closes[-1]
+    if level > 0 and level * (1 - band) <= last < level:
+        ref = vols[max(0, n - 51):n - 1]
+        avg = sum(ref) / len(ref) if ref else 0
+        return n - 1, (round(vols[-1] / avg, 2) if avg > 0 else None)
+    return None
+
+
+def _near_down(closes, vols, level, band):
+    """接近向下跌破：最新收盤落在 (level, level*(1+band)]（頸線上方 band 內、尚未跌破）。"""
+    n = len(closes)
+    last = closes[-1]
+    if level > 0 and level < last <= level * (1 + band):
+        ref = vols[max(0, n - 51):n - 1]
+        avg = sum(ref) / len(ref) if ref else 0
+        return n - 1, (round(vols[-1] / avg, 2) if avg > 0 else None)
+    return None
 
 
 def _d(x):
@@ -76,19 +114,10 @@ def detect_double_bottom(bars, k=3, recent=3, tol=0.05, min_depth=0.08,
     if neck / base - 1 < min_depth:              # 型態要有深度
         return None
 
-    cross = None                                 # 最近 recent 根內向上穿越頸線
-    for j in range(max(i2 + 1, n - recent), n):
-        if closes[j] > neck and closes[j - 1] <= neck:
-            cross = j
-            break
-    if cross is None:
+    b = _breakout(closes, vols, neck, recent, vol_mult)   # 收盤突破頸線帶量（接近模式改判逼近）
+    if not b:
         return None
-
-    ref = vols[max(0, cross - 50):cross]         # 突破前 50 日均量
-    avg = sum(ref) / len(ref) if ref else 0
-    if not (avg > 0 and vols[cross] >= vol_mult * avg):
-        return None
-
+    cross, vr = b
     return {
         "pattern": "double_bottom",
         "neckline": round(neck, 2),
@@ -96,7 +125,7 @@ def detect_double_bottom(bars, k=3, recent=3, tol=0.05, min_depth=0.08,
         "bottom2": {"date": _d(bars[i2]["trade_date"]), "price": round(lo2, 2)},
         "breakout_date": _d(bars[cross]["trade_date"]),
         "breakout_close": round(closes[cross], 2),
-        "vol_ratio": round(vols[cross] / avg, 2),
+        "vol_ratio": vr,
         "target": round(neck + (neck - base), 2),   # 量測滿足：頸線 + 型態高度
     }
 
@@ -113,7 +142,10 @@ def _series(bars):
 
 def _breakout(closes, vols, level, recent=3, vol_mult=1.5):
     """最近 recent 根內收盤『由 ≤level 轉為 >level』且突破當根量 ≥ 前 50 日均量×mult。
-    回傳 (cross_idx, vol_ratio) 或 None。"""
+    回傳 (cross_idx, vol_ratio) 或 None。接近模式下改判「收盤逼近 level 但尚未站上」。"""
+    band = _near.get()
+    if band is not None:
+        return _near_up(closes, vols, level, band)
     n = len(closes)
     for j in range(max(1, n - recent), n):
         if closes[j] > level and closes[j - 1] <= level:
@@ -340,10 +372,22 @@ def _channel(bars, window, k=2):
 
 
 def _brk_line(closes, vols, fit, recent, vol_mult, up=True):
-    """最近 recent 根內收盤穿越『趨勢線投影值』且帶量。回傳 (j, vr, level) 或 None。"""
+    """最近 recent 根內收盤穿越『趨勢線投影值』且帶量。回傳 (j, vr, level) 或 None。
+    接近模式下改判「收盤逼近趨勢線投影值但尚未穿越」。"""
     if not fit:
         return None
     n = len(closes)
+    band = _near.get()
+    if band is not None:
+        lvl = _at(fit, n - 1)
+        last = closes[-1]
+        hit = (lvl > 0 and lvl * (1 - band) <= last < lvl) if up \
+            else (lvl > 0 and lvl < last <= lvl * (1 + band))
+        if hit:
+            ref = vols[max(0, n - 51):n - 1]
+            avg = sum(ref) / len(ref) if ref else 0
+            return n - 1, (round(vols[-1] / avg, 2) if avg > 0 else None), round(lvl, 2)
+        return None
     for j in range(max(1, n - recent), n):
         lvl, lvlp = _at(fit, j), _at(fit, j - 1)
         ok = (closes[j] > lvl and closes[j - 1] <= lvlp) if up else (closes[j] < lvl and closes[j - 1] >= lvlp)
@@ -487,13 +531,11 @@ def detect_flag(bars, flag_win=18, pole_win=12, recent=3, vol_mult=1.4, pole_mov
                              [(ps, closes[ps], "旗桿起"), (fs, flag_hi, "旗頂")])
     elif pole <= -pole_move:                                  # 空方旗桿 → 跌破旗底
         flag_lo = min(lows[fs:])
-        for j in range(max(1, n - recent), n):
-            if closes[j] < flag_lo and closes[j - 1] >= flag_lo:
-                ref = vols[max(0, j - 50):j]; avg = sum(ref) / len(ref) if ref else 0
-                if avg > 0 and vols[j] >= vol_mult * avg:
-                    return _out_cont("flag", "bear", flag_lo, closes[ps] - closes[fs], bars, closes, j,
-                                     round(vols[j] / avg, 2),
-                                     [(ps, closes[ps], "旗桿起"), (fs, flag_lo, "旗底")])
+        b = _breakdown(closes, vols, flag_lo, recent, vol_mult)
+        if b:
+            j, vr = b
+            return _out_cont("flag", "bear", flag_lo, closes[ps] - closes[fs], bars, closes, j, vr,
+                             [(ps, closes[ps], "旗桿起"), (fs, flag_lo, "旗底")])
     return None
 
 
@@ -502,7 +544,11 @@ def detect_flag(bars, flag_win=18, pole_win=12, recent=3, vol_mult=1.4, pole_mov
 # ======================================================================
 
 def _breakdown(closes, vols, level, recent=3, vol_mult=1.5):
-    """最近 recent 根內收盤『由 ≥level 轉為 <level』且帶量。回傳 (j, vr) 或 None。"""
+    """最近 recent 根內收盤『由 ≥level 轉為 <level』且帶量。回傳 (j, vr) 或 None。
+    接近模式下改判「收盤逼近 level 但尚未跌破」。"""
+    band = _near.get()
+    if band is not None:
+        return _near_down(closes, vols, level, band)
     n = len(closes)
     for j in range(max(1, n - recent), n):
         if closes[j] < level and closes[j - 1] >= level:

@@ -10,6 +10,7 @@ export default createRouter({
     { path: '/breakout', name: 'breakout', component: () => import('../views/BreakoutView.vue') },
     { path: '/toppattern', name: 'toppattern', component: () => import('../views/TopPatternView.vue') },
     { path: '/continuation', name: 'continuation', component: () => import('../views/ContinuationView.vue') },
+    { path: '/near-breakout', name: 'near-breakout', component: () => import('../views/NearBreakoutView.vue') },
     { path: '/watchlist', name: 'watchlist', component: () => import('../views/WatchlistView.vue') },
     { path: '/portfolio', name: 'portfolio', component: () => import('../views/PortfolioView.vue') },
     { path: '/stock/:id', name: 'stock', component: () => import('../views/StockDetailView.vue') },

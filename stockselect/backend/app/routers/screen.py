@@ -1,4 +1,6 @@
 """選股 API：預設策略 + 條件篩選。"""
+import contextlib
+
 from fastapi import APIRouter, HTTPException
 
 from .. import db, patterns, swings
@@ -130,11 +132,13 @@ def breakout_patterns(group: str = "bottom"):
 
 @router.get("/screen/pattern-breakout")
 def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 100,
-                     security_type: str = "", min_amt: int = 20000000):
-    """全市場掃描型態突破帶量（Python 波段偵測，非 MV 篩選）。
+                     security_type: str = "", min_amt: int = 20000000,
+                     mode: str = "breakout", near_band: float = 0.05):
+    """全市場掃描型態（Python 波段偵測，非 MV 篩選）。
 
-    group：bottom（底部反轉）/ continuation（連續整理）。
+    group：bottom（底部反轉）/ top（頭部反轉）/ continuation（連續整理）。
     pattern：型態 key，或 all=該組全部（依優先序，每檔取第一個命中）。可逗號多選。
+    mode：breakout＝已確認突破（收盤穿頸線帶量）；near＝接近突破（收盤在頸線 near_band 內、尚未穿越）。
     候選限 in_universe 且 20 日均額 ≥ min_amt（濾掉不流動小型股，控制掃描量）。
     """
     if pattern in ("", "all"):
@@ -165,18 +169,31 @@ def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 1
     for b in bars_rows:
         by.setdefault(b["stock_id"], []).append(b)
 
+    near = near_band if mode == "near" else None
+    ctx = swings.near_mode(near) if near is not None else contextlib.nullcontext()
     out = []
-    for sid, bars in by.items():
-        for key in keys:                              # 依優先序，取第一個命中的型態
-            bk = swings.ALL[key](bars)
-            if bk:
-                row = dict(snap[sid])
-                row["breakout"] = bk
-                row["pattern"] = key
-                row["pattern_name"] = swings.PATTERN_NAMES[key]
-                out.append(row)
-                break
-    out.sort(key=lambda r: (r["breakout"]["breakout_date"], r.get("rs_rating") or 0), reverse=True)
+    with ctx:
+        for sid, bars in by.items():
+            for key in keys:                          # 依優先序，取第一個命中的型態
+                bk = swings.ALL[key](bars)
+                if bk:
+                    if near is not None:              # 附上「距突破%」（尚需上漲/下跌多少才觸發）
+                        lvl, cl = bk.get("neckline"), bk.get("breakout_close")
+                        if bk.get("dir") == "bear":
+                            bk["near_pct"] = round(cl / lvl - 1, 4) if lvl else None
+                        else:
+                            bk["near_pct"] = round(lvl / cl - 1, 4) if cl else None
+                    row = dict(snap[sid])
+                    row["breakout"] = bk
+                    row["pattern"] = key
+                    row["pattern_name"] = swings.PATTERN_NAMES[key]
+                    out.append(row)
+                    break
+    if near is not None:                              # 接近突破：越接近排越前
+        out.sort(key=lambda r: (r["breakout"].get("near_pct") if r["breakout"].get("near_pct") is not None else 9,
+                                -(r.get("rs_rating") or 0)))
+    else:
+        out.sort(key=lambda r: (r["breakout"]["breakout_date"], r.get("rs_rating") or 0), reverse=True)
     out = out[:max(1, min(int(limit), 500))]
     _attach_last_pattern(out)
     as_of = out[0]["as_of_date"].isoformat() if out and out[0].get("as_of_date") else None

@@ -10,7 +10,9 @@ defineProps({
   showTarget: { type: Boolean, default: true },   // 顯示「量測滿足價 / 方向」兩欄
   showDir: { type: Boolean, default: false },     // 連續/頭部型有多空方向
   selectable: { type: Boolean, default: false },  // 開勾選欄 + 批次加入自選股
+  near: { type: Boolean, default: false },        // 接近突破模式：顯示「距突破%」、突破日改標「最新」
 })
+const nearPct = (v) => (v == null ? '' : (Number(v) * 100).toFixed(1) + '%')
 
 const router = useRouter()
 const tableRef = ref()
@@ -73,7 +75,11 @@ function clearSel() { tableRef.value?.clearSelection(); selected.value = [] }
         </span>
       </template>
     </el-table-column>
-    <el-table-column label="突破日" width="104">
+    <el-table-column v-if="near" label="距突破" width="90" sortable
+                     :sort-method="(a, b) => (a.breakout?.near_pct ?? 9) - (b.breakout?.near_pct ?? 9)">
+      <template #default="{ row }"><b :style="{ color: dirColor(row) }">{{ nearPct(row.breakout?.near_pct) }}</b></template>
+    </el-table-column>
+    <el-table-column :label="near ? '最新' : '突破日'" width="104">
       <template #default="{ row }"><span :style="{ color: dirColor(row) }">{{ row.breakout?.breakout_date?.slice(5) }}</span></template>
     </el-table-column>
     <el-table-column :label="showDir ? '突破線' : '頸線/杯口'" width="96">
