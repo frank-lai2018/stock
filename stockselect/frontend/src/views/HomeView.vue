@@ -24,6 +24,8 @@ async function loadIndex() {
 const yi = (v) => (v == null ? '—' : (Number(v) / 1e8).toFixed(0) + ' 億')
 const pct = (v) => (v == null ? '—' : (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%')
 const up = (v) => (v >= 0 ? '#EA4C4C' : '#3F9E5A')
+const wanLot = (v) => (v == null ? '—' : (Number(v) / 1e4).toFixed(1) + ' 萬張')          // 張→萬張
+const wanLotChg = (v) => (v == null ? '—' : (v >= 0 ? '+' : '') + (Number(v) / 1e4).toFixed(1) + ' 萬張')
 
 async function loadMovers() {
   movers.value = await getMovers(moverType.value, 15)
@@ -112,6 +114,19 @@ function go(id) { router.push(`/stock/${id}`) }
         <div style="color: #999; font-size: 12px; margin-top: 10px">
           全市場總成交值 {{ yi(ov?.total_amount) }}
         </div>
+      </el-card>
+
+      <el-card shadow="never" style="flex: 1 1 260px">
+        <div style="color: #999">大盤融資餘額</div>
+        <template v-if="ov?.margin">
+          <div style="font-size: 30px; font-weight: 700">{{ wanLot(ov.margin.balance) }}</div>
+          <div :style="{ color: up(ov.margin.change) }">
+            {{ ov.margin.change >= 0 ? '▲' : '▼' }}
+            {{ wanLotChg(ov.margin.change) }} ({{ pct(ov.margin.pct) }})
+          </div>
+          <div style="color: #999; font-size: 12px; margin-top: 6px">融資資料日 {{ ov.margin.date }}</div>
+        </template>
+        <template v-else><div style="font-size: 20px; margin-top: 6px">—</div></template>
       </el-card>
     </div>
 

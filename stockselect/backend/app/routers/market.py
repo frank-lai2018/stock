@@ -44,11 +44,30 @@ def overview():
         "sum(amount) AS total_amount "
         f"FROM ({_LATEST}) z WHERE rn=1")
     b = br[0] if br else {}
+
+    # 大盤融資餘額（全市場加總，單位：張）＋較前一日增減。以 margin_trading 自己的最新兩日計算
+    # （融資公布日可能與股價日不同步，故不綁 price 的 as_of）。
+    mr = db.query(
+        "SELECT trade_date, sum(margin_balance) AS lots FROM margin_trading "
+        "WHERE trade_date > (SELECT max(trade_date)-15 FROM margin_trading) "
+        "GROUP BY trade_date ORDER BY trade_date DESC LIMIT 2")
+    margin = None
+    if mr:
+        cur = float(mr[0]["lots"] or 0)
+        prev = float(mr[1]["lots"]) if len(mr) > 1 and mr[1]["lots"] is not None else None
+        margin = {
+            "date": mr[0]["trade_date"].isoformat(),
+            "balance": cur,                                   # 融資餘額（張）
+            "change": (cur - prev) if prev is not None else None,
+            "pct": ((cur / prev - 1) * 100) if prev else None,
+        }
+
     return {
         "taiex": taiex,
         "tpex": tpex,
         "breadth": {"up": b.get("up"), "down": b.get("down"), "flat": b.get("flat")},
         "total_amount": b.get("total_amount"),
+        "margin": margin,
         "as_of": b["as_of"].isoformat() if b.get("as_of") else None,
     }
 
