@@ -9,6 +9,8 @@ export const getMarketIndex = (days = 120, index_id = 'TAIEX') =>
   api.get('/market/index', { params: { days, index_id } }).then((r) => r.data)
 export const getMovers = (type = 'gainers', limit = 15) =>
   api.get('/market/movers', { params: { type, limit } }).then((r) => r.data)
+export const getMarketMargin = (days = 20, market = 'ALL') =>
+  api.get('/market/margin', { params: { days, market } }).then((r) => r.data)
 export const getSectors = (market = '上市') =>
   api.get('/market/sectors', { params: { market } }).then((r) => r.data)
 export const getMoneyflow = (market = '上市') =>
@@ -25,6 +27,8 @@ export const getChips = (id, days = 60) =>
   api.get(`/stock/${id}/chips`, { params: { days } }).then((r) => r.data)
 export const getMargin = (id, tf = 'D', bars = 60) =>
   api.get(`/stock/${id}/margin`, { params: { tf, bars } }).then((r) => r.data)
+export const getInstTrades = (id, tf = 'D', bars = 60) =>
+  api.get(`/stock/${id}/inst`, { params: { tf, bars } }).then((r) => r.data)
 export const getFundamentals = (id) =>
   api.get(`/stock/${id}/fundamentals`).then((r) => r.data)
 export const getPatterns = () => api.get('/patterns').then((r) => r.data)

@@ -3,7 +3,7 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import * as echarts from 'echarts'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getMarketOverview, getMarketIndex, getMovers, getSectors, getMoneyflow } from '../api'
+import { getMarketOverview, getMarketIndex, getMovers, getSectors, getMoneyflow, getMarketMargin } from '../api'
 
 const router = useRouter()
 const ov = ref(null)
@@ -12,6 +12,8 @@ const movers = ref([])
 const sectorMarket = ref('上市')
 const sectors = ref([])
 const flow = ref([])
+const marginMarket = ref('ALL')                   // 大盤信用交易：ALL 合計 / TWSE 上市 / TPEx 上櫃
+const marginRows = ref([])
 const chartEl = ref(null)
 let chart = null
 const idxSel = ref('TWSE')                        // 走勢圖選擇的指數（TWSE=加權股價指數）
@@ -35,6 +37,13 @@ async function loadSectors() {
   sectors.value = await getSectors(sectorMarket.value)
   flow.value = await getMoneyflow(sectorMarket.value)
 }
+
+async function loadMargin() {
+  marginRows.value = await getMarketMargin(20, marginMarket.value)
+}
+const lots = (v) => (v == null ? '—' : Number(v).toLocaleString('en-US'))
+const lotsChg = (v) => (v == null ? '—' : (v >= 0 ? '+' : '') + Number(v).toLocaleString('en-US'))
+const yiChg = (v) => (v == null ? '—' : (v >= 0 ? '+' : '') + Number(v).toFixed(2))
 
 function renderChart(rows) {
   if (!chart) chart = echarts.init(chartEl.value)
@@ -60,6 +69,7 @@ onMounted(async () => {
     await loadIndex()
     await loadMovers()
     await loadSectors()
+    await loadMargin()
   } catch (e) {
     ElMessage.error('載入大盤失敗：' + (e?.response?.data?.detail || e.message))
   }
@@ -129,6 +139,36 @@ function go(id) { router.push(`/stock/${id}`) }
         <template v-else><div style="font-size: 20px; margin-top: 6px">—</div></template>
       </el-card>
     </div>
+
+    <el-card shadow="never" style="margin-top: 16px">
+      <template #header>
+        大盤信用交易
+        <el-radio-group v-model="marginMarket" size="small" style="margin-left: 12px" @change="loadMargin">
+          <el-radio-button value="ALL">合計</el-radio-button>
+          <el-radio-button value="TWSE">上市</el-radio-button>
+          <el-radio-button value="TPEx">上櫃</el-radio-button>
+        </el-radio-group>
+        <span style="margin-left: 10px; color: #999; font-size: 12px">融資餘額(億)＋增減、融券餘額(張)＋增減；維持率為自算約值</span>
+      </template>
+      <el-table :data="marginRows" stripe height="360" size="small">
+        <el-table-column prop="date" label="日期" width="110" />
+        <el-table-column label="融資餘額(億)" width="120">
+          <template #default="{ row }">{{ row.margin_yi != null ? row.margin_yi.toFixed(2) : '—' }}</template>
+        </el-table-column>
+        <el-table-column label="融資增減(億)" width="120">
+          <template #default="{ row }"><span :style="{ color: up(row.margin_chg_yi) }">{{ yiChg(row.margin_chg_yi) }}</span></template>
+        </el-table-column>
+        <el-table-column label="維持率" width="100">
+          <template #default="{ row }">{{ row.maint_ratio != null ? row.maint_ratio.toFixed(2) + '%' : '—' }}</template>
+        </el-table-column>
+        <el-table-column label="融券餘額(張)" width="130">
+          <template #default="{ row }">{{ lots(row.short_lots) }}</template>
+        </el-table-column>
+        <el-table-column label="融券增減(張)" min-width="120">
+          <template #default="{ row }"><span :style="{ color: up(row.short_chg) }">{{ lotsChg(row.short_chg) }}</span></template>
+        </el-table-column>
+      </el-table>
+    </el-card>
 
     <el-card shadow="never" style="margin-top: 16px">
       <template #header>

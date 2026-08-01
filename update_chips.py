@@ -266,6 +266,22 @@ def process_date(cur, conn, d, valid, dry, raw_root=None):
         result[table] = len(rows)
         if not dry and rows:
             L.upsert(cur, table, rows)
+
+    # 大盤信用交易彙總（從已下載的 MI_MARGN / TPEx bytes 解析，不再多打請求）→ market_margin
+    if not dry:
+        try:
+            import market_margin as MM
+            MM.ensure_table(cur)
+            tw = MM.parse_twse(r_tm)
+            tp = MM.parse_tpex(json.loads(r_pm.decode("utf-8", "ignore")))
+            mv = MM.maint_ratios(cur, d)                 # 維持率需該日股價已入庫，否則存 NULL
+            if tw:
+                MM.upsert(cur, d, "TWSE", tw[0], tw[1], tw[2], mv.get("TWSE"))
+            if tp:
+                MM.upsert(cur, d, "TPEx", tp[0], tp[1], tp[2], mv.get("TPEx"))
+        except Exception as e:
+            print(f"    ⚠️ market_margin 大盤彙總寫入失敗（不影響其餘）：{e}")
+
     if not dry:
         conn.commit()
     return result

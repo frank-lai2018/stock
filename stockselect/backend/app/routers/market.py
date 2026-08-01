@@ -72,6 +72,42 @@ def overview():
     }
 
 
+@router.get("/margin")
+def margin(days: int = 20, market: str = "ALL"):
+    """大盤信用交易逐日：融資餘額(億)、融資增減(億)、融券餘額(張)、融券增減(張)、維持率(自算約值)。
+    market：ALL＝上市+上櫃合計 / TWSE＝上市 / TPEx＝上櫃。"""
+    n = max(1, min(int(days), 120))
+    if market in ("TWSE", "TPEx"):
+        rows = db.query(
+            "SELECT trade_date, margin_amt_k, margin_lots, short_lots, maint_ratio "
+            "FROM market_margin WHERE market=%(m)s ORDER BY trade_date DESC LIMIT %(n)s",
+            {"m": market, "n": n + 1})
+    else:                                   # 合計：兩市場加總；維持率以融資金額加權平均
+        rows = db.query(
+            "SELECT trade_date, sum(margin_amt_k) AS margin_amt_k, sum(margin_lots) AS margin_lots, "
+            " sum(short_lots) AS short_lots, "
+            " round(sum(maint_ratio*margin_amt_k)/NULLIF(sum(margin_amt_k) FILTER (WHERE maint_ratio IS NOT NULL),0),2) AS maint_ratio "
+            "FROM market_margin GROUP BY trade_date ORDER BY trade_date DESC LIMIT %(n)s",
+            {"n": n + 1})
+    out = []
+    for i in range(len(rows) - 1):          # 每列較前一日增減；最舊一列僅當基準、不輸出
+        c, p = rows[i], rows[i + 1]
+        amt = float(c["margin_amt_k"]) / 1e5 if c["margin_amt_k"] is not None else None
+        pamt = float(p["margin_amt_k"]) / 1e5 if p["margin_amt_k"] is not None else None
+        sl = int(c["short_lots"]) if c["short_lots"] is not None else None
+        psl = int(p["short_lots"]) if p["short_lots"] is not None else None
+        out.append({
+            "date": c["trade_date"].isoformat(),
+            "margin_yi": round(amt, 2) if amt is not None else None,
+            "margin_chg_yi": round(amt - pamt, 2) if (amt is not None and pamt is not None) else None,
+            "margin_lots": int(c["margin_lots"]) if c["margin_lots"] is not None else None,
+            "short_lots": sl,
+            "short_chg": (sl - psl) if (sl is not None and psl is not None) else None,
+            "maint_ratio": float(c["maint_ratio"]) if c["maint_ratio"] is not None else None,
+        })
+    return out
+
+
 @router.get("/index")
 def index_series(days: int = 120, index_id: str = "TAIEX"):
     n = max(1, min(int(days), 2000))
