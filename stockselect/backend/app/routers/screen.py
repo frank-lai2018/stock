@@ -133,14 +133,16 @@ def breakout_patterns(group: str = "bottom"):
 @router.get("/screen/pattern-breakout")
 def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 100,
                      security_type: str = "", min_amt: int = 20000000,
-                     mode: str = "breakout", near_band: float = 0.05):
+                     mode: str = "breakout", near_band: float = 0.05, recent: int = 3):
     """全市場掃描型態（Python 波段偵測，非 MV 篩選）。
 
     group：bottom（底部反轉）/ top（頭部反轉）/ continuation（連續整理）。
     pattern：型態 key，或 all=該組全部（依優先序，每檔取第一個命中）。可逗號多選。
     mode：breakout＝已確認突破（收盤穿頸線帶量）；near＝接近突破（收盤在頸線 near_band 內、尚未穿越）。
+    recent：突破觀察窗（幾個交易日內發生的突破才收錄，預設 3；近2週≈10、近1月≈20）。
     候選限 in_universe 且 20 日均額 ≥ min_amt（濾掉不流動小型股，控制掃描量）。
     """
+    rec = max(1, min(int(recent), 25))
     if pattern in ("", "all"):
         keys = list(swings.GROUPS.get(group, swings.DETECTORS))
     else:
@@ -175,7 +177,7 @@ def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 1
     with ctx:
         for sid, bars in by.items():
             for key in keys:                          # 依優先序，取第一個命中的型態
-                bk = swings.ALL[key](bars)
+                bk = swings.ALL[key](bars, recent=rec)
                 if bk:
                     if near is not None:              # 附上「距突破%」（尚需上漲/下跌多少才觸發）
                         lvl, cl = bk.get("neckline"), bk.get("breakout_close")
@@ -184,6 +186,10 @@ def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 1
                         else:
                             bk["near_pct"] = round(lvl / cl - 1, 4) if cl else None
                     row = dict(snap[sid])
+                    if near is None:                  # 突破後至今漲跌%（觀察這次選出的後續走勢）
+                        cl, bc = row.get("close"), bk.get("breakout_close")
+                        if cl is not None and bc:
+                            bk["since_pct"] = round(float(cl) / float(bc) - 1, 4)
                     row["breakout"] = bk
                     row["pattern"] = key
                     row["pattern_name"] = swings.PATTERN_NAMES[key]

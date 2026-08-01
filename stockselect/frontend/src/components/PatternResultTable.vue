@@ -82,6 +82,10 @@ function clearSel() { tableRef.value?.clearSelection(); selected.value = [] }
     <el-table-column :label="near ? '最新' : '突破日'" width="104">
       <template #default="{ row }"><span :style="{ color: dirColor(row) }">{{ row.breakout?.breakout_date?.slice(5) }}</span></template>
     </el-table-column>
+    <el-table-column v-if="!near" label="突破後" width="88" sortable
+                     :sort-method="(a, b) => (a.breakout?.since_pct ?? -9) - (b.breakout?.since_pct ?? -9)">
+      <template #default="{ row }"><span :style="{ color: upc(row.breakout?.since_pct) }">{{ nearPct(row.breakout?.since_pct) }}</span></template>
+    </el-table-column>
     <el-table-column :label="showDir ? '突破線' : '頸線/杯口'" width="96">
       <template #default="{ row }">{{ row.breakout?.neckline }}</template>
     </el-table-column>

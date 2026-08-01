@@ -144,7 +144,11 @@ def category_items(cid: int):
                    "security_type": None, "rs_rating": None, "close": None, "ret_3m": None}
         snp = w.get("snapshot") or {}
         if snp.get("breakout"):
-            row["breakout"] = snp["breakout"]
+            bk = dict(snp["breakout"])                       # 複製，不動到原快照
+            cl = row.get("close")                            # 即時收盤（來自 mv 最新）
+            if cl is not None and bk.get("breakout_close"):
+                bk["since_pct"] = round(float(cl) / float(bk["breakout_close"]) - 1, 4)   # 突破後至今漲跌%（即時）
+            row["breakout"] = bk
         row["pattern"] = snp.get("pattern")
         row["pattern_name"] = snp.get("pattern_name")
         row["watchlist_id"] = w["id"]

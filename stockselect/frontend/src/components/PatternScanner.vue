@@ -26,6 +26,7 @@ const cat = ref([])
 const pattern = ref('all')
 const secType = ref('')
 const band = ref(0.05)                             // 接近突破容許帶（距頸線幾 % 內）
+const recentSel = ref(3)                           // 突破觀察窗（幾個交易日內的突破才收錄）
 const showTarget = ref(true)
 const items = ref([])
 const count = ref(0)
@@ -55,6 +56,7 @@ async function run() {
       security_type: secType.value, mode: props.mode,
     }
     if (isNear) params.near_band = band.value
+    else params.recent = recentSel.value
     const res = await screenBreakout(params)
     items.value = res.items
     count.value = res.count
@@ -81,6 +83,7 @@ function downloadXlsx() {
     ['方向', (r) => (r.breakout?.dir === 'bear' ? '空' : '多')],
     ...(isNear ? [['距突破%', (r) => (r.breakout?.near_pct == null ? '' : Number((r.breakout.near_pct * 100).toFixed(2)))]] : []),
     [isNear ? '最新日' : '突破日', (r) => r.breakout?.breakout_date],
+    ...(isNear ? [] : [['突破後%', (r) => (r.breakout?.since_pct == null ? '' : Number((r.breakout.since_pct * 100).toFixed(2)))]]),
     ['頸線/突破線', (r) => r.breakout?.neckline],
     ['收盤', (r) => r.breakout?.breakout_close],
     ['量比', (r) => r.breakout?.vol_ratio],
@@ -124,6 +127,14 @@ function downloadXlsx() {
             <el-option label="3% 內" :value="0.03" />
             <el-option label="5% 內" :value="0.05" />
             <el-option label="8% 內" :value="0.08" />
+          </el-select>
+        </template>
+        <template v-else>
+          <span style="color: #666; font-size: 13px">突破時間</span>
+          <el-select v-model="recentSel" style="width: 100px" @change="run">
+            <el-option label="近 3 日" :value="3" />
+            <el-option label="近 2 週" :value="10" />
+            <el-option label="近 1 月" :value="20" />
           </el-select>
         </template>
         <el-button type="primary" @click="run">掃描</el-button>
