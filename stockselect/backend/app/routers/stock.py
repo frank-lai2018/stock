@@ -86,6 +86,37 @@ def margin(stock_id: str, tf: str = "D", bars: int = 60):
     return db.query(sql, params)
 
 
+@router.get("/{stock_id}/inst")
+def inst(stock_id: str, tf: str = "D", bars: int = 60):
+    """三大法人買賣超（外資／投信／自營＋合計，單位：張）。tf=D/W/M/Q（法人為流量，週月季『加總』）。由舊到新。
+    外資＝foreign_net＋foreign_dealer_net；自營＝dealer_self_net＋dealer_hedge_net；投信＝trust_net。"""
+    n = max(1, min(int(bars), 2000))
+    params = {"id": stock_id, "n": n}
+    tfu = tf.upper()
+    fo = "(coalesce(foreign_net,0)+coalesce(foreign_dealer_net,0))"
+    de = "(coalesce(dealer_self_net,0)+coalesce(dealer_hedge_net,0))"
+    tr = "coalesce(trust_net,0)"
+    if tfu == "D":
+        src = (f"SELECT trade_date, {fo} AS fo, {tr} AS tr, {de} AS de "
+               "FROM inst_trades WHERE stock_id=%(id)s")
+    else:
+        unit = {"W": "week", "M": "month", "Q": "quarter"}.get(tfu)
+        if not unit:
+            raise HTTPException(400, "tf 需為 D / W / M / Q")
+        params["u"] = unit
+        src = (f"SELECT date_trunc(%(u)s, trade_date)::date AS trade_date, "
+               f"sum({fo}) AS fo, sum({tr}) AS tr, sum({de}) AS de "
+               "FROM inst_trades WHERE stock_id=%(id)s GROUP BY 1")
+    sql = (
+        "SELECT trade_date, "
+        "  round(fo/1000.0) AS foreign_lots, round(tr/1000.0) AS trust_lots, "
+        "  round(de/1000.0) AS dealer_lots, round((fo+tr+de)/1000.0) AS total_lots FROM ("
+        "  SELECT trade_date, fo, tr, de, row_number() OVER (ORDER BY trade_date DESC) AS rn "
+        f"  FROM ({src}) g"
+        ") z WHERE rn <= %(n)s ORDER BY trade_date")
+    return db.query(sql, params)
+
+
 @router.get("/{stock_id}/levels")
 def levels(stock_id: str, bars: int = 120, tf: str = "D"):
     """自動偵測近期壓力(現價上方)與頸線/支撐(現價下方)：轉折高低點群集，回傳價位。

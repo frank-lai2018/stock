@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { getStock, getFundamentals, getStockPatterns, getStockVpa, getDividends, getEtfInfo } from '../api'
 import PriceChart from '../components/PriceChart.vue'
 import MarginPanel from '../components/MarginPanel.vue'
+import InstPanel from '../components/InstPanel.vue'
 
 const pats = ref([])
 const vpa = ref([])
@@ -127,6 +128,10 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateCols))
         <span style="color: #3F9E5A; margin-left: 8px">■</span> 偏空
         <span style="color: #909399; margin-left: 8px">■</span> 中性
       </div>
+    </el-card>
+
+    <el-card shadow="never" style="margin-top: 16px" header="三大法人買賣超">
+      <InstPanel :stock-id="String(route.params.id)" />
     </el-card>
 
     <el-card shadow="never" style="margin-top: 16px" header="融資融券">
