@@ -193,17 +193,17 @@ function downloadXlsx() {
 <style scoped>
 .legend-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 4px 20px;
+  grid-template-columns: repeat(auto-fill, minmax(560px, 1fr));
+  gap: 8px 24px;
 }
 .legend-row {
   display: flex;
   gap: 8px;
-  font-size: 12px;
+  font-size: 24px;
   line-height: 1.5;
 }
 .legend-k {
-  flex: 0 0 92px;
+  flex: 0 0 184px;
   font-weight: 600;
   color: #303133;
 }
