@@ -1,12 +1,40 @@
 <script setup>
 // 型態回測：顯示各型態突破後 N 日的勝率 / 平均報酬（由 backtest_patterns.py 離線算好）。
+// 點型態名稱可鑽取該型態的歷史突破事件清單（哪些股、哪天觸發、後續走勢）。
 import { ref, onMounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getPatternBacktest } from '../api'
+import { getPatternBacktest, getPatternBacktestEvents } from '../api'
 
+const router = useRouter()
 const data = ref({ items: [], horizons: [], computed_at: null })
 const grp = ref('all')
 const loading = ref(false)
+
+// 事件清單鑽取
+const evDlg = ref(false)
+const evLoading = ref(false)
+const evData = ref({ pattern_name: '', items: [] })
+async function openEvents(row) {
+  evDlg.value = true
+  evLoading.value = true
+  evData.value = { pattern_name: row.pattern_name, items: [] }
+  try {
+    evData.value = await getPatternBacktestEvents(row.pattern, 300)
+  } catch (e) {
+    ElMessage.error('載入事件失敗：' + (e?.response?.data?.detail || e.message))
+  } finally {
+    evLoading.value = false
+  }
+}
+const evPct = (m, h) => {
+  const v = m?.[String(h)]
+  return v == null ? '—' : (v >= 0 ? '+' : '') + (Number(v) * 100).toFixed(1) + '%'
+}
+const evClr = (m, h) => {
+  const v = m?.[String(h)]
+  return v == null ? '#909399' : Number(v) >= 0 ? '#EA4C4C' : '#3F9E5A'
+}
 
 const GROUP_NAME = { bottom: '底部反轉', top: '頭部反轉', continuation: '整理突破' }
 const MIN_N = 30                       // 事件數低於此 → 樣本不足、統計不可信
@@ -58,7 +86,7 @@ onMounted(load)
     <el-table v-else :data="items" v-loading="loading" stripe height="72vh">
       <el-table-column label="型態" width="150" fixed>
         <template #default="{ row }">
-          {{ row.pattern_name }}
+          <el-link type="primary" :underline="false" @click="openEvents(row)"><b>{{ row.pattern_name }}</b></el-link>
           <el-tag size="small" effect="plain">{{ GROUP_NAME[row.group] || row.group }}</el-tag>
         </template>
       </el-table-column>
@@ -86,5 +114,39 @@ onMounted(load)
         </el-table-column>
       </template>
     </el-table>
+
+    <el-dialog v-model="evDlg" :title="`${evData.pattern_name}　歷史突破事件（近 ${evData.items?.length || 0} 筆）`"
+               width="80%" top="6vh">
+      <span style="color: #999; font-size: 12px">
+        報酬為方向調整後淨值（底部/多方漲為正、頭部/空方跌為正；已扣成本+停損）。點列看該股 K 線。
+      </span>
+      <el-table :data="evData.items" v-loading="evLoading" height="62vh" stripe size="small"
+                style="cursor: pointer; margin-top: 8px" @row-click="(r) => router.push(`/stock/${r.stock_id}`)">
+        <el-table-column prop="stock_id" label="代碼" width="80" />
+        <el-table-column prop="name" label="名稱" width="120" show-overflow-tooltip />
+        <el-table-column label="觸發日" width="120" sortable
+                         :sort-method="(a, b) => (a.trigger_date < b.trigger_date ? -1 : 1)">
+          <template #default="{ row }">{{ row.trigger_date }}</template>
+        </el-table-column>
+        <el-table-column label="方向" width="70">
+          <template #default="{ row }">
+            <span :style="{ color: row.dir === 'bear' ? '#3F9E5A' : '#EA4C4C', fontWeight: 700 }">
+              {{ row.dir === 'bear' ? '空 ↓' : '多 ↑' }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column v-for="h in data.horizons" :key="h" :label="`${h}日`" width="86" align="right" sortable
+                         :sort-method="(a, b) => (a.rets?.[String(h)] ?? -9) - (b.rets?.[String(h)] ?? -9)">
+          <template #default="{ row }"><span :style="{ color: evClr(row.rets, h) }">{{ evPct(row.rets, h) }}</span></template>
+        </el-table-column>
+        <el-table-column :label="`${data.horizons[data.horizons.length - 1]}日超額`" width="96" align="right">
+          <template #default="{ row }">
+            <b :style="{ color: evClr(row.excess, data.horizons[data.horizons.length - 1]) }">
+              {{ evPct(row.excess, data.horizons[data.horizons.length - 1]) }}</b>
+          </template>
+        </el-table-column>
+        <el-table-column prop="industry" label="產業" min-width="110" show-overflow-tooltip />
+      </el-table>
+    </el-dialog>
   </div>
 </template>

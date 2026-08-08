@@ -20,6 +20,8 @@ import os
 import statistics
 from datetime import datetime
 
+from psycopg2.extras import Json
+
 from app import db, swings
 
 WIN = 150            # 與實盤掃描相同的視窗長度
@@ -40,6 +42,14 @@ def ensure_table():
         " PRIMARY KEY (pattern, horizon))")
     for col in ("avg_excess NUMERIC", "win_excess NUMERIC"):        # 舊表補欄
         db.execute(f"ALTER TABLE pattern_backtest ADD COLUMN IF NOT EXISTS {col}")
+    # 個別事件（供前端「型態回測」頁點型態鑽取：哪些股哪天觸發、後續走勢）
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS pattern_event ("
+        " pattern VARCHAR(24) NOT NULL, stock_id VARCHAR(16) NOT NULL,"
+        " trigger_date DATE NOT NULL, dir VARCHAR(8),"
+        " rets JSONB, excess JSONB, computed_at TIMESTAMP,"
+        " PRIMARY KEY (pattern, stock_id, trigger_date))")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_pat_event ON pattern_event(pattern, trigger_date DESC)")
 
 
 def universe(limit, min_amt, sec):
@@ -119,7 +129,7 @@ def _scan(sid):
                 rets[h] = sign * r_raw - cost             # 方向調整後淨報酬（已扣成本）
                 mh = _MKT.get(dates[t + ex])
                 exc[h] = (sign * r_raw - sign * (mh / m0 - 1) - cost) if (m0 and mh) else None
-            out.setdefault(k, []).append((d, rets, exc))
+            out.setdefault(k, []).append((d, rets, exc, sid, dates[t]))   # 附股號/觸發日供鑽取
     return out
 
 
@@ -164,8 +174,8 @@ def run(args):
         name = swings.PATTERN_NAMES[k]
         for h in horizons:
             if evs:
-                rets = [fwd[h] for (_, fwd, _) in evs]                 # 已方向調整+扣成本+停損
-                exc = [e[h] for (_, _, e) in evs if e[h] is not None]
+                rets = [fwd[h] for (_, fwd, _, _, _) in evs]           # 已方向調整+扣成本+停損
+                exc = [e[h] for (_, _, e, _, _) in evs if e[h] is not None]
                 wr = sum(1 for r in rets if r > 0) / len(rets) * 100
                 avg = statistics.mean(rets) * 100
                 med = statistics.median(rets) * 100
@@ -189,13 +199,24 @@ def run(args):
                  "wx": None if win_x is None else round(win_x, 1), "t": stamp})
         if evs:
             h0 = horizons[-1]
-            r0 = [fwd[h0] for (_, fwd, _) in evs]
-            x0 = [e[h0] for (_, _, e) in evs if e[h0] is not None]
+            r0 = [fwd[h0] for (_, fwd, _, _, _) in evs]
+            x0 = [e[h0] for (_, _, e, _, _) in evs if e[h0] is not None]
             xm = f"超額{statistics.mean(x0) * 100:+.1f}%" if x0 else "超額—"
             print(f"  {name}({k}) n={len(evs)}｜{h0}日 均{statistics.mean(r0) * 100:+.1f}%｜{xm}")
         else:
             print(f"  {name}({k}): 無事件")
-    print("\n=== 完成，已寫入 pattern_backtest ===")
+
+    # 個別事件寫入 pattern_event（整批覆蓋）
+    db.execute("DELETE FROM pattern_event")
+    ev_rows = []
+    for k in swings.ALL:
+        for (d, rets, exc, sid, dt) in events[k]:
+            exc_clean = {h: v for h, v in exc.items() if v is not None}
+            ev_rows.append((k, sid, dt, d, Json(rets), Json(exc_clean), stamp))
+    db.execute_many(
+        "INSERT INTO pattern_event "
+        "(pattern,stock_id,trigger_date,dir,rets,excess,computed_at) VALUES %s", ev_rows)
+    print(f"\n=== 完成，已寫入 pattern_backtest + pattern_event（{len(ev_rows)} 筆事件）===")
 
 
 if __name__ == "__main__":

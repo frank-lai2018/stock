@@ -11,6 +11,7 @@ defineProps({
   showDir: { type: Boolean, default: false },     // 連續/頭部型有多空方向
   selectable: { type: Boolean, default: false },  // 開勾選欄 + 批次加入自選股
   near: { type: Boolean, default: false },        // 接近突破模式：顯示「距突破%」、突破日改標「最新」
+  showHold: { type: Boolean, default: false },    // 自選股：顯示進場價 / 進場日 / 持有報酬
 })
 const nearPct = (v) => (v == null ? '' : (Number(v) * 100).toFixed(1) + '%')
 
@@ -102,6 +103,16 @@ function clearSel() { tableRef.value?.clearSelection(); selected.value = [] }
     </el-table-column>
     <el-table-column label="股價" width="78">
       <template #default="{ row }">{{ row.close ?? '—' }}</template>
+    </el-table-column>
+    <el-table-column v-if="showHold" label="進場價" width="82">
+      <template #default="{ row }">
+        <span>{{ row.entry_price ?? '—' }}</span>
+        <div v-if="row.entry_date" style="color: #bbb; font-size: 11px; line-height: 1">{{ row.entry_date.slice(5) }}</div>
+      </template>
+    </el-table-column>
+    <el-table-column v-if="showHold" label="持有報酬" width="92" sortable
+                     :sort-method="(a, b) => (a.hold_pct ?? -9) - (b.hold_pct ?? -9)">
+      <template #default="{ row }"><b :style="{ color: upc(row.hold_pct) }">{{ pct(row.hold_pct) }}</b></template>
     </el-table-column>
     <el-table-column label="近3月" width="86" sortable :sort-method="(a, b) => (a.ret_3m ?? -9) - (b.ret_3m ?? -9)">
       <template #default="{ row }"><span :style="{ color: upc(row.ret_3m) }">{{ pct(row.ret_3m) }}</span></template>

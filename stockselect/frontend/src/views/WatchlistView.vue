@@ -125,6 +125,9 @@ function downloadXlsx() {
     ['量測滿足價', (r) => r.breakout?.target],
     ['RS評等', (r) => r.rs_rating],
     ['股價', (r) => r.close],
+    ['進場價', (r) => r.entry_price],
+    ['進場日', (r) => r.entry_date],
+    ['持有報酬%', (r) => (r.hold_pct == null ? '' : Number((r.hold_pct * 100).toFixed(2)))],
     ['近3月%', (r) => (r.ret_3m == null ? '' : Number((r.ret_3m * 100).toFixed(2)))],
     ['產業', (r) => r.industry],
     ['加入時間', (r) => (r.added_at ? r.added_at.slice(0, 10) : '')],
@@ -164,7 +167,7 @@ function downloadXlsx() {
         <span style="color: #999; font-size: 12px">價格 / RS / 近3月 / 突破後為即時；型態為加入當下快照。點列看 K 線</span>
       </div>
 
-      <PatternResultTable :items="items" :loading="loading" :show-target="showTarget" :show-dir="true">
+      <PatternResultTable :items="items" :loading="loading" :show-target="showTarget" :show-dir="true" :show-hold="true">
         <template #action="{ row }">
           <el-button size="small" text bg circle title="移出自選" @click.stop="removeItem(row)">✕</el-button>
         </template>

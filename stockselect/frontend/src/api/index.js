@@ -21,6 +21,8 @@ export const screenBreakout = (params = {}) =>
 export const getBreakoutPatterns = (group = 'bottom') =>
   api.get('/screen/breakout-patterns', { params: { group } }).then((r) => r.data)
 export const getPatternBacktest = () => api.get('/screen/backtest').then((r) => r.data)
+export const getPatternBacktestEvents = (pattern, limit = 200) =>
+  api.get('/screen/backtest/events', { params: { pattern, limit } }).then((r) => r.data)
 export const getStock = (id) => api.get(`/stock/${id}`).then((r) => r.data)
 export const getPrices = (id, { tf = 'D', bars = 250, adj = 1 } = {}) =>
   api.get(`/stock/${id}/prices`, { params: { tf, bars, adj } }).then((r) => r.data)

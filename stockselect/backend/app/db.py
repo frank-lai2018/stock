@@ -1,7 +1,7 @@
 """PostgreSQL 連線池 + 唯讀查詢輔助（psycopg2）。"""
 from contextlib import contextmanager
 
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, execute_values
 from psycopg2.pool import ThreadedConnectionPool
 
 from .config import DATABASE_URL
@@ -59,3 +59,13 @@ def execute(sql, params=None, returning=False):
         if returning:
             return cur.fetchall()
         return cur.rowcount
+
+
+def execute_many(sql, rows, template=None, page_size=1000):
+    """批次寫入（psycopg2 execute_values）。sql 內含一個 %s 佔位，rows 為 tuple 序列。
+    大量 INSERT 用此比逐筆 execute 快很多。回傳寫入筆數。"""
+    if not rows:
+        return 0
+    with _wcursor() as cur:
+        execute_values(cur, sql, rows, template=template, page_size=page_size)
+        return len(rows)

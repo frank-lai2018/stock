@@ -150,6 +150,27 @@ def backtest():
             "items": sorted(by.values(), key=lambda x: (x["group"] or "", -(x["n"] or 0)))}
 
 
+@router.get("/screen/backtest/events")
+def backtest_events(pattern: str, limit: int = 200):
+    """某型態的歷史突破事件清單（由 backtest_patterns.py 存 pattern_event）。
+    供回測頁點型態鑽取：哪些股、哪天觸發、後續各持有期報酬（方向調整+扣成本+停損）。"""
+    if pattern not in swings.ALL:
+        raise HTTPException(400, f"未知型態：{pattern}")
+    if not db.query("SELECT to_regclass('public.pattern_event') AS t")[0]["t"]:
+        return {"pattern": pattern, "pattern_name": swings.PATTERN_NAMES.get(pattern, pattern),
+                "count": 0, "items": []}
+    lim = max(1, min(int(limit), 1000))
+    rows = db.query(
+        "SELECT e.stock_id, s.name, s.industry, e.trigger_date, e.dir, e.rets, e.excess "
+        "FROM pattern_event e LEFT JOIN stock s ON s.stock_id = e.stock_id "
+        "WHERE e.pattern = %(p)s ORDER BY e.trigger_date DESC, e.stock_id LIMIT %(n)s",
+        {"p": pattern, "n": lim})
+    for r in rows:
+        r["trigger_date"] = r["trigger_date"].isoformat() if r["trigger_date"] else None
+    return {"pattern": pattern, "pattern_name": swings.PATTERN_NAMES.get(pattern, pattern),
+            "count": len(rows), "items": rows}
+
+
 @router.get("/screen/breakout-patterns")
 def breakout_patterns(group: str = "bottom"):
     """型態突破頁的型態目錄（key + 中文名，含掃描優先序）。

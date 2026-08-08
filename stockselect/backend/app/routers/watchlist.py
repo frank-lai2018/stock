@@ -34,10 +34,30 @@ def _ensure():
         " stock_id VARCHAR(16) NOT NULL,"
         " snapshot JSONB,"                          # 加入當下的型態 {breakout, pattern, pattern_name}
         " note VARCHAR(200),"
+        " entry_price NUMERIC,"                      # 加入當下收盤（進場價，用來追蹤持有報酬）
+        " entry_date DATE,"                          # 加入當下的資料日
         " created_at TIMESTAMP DEFAULT now(),"
         " UNIQUE(category_id, stock_id))")
+    db.execute("ALTER TABLE watchlist_item ADD COLUMN IF NOT EXISTS entry_price NUMERIC")   # 舊表補欄
+    db.execute("ALTER TABLE watchlist_item ADD COLUMN IF NOT EXISTS entry_date DATE")
     db.execute("CREATE INDEX IF NOT EXISTS idx_wl_item_cat ON watchlist_item(category_id)")
     _ensured = True
+
+
+def _entry_of(ids):
+    """取一批股票『目前收盤 + 資料日』作為進場價（優先 mv，缺則退回 price_daily 最新）。"""
+    out = {}
+    for r in db.query("SELECT stock_id, close, as_of_date FROM mv_stock_snapshot "
+                      "WHERE stock_id = ANY(%(ids)s)", {"ids": ids}):
+        if r.get("close") is not None:
+            out[r["stock_id"]] = (r["close"], r.get("as_of_date"))
+    missing = [i for i in ids if i not in out]
+    for i in missing:
+        r = db.query("SELECT adj_close AS close, trade_date FROM price_daily "
+                     "WHERE stock_id = %(s)s ORDER BY trade_date DESC LIMIT 1", {"s": i})
+        if r:
+            out[i] = (r[0]["close"], r[0]["trade_date"])
+    return out
 
 
 class CategoryIn(BaseModel):
@@ -115,7 +135,7 @@ def category_items(cid: int):
     """分類內成員：即時 mv 快照 + 加入當下的型態，合併成與型態突破同構的列。"""
     _ensure()
     wls = db.query(
-        "SELECT id, stock_id, snapshot, note, created_at FROM watchlist_item "
+        "SELECT id, stock_id, snapshot, note, entry_price, entry_date, created_at FROM watchlist_item "
         "WHERE category_id = %(c)s ORDER BY created_at DESC, id DESC", {"c": cid})
     if not wls:
         return {"count": 0, "as_of": None, "items": []}
@@ -154,6 +174,12 @@ def category_items(cid: int):
         row["watchlist_id"] = w["id"]
         row["added_at"] = w["created_at"].isoformat() if w["created_at"] else None
         row["note"] = w.get("note")
+        ep = w.get("entry_price")                          # 進場價 + 持有至今報酬（即時）
+        row["entry_price"] = float(ep) if ep is not None else None
+        row["entry_date"] = w["entry_date"].isoformat() if w.get("entry_date") else None
+        cl = row.get("close")
+        row["hold_pct"] = (round(float(cl) / float(ep) - 1, 4)
+                           if (ep and cl is not None) else None)
         items.append(row)
     _attach_last_pattern(items)
     return {"count": len(items), "as_of": as_of, "items": items}
@@ -168,12 +194,13 @@ def add_item(it: ItemIn):
     if not db.query("SELECT 1 FROM stock WHERE stock_id = %(id)s", {"id": sid}):
         raise HTTPException(404, f"查無此股：{sid}")
     snp = json.dumps(it.snapshot) if it.snapshot else None
+    px, dt = _entry_of([sid]).get(sid, (None, None))     # 進場價＝加入當下收盤
     rows = db.execute(
-        "INSERT INTO watchlist_item (category_id, stock_id, snapshot, note) "
-        "VALUES (%(c)s, %(s)s, %(snap)s::jsonb, %(note)s) "
-        "ON CONFLICT (category_id, stock_id) DO UPDATE SET snapshot = EXCLUDED.snapshot "
+        "INSERT INTO watchlist_item (category_id, stock_id, snapshot, note, entry_price, entry_date) "
+        "VALUES (%(c)s, %(s)s, %(snap)s::jsonb, %(note)s, %(px)s, %(dt)s) "
+        "ON CONFLICT (category_id, stock_id) DO UPDATE SET snapshot = EXCLUDED.snapshot "  # 已存在：保留原進場價
         "RETURNING id",
-        {"c": it.category_id, "s": sid, "snap": snp, "note": it.note}, returning=True)
+        {"c": it.category_id, "s": sid, "snap": snp, "note": it.note, "px": px, "dt": dt}, returning=True)
     return {"ok": True, "id": rows[0]["id"]}
 
 
@@ -188,18 +215,20 @@ def add_items_bulk(payload: ItemBulkIn):
         return {"ok": True, "added": 0, "skipped": 0}
     valid = {r["stock_id"] for r in
              db.query("SELECT stock_id FROM stock WHERE stock_id = ANY(%(ids)s)", {"ids": ids})}
+    entry = _entry_of([i for i in ids if i in valid]) if valid else {}
     added = 0
     for r in payload.items:
         sid = (r.stock_id or "").strip()
         if sid not in valid:
             continue
         snp = json.dumps(r.snapshot) if r.snapshot else None
+        px, dt = entry.get(sid, (None, None))                # 進場價＝加入當下收盤
         db.execute(
-            "INSERT INTO watchlist_item (category_id, stock_id, snapshot) "
-            "VALUES (%(c)s, %(s)s, %(snap)s::jsonb) "
-            "ON CONFLICT (category_id, stock_id) "
+            "INSERT INTO watchlist_item (category_id, stock_id, snapshot, entry_price, entry_date) "
+            "VALUES (%(c)s, %(s)s, %(snap)s::jsonb, %(px)s, %(dt)s) "
+            "ON CONFLICT (category_id, stock_id) "                      # 已存在：保留原進場價
             "DO UPDATE SET snapshot = COALESCE(EXCLUDED.snapshot, watchlist_item.snapshot)",
-            {"c": payload.category_id, "s": sid, "snap": snp})
+            {"c": payload.category_id, "s": sid, "snap": snp, "px": px, "dt": dt})
         added += 1
     return {"ok": True, "added": added, "skipped": len(payload.items) - added}
 
