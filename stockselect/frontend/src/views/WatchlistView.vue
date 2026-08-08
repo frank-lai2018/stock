@@ -16,6 +16,7 @@ const items = ref([])
 const asOf = ref('')
 const loading = ref(false)
 const showTarget = ref(true)      // 顯示/隱藏「量測滿足價 / 方向」兩欄
+const showHold = ref(true)        // 顯示/隱藏「進場價 / 持有報酬」兩欄
 // 手動加入
 const options = ref([])
 const picked = ref(null)
@@ -186,6 +187,7 @@ function downloadXlsx() {
         <el-button type="primary" :disabled="!picked" @click="addPicked">加入本分類</el-button>
         <el-button type="success" :disabled="!items.length" @click="downloadXlsx">⬇ 下載 Excel</el-button>
         <el-checkbox v-model="showTarget" size="small" label="滿足價/方向" border />
+        <el-checkbox v-model="showHold" size="small" label="進場價/持有報酬" border />
         <el-tag v-if="asOf">資料日 {{ asOf }}</el-tag>
         <el-tag type="danger" effect="dark">{{ items.length }} 檔</el-tag>
         <span style="color: #999; font-size: 12px">即時：價格 / RS / 近3月 / 突破後 / 持有報酬；型態為加入當下快照。點列看 K 線</span>
@@ -207,7 +209,7 @@ function downloadXlsx() {
       </el-collapse>
 
       <PatternResultTable :items="items" :loading="loading" :show-target="showTarget" :show-dir="true"
-                          :show-hold="true" :show-track="true">
+                          :show-hold="showHold" :show-track="true">
         <template #action="{ row }">
           <el-button size="small" text bg circle title="移出自選" @click.stop="removeItem(row)">✕</el-button>
         </template>
