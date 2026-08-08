@@ -35,7 +35,7 @@ function go(row, column) {
     <WatchlistBatchAdd :rows="selected" @done="clearSel" />
     <el-button size="small" text @click="clearSel">清除勾選</el-button>
   </div>
-  <el-table ref="tableRef" :data="items" v-loading="loading" height="74vh" stripe @row-click="go"
+  <el-table ref="tableRef" :data="items" v-loading="loading" stripe @row-click="go"
             @selection-change="onSel" style="cursor: pointer" :default-sort="{ prop: '', order: '' }">
     <el-table-column v-if="selectable" type="selection" width="42" fixed />
     <el-table-column prop="stock_id" label="代碼" width="80" fixed />

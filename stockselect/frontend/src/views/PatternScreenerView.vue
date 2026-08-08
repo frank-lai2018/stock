@@ -73,7 +73,7 @@ function go(row, column) {
         <el-button size="small" text @click="clearSel">清除勾選</el-button>
       </template>
     </div>
-    <el-table ref="tableRef" :data="items" v-loading="loading" height="72vh" stripe style="cursor: pointer"
+    <el-table ref="tableRef" :data="items" v-loading="loading" stripe style="cursor: pointer"
               @row-click="go" @selection-change="onSel">
       <el-table-column type="selection" width="42" fixed />
       <el-table-column prop="stock_id" label="代碼" width="80" />

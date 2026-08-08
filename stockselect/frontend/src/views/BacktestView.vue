@@ -83,7 +83,7 @@ onMounted(load)
     <el-empty v-if="!loading && !items.length"
               description="尚無回測資料，請先在 stockselect/backend 執行：python backtest_patterns.py --limit 500" />
 
-    <el-table v-else :data="items" v-loading="loading" stripe height="72vh">
+    <el-table v-else :data="items" v-loading="loading" stripe
       <el-table-column label="型態" width="150" fixed>
         <template #default="{ row }">
           <el-link type="primary" :underline="false" @click="openEvents(row)"><b>{{ row.pattern_name }}</b></el-link>

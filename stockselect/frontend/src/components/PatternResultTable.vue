@@ -51,7 +51,7 @@ function clearSel() { tableRef.value?.clearSelection(); selected.value = [] }
     <WatchlistBatchAdd :rows="selected" @done="clearSel" />
     <el-button size="small" text @click="clearSel">清除勾選</el-button>
   </div>
-  <el-table ref="tableRef" :data="items" v-loading="loading" height="70vh" stripe
+  <el-table ref="tableRef" :data="items" v-loading="loading" stripe
             style="cursor: pointer" @row-click="go" @selection-change="onSel">
     <el-table-column v-if="selectable" type="selection" width="42" fixed />
     <el-table-column prop="stock_id" label="代碼" width="76" fixed />
