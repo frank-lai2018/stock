@@ -58,7 +58,8 @@ def main():
     ap.add_argument("--codes-file", default="", help="從檔案讀代碼（每行一個或逗號分隔）；用於額度用完後續跑，優先於 --codes")
     ap.add_argument("--token", default=os.environ.get("FINMIND_TOKEN", ""), help="FinMind token")
     ap.add_argument("--delay", type=float, default=1.0, help="fetch 每請求間隔秒（預設 1）")
-    ap.add_argument("--max-per-hour", type=int, default=600, help="每小時請求上限（滑動視窗；預設 600，0=不限）")
+    ap.add_argument("--max-per-hour", type=int, default=int(os.environ.get("FINMIND_MAX_PER_HOUR") or 600),
+                    help="每小時請求上限（滑動視窗；預設讀環境變數 FINMIND_MAX_PER_HOUR 或 600，0=不限）")
     ap.add_argument("--skip-fetch", action="store_true", help="略過抓取，只入庫（CSV 已存在）")
     ap.add_argument("--skip-load", action="store_true", help="只抓取不入庫")
     args = ap.parse_args()

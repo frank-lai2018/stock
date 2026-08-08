@@ -122,6 +122,34 @@ def screen(req: ScreenRequest):
     return {"count": len(rows), "as_of": as_of, "items": rows}
 
 
+_PAT_GROUP = {k: g for g, ks in swings.GROUPS.items() for k in ks}   # pattern → 所屬組
+
+
+@router.get("/screen/backtest")
+def backtest():
+    """型態回測統計（由 backtest_patterns.py 離線算好存 pattern_backtest）。
+    每型態各持有期的事件數 / 勝率 / 平均報酬（方向調整後，正＝順預期方向獲利）。"""
+    rows = db.query("SELECT pattern, horizon, n, win_rate, avg_ret, median_ret, "
+                    "avg_excess, win_excess, computed_at "
+                    "FROM pattern_backtest ORDER BY pattern, horizon") \
+        if db.query("SELECT to_regclass('public.pattern_backtest') AS t")[0]["t"] else []
+    by, horizons, computed = {}, set(), None
+    for r in rows:
+        horizons.add(r["horizon"])
+        if r["computed_at"]:
+            computed = r["computed_at"].isoformat()
+        p = r["pattern"]
+        by.setdefault(p, {"pattern": p, "pattern_name": swings.PATTERN_NAMES.get(p, p),
+                          "group": _PAT_GROUP.get(p), "n": r["n"], "horizons": {}})
+        f = lambda c: float(r[c]) if r[c] is not None else None   # noqa: E731
+        by[p]["horizons"][r["horizon"]] = {
+            "n": r["n"], "win_rate": f("win_rate"), "avg_ret": f("avg_ret"),
+            "median_ret": f("median_ret"), "avg_excess": f("avg_excess"), "win_excess": f("win_excess"),
+        }
+    return {"computed_at": computed, "horizons": sorted(horizons),
+            "items": sorted(by.values(), key=lambda x: (x["group"] or "", -(x["n"] or 0)))}
+
+
 @router.get("/screen/breakout-patterns")
 def breakout_patterns(group: str = "bottom"):
     """型態突破頁的型態目錄（key + 中文名，含掃描優先序）。

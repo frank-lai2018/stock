@@ -37,6 +37,8 @@ REVENUE = os.path.join(HERE, "update_revenue.py")
 FUND = os.path.join(HERE, "update_fundamentals.py")
 HOLDERDIST = os.path.join(HERE, "update_holderdist.py")
 ETFNAV = os.path.join(HERE, "fetch_etf_nav.py")
+BACKTEST_DIR = os.path.join(HERE, "stockselect", "backend")   # 回測腳本在後端（需 import app）
+BACKTEST = os.path.join(BACKTEST_DIR, "backtest_patterns.py")
 HOLDERS_RAW = r"H:\data\Holders"           # 集保週快照封存（往後自建歷史）
 
 
@@ -156,14 +158,29 @@ def plan_jobs(d, state, only):
     run = only in (None, "etfnav")
     jobs.append(("etfnav", "每晚固定（ETF 淨值/規模，單一請求）", run, {}))
 
+    # backtest：型態回測，每週一次（週日跑；重工作 ~數十分鐘，狀態檔防重）
+    done_bt = state.get("backtest")
+    if only == "backtest":
+        run, why = True, "強制 --only backtest"
+    elif only is None:
+        if d.weekday() != 6:
+            run, why = False, "型態回測每週日跑（重工作）"
+        elif done_bt == wl:
+            run, why = False, f"本週 {wl} 已跑過回測（狀態檔）"
+        else:
+            run, why = True, f"週日型態回測，本週 {wl} 尚未跑"
+    else:
+        run, why = False, "本次 --only 指定其他工作"
+    jobs.append(("backtest", why, run, {"label": wl}))
+
     return jobs
 
 
 # ---------- 執行 ----------
 
-def run_cmd(cmd):
+def run_cmd(cmd, cwd=HERE):
     print(f"    $ {' '.join(cmd)}")
-    return subprocess.run(cmd, cwd=HERE).returncode
+    return subprocess.run(cmd, cwd=cwd).returncode
 
 
 def refresh_snapshot(dsn):
@@ -199,6 +216,8 @@ def build_cmd(job, d, dsn, extra):
         return [sys.executable, FUND, "--preset", "capreduction", "--start", extra["start"], "--dsn", dsn]
     if job == "etfnav":
         return [sys.executable, ETFNAV, "--dsn", dsn]
+    if job == "backtest":
+        return [sys.executable, BACKTEST]          # 讀 backend/.env 的 DATABASE_URL；cwd=BACKTEST_DIR
     raise ValueError(job)
 
 
@@ -207,7 +226,7 @@ def main():
     ap.add_argument("--dsn", default=os.environ.get("DATABASE_URL", ""), help="PostgreSQL 連線字串")
     ap.add_argument("--date", default=date.today().isoformat(), help="模擬日期 YYYY-MM-DD（預設今天）")
     ap.add_argument("--only", choices=["daily", "holderdist", "revenue", "quarterly", "dividend",
-                                       "capreduction", "etfnav"], help="強制只跑某工作")
+                                       "capreduction", "etfnav", "backtest"], help="強制只跑某工作")
     ap.add_argument("--skip-refresh", action="store_true", help="跑完不刷新 mv_stock_snapshot 選股視圖")
     ap.add_argument("--plan", action="store_true", help="只印排程決策，不執行")
     args = ap.parse_args()
@@ -250,13 +269,14 @@ def main():
     for job, extra in to_run:
         print(f"\n----- {job} -----")
         try:
-            rc = run_cmd(build_cmd(job, d, args.dsn, extra))
+            cwd = BACKTEST_DIR if job == "backtest" else HERE
+            rc = run_cmd(build_cmd(job, d, args.dsn, extra), cwd=cwd)
         except Exception as e:
             rc, msg = 1, str(e)[:120]
             print(f"    例外：{msg}")
         ok = rc == 0
         results.append((job, ok))
-        if ok and job in ("quarterly", "dividend", "capreduction"):   # 重工作成功才記狀態，避免跨夜重跑
+        if ok and job in ("quarterly", "dividend", "capreduction", "backtest"):   # 重工作成功才記狀態，避免跨夜重跑
             state[job] = extra["label"]
             state.setdefault("last_run", {})[job] = f"{args.date} {datetime.now():%H:%M:%S}"
             save_state(state)

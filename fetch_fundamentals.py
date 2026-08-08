@@ -42,7 +42,7 @@ API = "https://api.finmindtrade.com/api/v4/data"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
 # ---- 每小時請求限流（滑動視窗）：預設 FinMind 免費層約 600 次/hr ----
-MAX_PER_HOUR = 600            # 0 = 不限流
+MAX_PER_HOUR = int(os.environ.get("FINMIND_MAX_PER_HOUR") or 600)   # 每小時請求上限；0=不限流
 _WINDOW = 3600.0
 _REQ_TIMES = collections.deque()
 
@@ -209,7 +209,8 @@ def main():
     ap.add_argument("--token", default=os.environ.get("FINMIND_TOKEN", ""),
                     help="FinMind token（或設環境變數 FINMIND_TOKEN）")
     ap.add_argument("--delay", type=float, default=2.0, help="每請求間隔秒數（預設 2）")
-    ap.add_argument("--max-per-hour", type=int, default=600, help="每小時請求上限（滑動視窗；預設 600，0=不限）")
+    ap.add_argument("--max-per-hour", type=int, default=int(os.environ.get("FINMIND_MAX_PER_HOUR") or 600),
+                    help="每小時請求上限（滑動視窗；預設讀環境變數 FINMIND_MAX_PER_HOUR 或 600，0=不限）")
     ap.add_argument("--refresh", action="store_true", help="重抓覆蓋已存在的 CSV")
     args = ap.parse_args()
 
