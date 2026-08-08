@@ -128,6 +128,10 @@ function downloadXlsx() {
     ['進場價', (r) => r.entry_price],
     ['進場日', (r) => r.entry_date],
     ['持有報酬%', (r) => (r.hold_pct == null ? '' : Number((r.hold_pct * 100).toFixed(2)))],
+    ['突破後交易日', (r) => r.track?.days],
+    ['實際(順勢)%', (r) => (r.track?.actual == null ? '' : Number((r.track.actual * 100).toFixed(2)))],
+    ['型態同期均%', (r) => (r.track?.exp_ret == null ? '' : Number((r.track.exp_ret * 100).toFixed(2)))],
+    ['相對型態%', (r) => (r.track?.rel == null ? '' : Number((r.track.rel * 100).toFixed(2)))],
     ['近3月%', (r) => (r.ret_3m == null ? '' : Number((r.ret_3m * 100).toFixed(2)))],
     ['產業', (r) => r.industry],
     ['加入時間', (r) => (r.added_at ? r.added_at.slice(0, 10) : '')],
@@ -164,10 +168,13 @@ function downloadXlsx() {
         <el-checkbox v-model="showTarget" size="small" label="滿足價/方向" border />
         <el-tag v-if="asOf">資料日 {{ asOf }}</el-tag>
         <el-tag type="danger" effect="dark">{{ items.length }} 檔</el-tag>
-        <span style="color: #999; font-size: 12px">價格 / RS / 近3月 / 突破後為即時；型態為加入當下快照。點列看 K 線</span>
+        <span style="color: #999; font-size: 12px">
+          即時：價格 / RS / 近3月 / 突破後 / 持有報酬。「型態同期均／相對型態」＝突破後實際(順勢)報酬 對比該型態回測同期期望（▲優＝跑贏型態常態）。點列看 K 線
+        </span>
       </div>
 
-      <PatternResultTable :items="items" :loading="loading" :show-target="showTarget" :show-dir="true" :show-hold="true">
+      <PatternResultTable :items="items" :loading="loading" :show-target="showTarget" :show-dir="true"
+                          :show-hold="true" :show-track="true">
         <template #action="{ row }">
           <el-button size="small" text bg circle title="移出自選" @click.stop="removeItem(row)">✕</el-button>
         </template>

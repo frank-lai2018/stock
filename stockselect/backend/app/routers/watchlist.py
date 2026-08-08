@@ -4,13 +4,38 @@
 （snapshot：breakout/pattern），檢視時再抓即時的 mv_stock_snapshot（股價/RS/近3月/產業）
 合併，讓每個分類的表格與「型態突破」搜尋結果同構。
 """
+import bisect
 import json
+from datetime import date
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from .. import db
 from .screen import _attach_last_pattern
+
+
+def _bt_map():
+    """載入 pattern_backtest → {pattern: {horizon: {avg, wr}}} + 持有期清單。表不存在回 ({}, [])。
+    avg 轉成小數（表內存百分比），供自選股「vs 型態歷史」對照。"""
+    if not db.query("SELECT to_regclass('public.pattern_backtest') AS t")[0]["t"]:
+        return {}, []
+    m, hs = {}, set()
+    for r in db.query("SELECT pattern, horizon, avg_ret, win_rate FROM pattern_backtest"):
+        hs.add(r["horizon"])
+        m.setdefault(r["pattern"], {})[r["horizon"]] = {
+            "avg": (float(r["avg_ret"]) / 100) if r["avg_ret"] is not None else None,
+            "wr": float(r["win_rate"]) if r["win_rate"] is not None else None,
+        }
+    return m, sorted(hs)
+
+
+def _pick_horizon(horizons, elapsed):
+    """依突破後已經過的交易日，挑對照用的回測持有期：取 ≥elapsed 的最小者；超過最大則用最大並標記。"""
+    for h in horizons:
+        if h >= elapsed:
+            return h, False
+    return horizons[-1], True                      # 已過觀察期，仍以最長持有期當參考
 
 router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
 
@@ -143,6 +168,9 @@ def category_items(cid: int):
     ids = [w["stock_id"] for w in wls]
     snap = {r["stock_id"]: r for r in
             db.query("SELECT * FROM mv_stock_snapshot WHERE stock_id = ANY(%(ids)s)", {"ids": ids})}
+    bt, horizons = _bt_map()                              # 型態回測期望值（對照用）
+    cal = [r["trade_date"] for r in                       # 交易日曆（算突破後幾個交易日）
+           db.query("SELECT trade_date FROM market_index WHERE index_id='TWSE' ORDER BY trade_date")]
     missing = [i for i in ids if i not in snap]           # mv 沒有的（下市/非母體）補名稱
     names = {}
     if missing:
@@ -166,9 +194,30 @@ def category_items(cid: int):
         if snp.get("breakout"):
             bk = dict(snp["breakout"])                       # 複製，不動到原快照
             cl = row.get("close")                            # 即時收盤（來自 mv 最新）
+            since = None
             if cl is not None and bk.get("breakout_close"):
-                bk["since_pct"] = round(float(cl) / float(bk["breakout_close"]) - 1, 4)   # 突破後至今漲跌%（即時）
+                since = round(float(cl) / float(bk["breakout_close"]) - 1, 4)   # 突破後至今漲跌%（即時）
+                bk["since_pct"] = since
             row["breakout"] = bk
+            # vs 型態歷史：突破後 N 個交易日的實際（順型態方向）報酬 對比 回測同期期望
+            pat = snp.get("pattern")
+            bd = bk.get("breakout_date")
+            if pat and bd and since is not None and horizons and as_of and cal:
+                elapsed = (bisect.bisect_right(cal, date.fromisoformat(as_of))
+                           - bisect.bisect_right(cal, date.fromisoformat(bd[:10])))
+                elapsed = max(elapsed, 0)
+                sign = -1 if bk.get("dir") == "bear" else 1  # 空方型態：跌為順勢
+                actual_adj = round(sign * since, 4)
+                h, over = _pick_horizon(horizons, elapsed)
+                ref = (bt.get(pat) or {}).get(h) or {}
+                exp = ref.get("avg")
+                row["track"] = {
+                    "days": elapsed, "horizon": h, "over": over,
+                    "actual": actual_adj,
+                    "exp_ret": round(exp, 4) if exp is not None else None,
+                    "win_rate": ref.get("wr"),
+                    "rel": round(actual_adj - exp, 4) if exp is not None else None,
+                }
         row["pattern"] = snp.get("pattern")
         row["pattern_name"] = snp.get("pattern_name")
         row["watchlist_id"] = w["id"]

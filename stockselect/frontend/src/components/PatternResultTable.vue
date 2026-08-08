@@ -12,8 +12,18 @@ defineProps({
   selectable: { type: Boolean, default: false },  // 開勾選欄 + 批次加入自選股
   near: { type: Boolean, default: false },        // 接近突破模式：顯示「距突破%」、突破日改標「最新」
   showHold: { type: Boolean, default: false },    // 自選股：顯示進場價 / 進場日 / 持有報酬
+  showTrack: { type: Boolean, default: false },   // 自選股：突破後實際 vs 型態回測期望對照
 })
 const nearPct = (v) => (v == null ? '' : (Number(v) * 100).toFixed(1) + '%')
+// 「相對型態」提示：實際(順型態方向) − 該型態回測同期均報酬
+function trackTip(row) {
+  const t = row.track
+  if (!t) return ''
+  const p = (v) => (v == null ? '—' : (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%')
+  return `突破後 ${t.days} 個交易日${t.over ? '（已過觀察期，以最長持有期比對）' : ''}\n`
+    + `實際(順勢) ${p(t.actual)}　型態${t.horizon}日均 ${p(t.exp_ret)}`
+    + (t.win_rate != null ? `（勝率${t.win_rate.toFixed(0)}%）` : '')
+}
 
 const router = useRouter()
 const tableRef = ref()
@@ -86,6 +96,26 @@ function clearSel() { tableRef.value?.clearSelection(); selected.value = [] }
     <el-table-column v-if="!near" label="突破後" width="88" sortable
                      :sort-method="(a, b) => (a.breakout?.since_pct ?? -9) - (b.breakout?.since_pct ?? -9)">
       <template #default="{ row }"><span :style="{ color: upc(row.breakout?.since_pct) }">{{ nearPct(row.breakout?.since_pct) }}</span></template>
+    </el-table-column>
+    <el-table-column v-if="showTrack" label="型態同期均" width="104">
+      <template #default="{ row }">
+        <el-tooltip :content="trackTip(row)" placement="top" :disabled="!row.track">
+          <span v-if="row.track">
+            <span :style="{ color: upc(row.track.exp_ret) }">{{ nearPct(row.track.exp_ret) }}</span>
+            <div style="color: #bbb; font-size: 11px; line-height: 1">
+              突破後{{ row.track.days }}日{{ row.track.over ? '↑' : '' }}</div>
+          </span>
+          <span v-else style="color: #ccc">—</span>
+        </el-tooltip>
+      </template>
+    </el-table-column>
+    <el-table-column v-if="showTrack" label="相對型態" width="100" sortable
+                     :sort-method="(a, b) => (a.track?.rel ?? -9) - (b.track?.rel ?? -9)">
+      <template #default="{ row }">
+        <b v-if="row.track?.rel != null" :style="{ color: upc(row.track.rel) }">
+          {{ row.track.rel >= 0 ? '▲優 ' : '▼弱 ' }}{{ nearPct(row.track.rel) }}</b>
+        <span v-else style="color: #ccc">—</span>
+      </template>
     </el-table-column>
     <el-table-column :label="showDir ? '突破線' : '頸線/杯口'" width="96">
       <template #default="{ row }">{{ row.breakout?.neckline }}</template>
