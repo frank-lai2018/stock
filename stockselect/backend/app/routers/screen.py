@@ -26,6 +26,23 @@ def _attach_last_pattern(rows):
         keys = patterns.detect(by.get(r["stock_id"], []))     # 回傳「最後一根」的型態
         r["last_patterns"] = [{"name": patterns.CATALOG[k][0], "dir": patterns.CATALOG[k][1]} for k in keys]
 
+
+def _attach_recent_eps(rows, n=4):
+    """為每列附上近 n 季 EPS（新到舊）供前端過濾；含 null（該季缺料）以如實反映連續季。"""
+    ids = [r["stock_id"] for r in rows]
+    if not ids:
+        return
+    er = db.query(
+        "SELECT stock_id, eps FROM (SELECT stock_id, period_date, eps, "
+        "  row_number() OVER (PARTITION BY stock_id ORDER BY period_date DESC) AS rn "
+        "  FROM fundamentals_quarterly WHERE stock_id = ANY(%(ids)s)) z "
+        "WHERE rn <= %(n)s ORDER BY stock_id, period_date DESC", {"ids": ids, "n": n})
+    by = {}
+    for e in er:
+        by.setdefault(e["stock_id"], []).append(e["eps"])
+    for r in rows:
+        r["eps_recent"] = by.get(r["stock_id"], [])
+
 router = APIRouter(prefix="/api", tags=["screen"])
 
 # 預設策略（一鍵套用的條件組合）
@@ -251,5 +268,6 @@ def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 1
         out.sort(key=lambda r: (r["breakout"]["breakout_date"], r.get("rs_rating") or 0), reverse=True)
     out = out[:max(1, min(int(limit), 500))]
     _attach_last_pattern(out)
+    _attach_recent_eps(out)                           # 近 4 季 EPS（供前端「每季 EPS >」過濾）
     as_of = out[0]["as_of_date"].isoformat() if out and out[0].get("as_of_date") else None
     return {"count": len(out), "as_of": as_of, "items": out}

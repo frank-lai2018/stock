@@ -29,15 +29,28 @@ const band = ref(0.05)                             // 接近突破容許帶（�
 const recentSel = ref(3)                           // 突破觀察窗（幾個交易日內的突破才收錄）
 const showTarget = ref(true)
 const rsMin = ref(0)                                // RS 過濾（只顯示 RS ≥ 此值；0=不過濾）
+const epsQ = ref(4)                                 // EPS 過濾看幾季（1/2/4）
+const epsMin = ref('')                              // 近 epsQ 季「每季」EPS 門檻（空=不過濾）
 const items = ref([])
 const count = ref(0)
 const asOf = ref('')
 const loading = ref(false)
 
-// 前端即時過濾：RS ≥ rsMin（RS 從缺者於過濾啟用時排除）
+// 前端即時過濾：RS ≥ rsMin，且近 epsQ 季「每季」EPS ≥ epsMin
 const shownItems = computed(() => {
-  const m = Number(rsMin.value) || 0
-  return m ? items.value.filter((r) => (r.rs_rating ?? -1) >= m) : items.value
+  const rs = Number(rsMin.value) || 0
+  const em = (epsMin.value === '' || epsMin.value == null) ? null : Number(epsMin.value)
+  const nq = Number(epsQ.value) || 4
+  let arr = items.value
+  if (rs) arr = arr.filter((r) => (r.rs_rating ?? -1) >= rs)
+  if (em != null && !Number.isNaN(em)) {
+    arr = arr.filter((r) => {
+      const e = r.eps_recent || []
+      if (e.length < nq) return false               // 近 nq 季資料不足 → 排除
+      return e.slice(0, nq).every((v) => v != null && Number(v) >= em)
+    })
+  }
+  return arr
 })
 
 async function loadCatalog() {
@@ -168,8 +181,16 @@ function downloadXlsx() {
         <el-checkbox v-model="showTarget" size="small" label="滿足價/方向" border />
         <span style="color: #666; font-size: 13px">RS &gt;</span>
         <el-input-number v-model="rsMin" :min="0" :max="99" :step="5" size="small" controls-position="right" style="width: 110px" />
+        <span style="color: #666; font-size: 13px">近</span>
+        <el-select v-model="epsQ" size="small" style="width: 80px">
+          <el-option label="1 季" :value="1" />
+          <el-option label="2 季" :value="2" />
+          <el-option label="4 季" :value="4" />
+        </el-select>
+        <span style="color: #666; font-size: 13px">每季EPS &gt;</span>
+        <el-input v-model="epsMin" type="number" size="small" placeholder="不限" style="width: 96px" clearable />
         <el-tag v-if="asOf">資料日 {{ asOf }}</el-tag>
-        <el-tag type="danger" effect="dark">符合 {{ shownItems.length }} 檔<span v-if="rsMin"> / 共 {{ count }}</span></el-tag>
+        <el-tag type="danger" effect="dark">符合 {{ shownItems.length }} 檔<span v-if="rsMin || (epsMin !== '' && epsMin != null)"> / 共 {{ count }}</span></el-tag>
         <span style="color: #999; font-size: 12px">
           <template v-if="isNear">收盤已逼近頸線但<b>尚未</b>突破（距突破越小越接近）；帶量與否未過濾，請點列看圖確認</template>
           <template v-else>收盤突破/跌破頸線帶量。波段偵測有假訊號，請點列看圖確認</template>
