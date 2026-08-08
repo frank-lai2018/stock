@@ -46,6 +46,7 @@ onMounted(load)
         <el-tag v-if="data.computed_at" type="info">回測時間 {{ data.computed_at.slice(0, 16).replace('T', ' ') }}</el-tag>
         <span style="color: #999; font-size: 12px">
           突破後 N 日報酬（方向調整：底部/多方漲為勝、頭部/空方跌為勝）；紅＝順預期方向獲利。
+          <b>已扣來回交易成本 + 8% 停損</b>（貼近實際可執行績效）。
           <b>超額＝個股 − 同期加權指數</b>（扣掉大盤才是型態真本事）。事件數 &lt; {{ MIN_N }} 標灰＝樣本不足勿盡信。統計非保證。
         </span>
       </div>

@@ -311,12 +311,12 @@ def detect_cup_handle(bars, recent=3, vol_mult=1.4, min_depth=0.10,
     if left_rim / base - 1 < min_depth or right_rim < left_rim * 0.93:
         return None
     depth = left_rim - base
-    handle = range(n - handle_max, n)                           # 柄：右側淺回檔
+    handle = range(n - handle_max, max(n - handle_max + 1, n - recent))  # 柄（排除最近 recent 根突破候選棒）
     h_lo = min(lows[i] for i in handle)
-    h_hi = max(highs[i] for i in handle)
+    h_hi = max(highs[i] for i in handle)                       # 柄高＝突破價，須由突破前的棒決定
     if (right_rim - h_lo) > handle_retr * depth:               # 柄回檔要淺
         return None
-    level = max(h_hi, right_rim)                                # 突破價＝柄高/杯口
+    level = max(h_hi, right_rim)                                # 突破價＝柄高/杯口（不含突破當根，否則收盤>價永不成立）
     b = _breakout(closes, vols, level, recent, vol_mult)
     if not b:
         return None
@@ -513,7 +513,9 @@ def detect_wedge(bars, window=50, k=2, recent=3, vol_mult=1.4):
 
 
 def detect_flag(bars, flag_win=18, pole_win=12, recent=3, vol_mult=1.4, pole_move=0.15):
-    """旗形／三角旗：強勢旗桿 + 小幅整理，順勢突破旗頂(多)/旗底(空)帶量。"""
+    """旗形／三角旗：強勢旗桿 + 小幅整理，順勢突破旗頂(多)/旗底(空)帶量。
+    旗頂/旗底取『旗身整理區』極值，排除最近 recent 根突破候選棒
+    （否則突破價含突破當根自身高/低點 → 收盤穿越永不成立）。"""
     n = len(bars)
     if n < flag_win + pole_win + 5:
         return None
@@ -521,16 +523,19 @@ def detect_flag(bars, flag_win=18, pole_win=12, recent=3, vol_mult=1.4, pole_mov
     fs = n - flag_win; ps = fs - pole_win
     if ps < 0 or closes[ps] <= 0:
         return None
+    body_end = n - recent                                     # 旗身結束（不含突破候選棒）
+    if body_end - fs < 3:                                     # 旗身太短不算
+        return None
     pole = (closes[fs] - closes[ps]) / closes[ps]
     if pole >= pole_move:                                     # 多方旗桿 → 突破旗頂
-        flag_hi = max(highs[fs:])
+        flag_hi = max(highs[fs:body_end])
         b = _breakout(closes, vols, flag_hi, recent, vol_mult)
         if b:
             j, vr = b
             return _out_cont("flag", "bull", flag_hi, closes[fs] - closes[ps], bars, closes, j, vr,
                              [(ps, closes[ps], "旗桿起"), (fs, flag_hi, "旗頂")])
     elif pole <= -pole_move:                                  # 空方旗桿 → 跌破旗底
-        flag_lo = min(lows[fs:])
+        flag_lo = min(lows[fs:body_end])
         b = _breakdown(closes, vols, flag_lo, recent, vol_mult)
         if b:
             j, vr = b
