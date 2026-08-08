@@ -72,6 +72,25 @@ function pts(row) {
   return (row.breakout?.points || []).map((p) => `${p.label} ${p.date.slice(5)} @${p.price}`).join('　')
 }
 
+// 欄位說明（顯示在頁面供參考；依模式切換）
+const legend = [
+  ['K棒型態', '最新一根 K 棒的陰陽線型態（紅＝偏多、綠＝偏空、灰＝中性）'],
+  ['型態', '命中的波段型態；滑鼠移上顯示關鍵轉折點（底/肩/頸線等）'],
+  ['量測滿足價', '型態學理目標價＝突破線 ± 型態高度（多方加、空方減）'],
+  ['方向', '多 ↑＝偏多突破；空 ↓＝偏空跌破'],
+  ...(isNear
+    ? [['距突破', '目前收盤距頸線還差幾 %（越小越接近，尚未突破）'],
+       ['最新', '最新資料日']]
+    : [['突破日', '收盤突破/跌破頸線的那個交易日'],
+       ['突破後', '突破當天收盤 → 目前收盤的漲跌%（即時）']]),
+  ['頸線/突破線', '型態的關鍵壓力/支撐價（突破的那條線）'],
+  ['突破收盤', '突破那天的收盤價（＝突破後報酬的計算基準）'],
+  ['量比', '突破當天成交量 ÷ 前 50 日均量（越大代表突破越有量）'],
+  ['RS評等', '相對強弱評等 0~99，≥70 屬強勢'],
+  ['股價', '最新收盤價（即時）'],
+  ['近3月', '近 3 個月漲跌%'],
+]
+
 // 匯出目前結果為 Excel（數值欄回傳數字型）
 function downloadXlsx() {
   if (!items.value.length) return ElMessage.warning('目前沒有結果可下載')
@@ -149,9 +168,47 @@ function downloadXlsx() {
       </div>
     </el-card>
 
+    <el-collapse style="margin-bottom: 8px">
+      <el-collapse-item name="legend">
+        <template #title>
+          <span style="font-weight: 600">📖 欄位說明</span>
+          <span style="color: #999; font-size: 12px; margin-left: 8px">（紅漲綠跌；點開參考各欄意義）</span>
+        </template>
+        <div class="legend-grid">
+          <div v-for="[k, v] in legend" :key="k" class="legend-row">
+            <span class="legend-k">{{ k }}</span>
+            <span class="legend-v">{{ v }}</span>
+          </div>
+        </div>
+      </el-collapse-item>
+    </el-collapse>
+
     <PatternResultTable :items="items" :loading="loading" :show-target="showTarget"
                         :show-dir="showDir" :near="isNear" selectable>
       <template #action="{ row }"><WatchlistAddButton :row="row" /></template>
     </PatternResultTable>
   </div>
 </template>
+
+<style scoped>
+.legend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 4px 20px;
+}
+.legend-row {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.legend-k {
+  flex: 0 0 92px;
+  font-weight: 600;
+  color: #303133;
+}
+.legend-v {
+  flex: 1;
+  color: #666;
+}
+</style>
