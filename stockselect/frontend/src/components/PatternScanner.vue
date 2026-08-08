@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as XLSX from 'xlsx'
 import { getBreakoutPatterns, screenBreakout } from '../api'
@@ -28,10 +28,17 @@ const secType = ref('')
 const band = ref(0.05)                             // 接近突破容許帶（距頸線幾 % 內）
 const recentSel = ref(3)                           // 突破觀察窗（幾個交易日內的突破才收錄）
 const showTarget = ref(true)
+const rsMin = ref(0)                                // RS 過濾（只顯示 RS ≥ 此值；0=不過濾）
 const items = ref([])
 const count = ref(0)
 const asOf = ref('')
 const loading = ref(false)
+
+// 前端即時過濾：RS ≥ rsMin（RS 從缺者於過濾啟用時排除）
+const shownItems = computed(() => {
+  const m = Number(rsMin.value) || 0
+  return m ? items.value.filter((r) => (r.rs_rating ?? -1) >= m) : items.value
+})
 
 async function loadCatalog() {
   try {
@@ -93,7 +100,7 @@ const legend = [
 
 // 匯出目前結果為 Excel（數值欄回傳數字型）
 function downloadXlsx() {
-  if (!items.value.length) return ElMessage.warning('目前沒有結果可下載')
+  if (!shownItems.value.length) return ElMessage.warning('目前沒有結果可下載')
   const cols = [
     ['代碼', (r) => r.stock_id],
     ['名稱', (r) => r.name],
@@ -114,7 +121,7 @@ function downloadXlsx() {
     ['關鍵點', (r) => pts(r)],
   ]
   const aoa = [cols.map((c) => c[0])]
-  for (const r of items.value) aoa.push(cols.map((c) => { const v = c[1](r); return v == null ? '' : v }))
+  for (const r of shownItems.value) aoa.push(cols.map((c) => { const v = c[1](r); return v == null ? '' : v }))
   const ws = XLSX.utils.aoa_to_sheet(aoa)
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, isNear ? '接近突破' : '型態突破')
@@ -157,10 +164,12 @@ function downloadXlsx() {
           </el-select>
         </template>
         <el-button type="primary" @click="run">掃描</el-button>
-        <el-button size="small" type="success" :disabled="!items.length" @click="downloadXlsx">⬇ 下載 Excel</el-button>
+        <el-button size="small" type="success" :disabled="!shownItems.length" @click="downloadXlsx">⬇ 下載 Excel</el-button>
         <el-checkbox v-model="showTarget" size="small" label="滿足價/方向" border />
+        <span style="color: #666; font-size: 13px">RS &gt;</span>
+        <el-input-number v-model="rsMin" :min="0" :max="99" :step="5" size="small" controls-position="right" style="width: 110px" />
         <el-tag v-if="asOf">資料日 {{ asOf }}</el-tag>
-        <el-tag type="danger" effect="dark">符合 {{ count }} 檔</el-tag>
+        <el-tag type="danger" effect="dark">符合 {{ shownItems.length }} 檔<span v-if="rsMin"> / 共 {{ count }}</span></el-tag>
         <span style="color: #999; font-size: 12px">
           <template v-if="isNear">收盤已逼近頸線但<b>尚未</b>突破（距突破越小越接近）；帶量與否未過濾，請點列看圖確認</template>
           <template v-else>收盤突破/跌破頸線帶量。波段偵測有假訊號，請點列看圖確認</template>
@@ -183,7 +192,7 @@ function downloadXlsx() {
       </el-collapse-item>
     </el-collapse>
 
-    <PatternResultTable :items="items" :loading="loading" :show-target="showTarget"
+    <PatternResultTable :items="shownItems" :loading="loading" :show-target="showTarget"
                         :show-dir="showDir" :near="isNear" selectable>
       <template #action="{ row }"><WatchlistAddButton :row="row" /></template>
     </PatternResultTable>
