@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException
 
 from .. import db, patterns
+from .screen import _attach_recent_eps
 
 router = APIRouter(prefix="/api", tags=["patterns"])
 
@@ -28,8 +29,9 @@ def screen_pattern(pattern: str, limit: int = 100):
         return {"pattern": pattern, "name": patterns.CATALOG[pattern][0], "count": 0, "items": []}
     n = max(1, min(int(limit), 300))
     snap = db.query(
-        "SELECT stock_id, name, industry, close, ret_1m, ret_3m, per, inst_net_20d, big1000_pct "
+        "SELECT stock_id, name, industry, close, ret_1m, ret_3m, per, inst_net_20d, big1000_pct, rs_rating "
         "FROM mv_stock_snapshot WHERE stock_id = ANY(%(ids)s) AND in_universe "
         "ORDER BY amt20 DESC NULLS LAST LIMIT %(n)s",
         {"ids": matches, "n": n})
+    _attach_recent_eps(snap)                          # 近 4 季 EPS（供前端「每季 EPS >」過濾）
     return {"pattern": pattern, "name": patterns.CATALOG[pattern][0], "count": len(snap), "items": snap}
