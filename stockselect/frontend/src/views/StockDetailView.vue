@@ -6,6 +6,9 @@ import { getStock, getFundamentals, getStockPatterns, getStockVpa, getDividends,
 import PriceChart from '../components/PriceChart.vue'
 import MarginPanel from '../components/MarginPanel.vue'
 import InstPanel from '../components/InstPanel.vue'
+import ProfitPanel from '../components/ProfitPanel.vue'
+import HolderPanel from '../components/HolderPanel.vue'
+import ValuationPanel from '../components/ValuationPanel.vue'
 
 const pats = ref([])
 const vpa = ref([])
@@ -130,11 +133,23 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateCols))
       </div>
     </el-card>
 
+    <el-card shadow="never" style="margin-top: 16px" header="獲利能力趨勢（毛利率／營益率／淨利率 + EPS 盈餘加速）">
+      <ProfitPanel :stock-id="String(route.params.id)" />
+    </el-card>
+
+    <el-card shadow="never" style="margin-top: 16px" header="本益比河流圖（相對自己歷史，貴還是便宜）">
+      <ValuationPanel :stock-id="String(route.params.id)" />
+    </el-card>
+
     <el-card shadow="never" style="margin-top: 16px" header="三大法人買賣超">
       <InstPanel :stock-id="String(route.params.id)" />
     </el-card>
 
-    <el-card shadow="never" style="margin-top: 16px" header="融資融券">
+    <el-card shadow="never" style="margin-top: 16px" header="集保股權分散（大戶 vs 散戶）">
+      <HolderPanel :stock-id="String(route.params.id)" />
+    </el-card>
+
+    <el-card shadow="never" style="margin-top: 16px" header="融資融券（含券資比／融資使用率）">
       <MarginPanel :stock-id="String(route.params.id)" />
     </el-card>
 

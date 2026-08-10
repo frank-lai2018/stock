@@ -59,12 +59,19 @@ def chips(stock_id: str, days: int = 60):
 
 @router.get("/{stock_id}/margin")
 def margin(stock_id: str, tf: str = "D", bars: int = 60):
-    """融資融券明細：餘額 + 增減（餘額差）+ 券資比。tf=D/W/M/Q（週月季取期末餘額）。由舊到新。"""
+    """融資融券明細：餘額 + 增減（餘額差）+ 券資比 + 融資使用率。tf=D/W/M/Q（週月季取期末餘額）。由舊到新。
+
+    券資比＝融券餘額 ÷ 融資餘額；融資使用率＝融資餘額 ÷ 融資限額（限額≈發行股數的 25%，單位張）。
+    """
     n = max(1, min(int(bars), 2000))
     params = {"id": stock_id, "n": n}
     tfu = tf.upper()
+    base = ("SELECT m.trade_date, m.margin_balance, m.short_balance, sh.shares_issued "
+            "FROM margin_trading m "
+            "LEFT JOIN shareholding sh ON sh.stock_id = m.stock_id AND sh.trade_date = m.trade_date "
+            "WHERE m.stock_id=%(id)s")
     if tfu == "D":
-        src = "SELECT trade_date, margin_balance, short_balance FROM margin_trading WHERE stock_id=%(id)s"
+        src = base
     else:
         unit = {"W": "week", "M": "month", "Q": "quarter"}.get(tfu)
         if not unit:
@@ -72,14 +79,19 @@ def margin(stock_id: str, tf: str = "D", bars: int = 60):
         params["u"] = unit
         src = ("SELECT date_trunc(%(u)s, trade_date)::date AS trade_date, "
                "(array_agg(margin_balance ORDER BY trade_date DESC))[1] AS margin_balance, "
-               "(array_agg(short_balance ORDER BY trade_date DESC))[1] AS short_balance "
-               "FROM margin_trading WHERE stock_id=%(id)s GROUP BY 1")
+               "(array_agg(short_balance ORDER BY trade_date DESC))[1] AS short_balance, "
+               "(array_agg(shares_issued ORDER BY trade_date DESC) "
+               "   FILTER (WHERE shares_issued IS NOT NULL))[1] AS shares_issued "
+               f"FROM ({base}) b GROUP BY 1")
     sql = (
-        "SELECT trade_date, margin_balance, short_balance, margin_chg, short_chg, short_margin_ratio FROM ("
+        "SELECT trade_date, margin_balance, short_balance, margin_chg, short_chg, "
+        "       short_margin_ratio, margin_util FROM ("
         "  SELECT trade_date, margin_balance, short_balance, "
         "    margin_balance - lag(margin_balance) OVER (ORDER BY trade_date) AS margin_chg, "
         "    short_balance - lag(short_balance) OVER (ORDER BY trade_date) AS short_chg, "
         "    CASE WHEN margin_balance>0 THEN round(short_balance::numeric/margin_balance*100,4) END AS short_margin_ratio, "
+        "    CASE WHEN shares_issued>0 "
+        "         THEN round(margin_balance::numeric/(shares_issued/1000.0*0.25)*100,2) END AS margin_util, "
         "    row_number() OVER (ORDER BY trade_date DESC) AS rn "
         f"  FROM ({src}) g"
         ") z WHERE rn <= %(n)s ORDER BY trade_date")
@@ -267,7 +279,114 @@ def fundamentals(stock_id: str):
         "SELECT revenue_month, revenue, yoy_pct, mom_pct FROM monthly_revenue "
         "WHERE stock_id=%(id)s ORDER BY revenue_month DESC LIMIT 24", {"id": stock_id})
     fq = db.query(
-        "SELECT period_date, revenue, net_income, eps, roe, gross_margin, net_margin, debt_ratio "
+        "SELECT period_date, revenue, gross_profit, operating_income, net_income, eps, roe, "
+        "  gross_margin, op_margin, net_margin, debt_ratio "
         "FROM fundamentals_quarterly WHERE stock_id=%(id)s ORDER BY period_date DESC LIMIT 12",
         {"id": stock_id})
     return {"monthly_revenue": rev, "quarterly": fq}   # 皆降序（新→舊）
+
+
+@router.get("/{stock_id}/profitability")
+def profitability(stock_id: str, quarters: int = 20):
+    """獲利能力趨勢：近 N 季 毛利率／營益率／淨利率 + EPS，含季增(QoQ)/年增(YoY)。由舊到新。
+
+    盈餘加速（Minervini）：EPS 一季比一季高（accel_qoq）、年增率逐季擴大（accel_yoy）。
+    """
+    n = max(4, min(int(quarters), 40))
+    rows = db.query(
+        "SELECT * FROM (SELECT period_date, eps, gross_margin, op_margin, net_margin, roe, "
+        "  revenue, gross_profit, operating_income, net_income "
+        "  FROM fundamentals_quarterly WHERE stock_id=%(id)s "
+        "  ORDER BY period_date DESC LIMIT %(n)s) z ORDER BY period_date",
+        {"id": stock_id, "n": n + 4})              # 多取 4 季供年增比較
+    f = lambda v: float(v) if v is not None else None      # noqa: E731
+    out = []
+    for i, r in enumerate(rows):
+        eps, prev, yr = f(r["eps"]), f(rows[i - 1]["eps"]) if i >= 1 else None, f(rows[i - 4]["eps"]) if i >= 4 else None
+        g = lambda a, b: (round((a - b) / abs(b) * 100, 2)       # noqa: E731  分母取絕對值：由虧轉盈才有意義
+                          if (a is not None and b not in (None, 0)) else None)
+        out.append({
+            "period_date": r["period_date"].isoformat(),
+            "eps": eps, "eps_qoq": g(eps, prev), "eps_yoy": g(eps, yr),
+            "gross_margin": f(r["gross_margin"]), "op_margin": f(r["op_margin"]),
+            "net_margin": f(r["net_margin"]), "roe": f(r["roe"]),
+            "revenue": r["revenue"], "net_income": r["net_income"],
+        })
+    for i, o in enumerate(out):                    # 盈餘加速旗標（要有前兩季/去年同季才判定）
+        p1, p2 = out[i - 1] if i >= 1 else None, out[i - 2] if i >= 2 else None
+        o["accel_qoq"] = bool(p1 and p2 and None not in (o["eps"], p1["eps"], p2["eps"])
+                              and o["eps"] > p1["eps"] > p2["eps"] and o["eps"] > 0)
+        o["accel_yoy"] = bool(p1 and o["eps_yoy"] is not None and p1["eps_yoy"] is not None
+                              and o["eps_yoy"] > p1["eps_yoy"] and o["eps_yoy"] > 0)
+    return out[-n:]
+
+
+@router.get("/{stock_id}/holders")
+def holders(stock_id: str, weeks: int = 104):
+    """集保股權分散：大戶 vs 散戶持股佔比週序列（由舊到新），附當週收盤價。
+
+    分級（TDCC level 1~15 依股數）：散戶＝1~3（≤10 張）、中實戶＝4~11（10~400 張）、
+    大戶＝12~15（≥400 張）、千張大戶＝15。
+    """
+    n = max(4, min(int(weeks), 520))
+    rows = db.query(
+        "SELECT * FROM ("
+        "  SELECT data_date, "
+        "    sum(pct) FILTER (WHERE level = 15)            AS big1000_pct, "
+        "    sum(pct) FILTER (WHERE level >= 12)           AS big400_pct, "
+        "    sum(pct) FILTER (WHERE level BETWEEN 4 AND 11) AS mid_pct, "
+        "    sum(pct) FILTER (WHERE level <= 3)            AS retail_pct, "
+        "    sum(holders)                                   AS holders_total "
+        "  FROM shareholding_dist WHERE stock_id=%(id)s GROUP BY data_date "
+        "  ORDER BY data_date DESC LIMIT %(n)s) z ORDER BY data_date",
+        {"id": stock_id, "n": n})
+    for r in rows:                                  # 對齊當週（或之前最近一個交易日）收盤價
+        p = db.query("SELECT close FROM price_daily WHERE stock_id=%(id)s AND trade_date <= %(d)s "
+                     "ORDER BY trade_date DESC LIMIT 1", {"id": stock_id, "d": r["data_date"]})
+        r["close"] = p[0]["close"] if p else None
+        r["data_date"] = r["data_date"].isoformat()
+    return rows
+
+
+@router.get("/{stock_id}/valuation")
+def valuation(stock_id: str, years: int = 3):
+    """本益比河流圖：股價 + 由「歷史 PER 分位 × 當日隱含 EPS」換算的價格帶，判斷貴不貴。
+
+    隱含 EPS＝收盤 ÷ 當日 PER（即近四季 EPS）；帶 k＝該股近 N 年 PER 的第 k 百分位 × 隱含 EPS。
+    收盤穿到高帶＝相對歷史偏貴，掉到低帶＝相對歷史偏便宜。
+    """
+    y = max(1, min(int(years), 10))
+    rows = db.query(
+        "SELECT * FROM (SELECT v.trade_date, v.per, v.pbr, v.dividend_yield, p.close "
+        "  FROM valuation_daily v JOIN price_daily p "
+        "    ON p.stock_id = v.stock_id AND p.trade_date = v.trade_date "
+        "  WHERE v.stock_id=%(id)s AND v.trade_date > (SELECT max(trade_date) FROM price_daily) - %(d)s "
+        "  ORDER BY v.trade_date DESC) z ORDER BY trade_date",
+        {"id": stock_id, "d": y * 366})
+    pers = sorted(float(r["per"]) for r in rows if r["per"] and float(r["per"]) > 0)
+    if not pers:
+        return {"count": 0, "bands": {}, "items": [], "per_now": None, "per_pctile": None}
+
+    def q(p):                                        # 百分位（線性內插）
+        i = p * (len(pers) - 1)
+        lo, hi = int(i), min(int(i) + 1, len(pers) - 1)
+        return round(pers[lo] + (pers[hi] - pers[lo]) * (i - lo), 2)
+
+    bands = {"p10": q(0.10), "p25": q(0.25), "p50": q(0.50), "p75": q(0.75), "p90": q(0.90)}
+    items = []
+    for r in rows:
+        per = float(r["per"]) if r["per"] else None
+        close = float(r["close"]) if r["close"] is not None else None
+        e = (close / per) if (per and per > 0 and close) else None    # 當日隱含 EPS（近四季）
+        items.append({
+            "trade_date": r["trade_date"].isoformat(), "close": close, "per": per,
+            "pbr": float(r["pbr"]) if r["pbr"] else None,
+            "dividend_yield": float(r["dividend_yield"]) if r["dividend_yield"] else None,
+            **{k: (round(v * e, 2) if e else None) for k, v in bands.items()},
+        })
+    per_now = items[-1]["per"] if items else None
+    pctile = (round(100.0 * sum(1 for p in pers if p <= per_now) / len(pers), 1)
+              if per_now and per_now > 0 else None)
+    return {"count": len(items), "bands": bands, "per_now": per_now, "per_pctile": pctile,
+            "eps_ttm_now": round(items[-1]["close"] / per_now, 2) if (per_now and items[-1]["close"]) else None,
+            "items": items}

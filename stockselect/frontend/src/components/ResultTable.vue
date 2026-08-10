@@ -86,8 +86,24 @@ function go(row, column) {
     <el-table-column label="ROE" width="80" :sort-method="cmp('roe')" sortable>
       <template #default="{ row }">{{ row.roe }}</template>
     </el-table-column>
+    <el-table-column label="EPS年增" width="100" :sort-method="cmp('eps_yoy')" sortable>
+      <template #default="{ row }">
+        <span :style="{ color: row.eps_yoy >= 0 ? '#f56c6c' : '#67c23a' }">{{ pct1(row.eps_yoy) }}</span>
+        <el-tag v-if="row.eps_accel" size="small" type="danger" effect="plain" style="margin-left: 3px">加速</el-tag>
+      </template>
+    </el-table-column>
+    <el-table-column label="毛利率" width="90" :sort-method="cmp('gross_margin')" sortable>
+      <template #default="{ row }">{{ pct1(row.gross_margin) }}</template>
+    </el-table-column>
     <el-table-column label="PER" width="80" :sort-method="cmp('per')" sortable>
       <template #default="{ row }">{{ row.per }}</template>
+    </el-table-column>
+    <el-table-column label="PER位階" width="94" :sort-method="cmp('per_pctile')" sortable>
+      <template #default="{ row }">
+        <span :style="{ color: row.per_pctile >= 80 ? '#f56c6c' : row.per_pctile <= 20 ? '#67c23a' : '#909399' }">
+          {{ row.per_pctile == null ? '' : row.per_pctile + '%' }}
+        </span>
+      </template>
     </el-table-column>
     <el-table-column label="殖利率" width="90" :sort-method="cmp('dividend_yield')" sortable>
       <template #default="{ row }">{{ pct1(row.dividend_yield) }}</template>
@@ -101,7 +117,17 @@ function go(row, column) {
       </template>
     </el-table-column>
     <el-table-column label="千張大戶%" width="100" :sort-method="cmp('big1000_pct')" sortable>
-      <template #default="{ row }">{{ row.big1000_pct }}</template>
+      <template #default="{ row }">
+        {{ row.big1000_pct }}
+        <el-tag v-if="row.big1000_up_weeks >= 2" size="small" type="danger" effect="plain">連{{ row.big1000_up_weeks }}週↑</el-tag>
+      </template>
+    </el-table-column>
+    <el-table-column label="融資使用率" width="110" :sort-method="cmp('margin_util')" sortable>
+      <template #default="{ row }">
+        <span :style="{ color: row.margin_util >= 50 ? '#f56c6c' : '#909399' }">
+          {{ row.margin_util == null ? '' : row.margin_util + '%' }}
+        </span>
+      </template>
     </el-table-column>
     <el-table-column label="承接/出貨" width="100" :sort-method="cmp('vpa_accum_20d')" sortable>
       <template #default="{ row }">

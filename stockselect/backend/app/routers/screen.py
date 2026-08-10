@@ -94,6 +94,27 @@ STRATEGIES = {
         "filters": {"mf_accumulate": True, "in_universe": True},
         "sort": "vpa_accum_20d",
     },
+    "eps_accel": {
+        "name": "盈餘加速",
+        "desc": "《超級績效》盈餘動能：EPS 年增率逐季擴大 + 連兩季季增 + 毛利率不衰退 + 站上季線",
+        "filters": {"eps_yoy_accel": True, "eps_accel": True, "gross_margin_chg_min": 0,
+                    "above_ma60": True, "in_universe": True},
+        "sort": "eps_yoy",
+    },
+    "chip_concentrate": {
+        "name": "籌碼集中",
+        "desc": "大戶連 2 週以上增加 + 散戶佔比下降 + 法人買超 + 融資沒過熱（使用率<30%）",
+        "filters": {"big1000_up_weeks_min": 2, "retail_chg_max": 0, "inst_net_20d_min": 0,
+                    "margin_util_max": 30, "in_universe": True},
+        "sort": "big1000_chg",
+    },
+    "cheap_quality": {
+        "name": "便宜的好公司",
+        "desc": "本益比落在近 3 年低檔（百分位≤30）+ ROE 佳 + 毛利率季增 + EPS 年增為正",
+        "filters": {"per_pctile_max": 30, "roe_min": 10, "gross_margin_chg_min": 0,
+                    "eps_yoy_min": 0, "in_universe": True},
+        "sort": "roe",
+    },
     "mf_distribute": {
         "name": "主力出貨",
         "desc": "《不說謊的價量》VPA 警示：近20日出貨訊號(無買氣/量價背離/買盤高潮)淨多 + 大戶或法人退場 + 高檔",
@@ -137,6 +158,53 @@ def screen(req: ScreenRequest):
     _attach_last_pattern(rows)
     as_of = rows[0]["as_of_date"].isoformat() if rows and rows[0].get("as_of_date") else None
     return {"count": len(rows), "as_of": as_of, "items": rows}
+
+
+# 財報成長排行榜可排序的欄位（key → 中文名），前端下拉直接用
+GROWTH_SORTS = {
+    "eps_yoy": "EPS 年增率",
+    "eps_qoq": "EPS 季增率",
+    "eps_ttm": "近四季 EPS",
+    "gross_margin_chg": "毛利率季增",
+    "op_margin_chg": "營益率季增",
+    "gross_margin": "毛利率",
+    "op_margin": "營益率",
+    "roe": "ROE",
+    "rev_yoy": "月營收年增",
+    "per_pctile": "本益比位階",
+}
+
+
+@router.get("/screen/growth")
+def growth(sort: str = "eps_yoy", desc: bool = True, security_type: str = "", industry: str = "",
+           min_amt: int = 20000000, accel: str = "", limit: int = 100):
+    """財報成長排行榜：依 EPS 年增/季增、三率變化等排名（資料源 mv_stock_snapshot）。
+
+    accel：qoq＝只看連兩季 EPS 季增；yoy＝只看 EPS 年增率逐季擴大；both＝兩者皆是；空＝不過濾。
+    """
+    if sort not in GROWTH_SORTS:
+        raise HTTPException(400, f"不支援的排序：{sort}")
+    cond = ["in_universe = true", "amt20 >= %(amt)s", f"{sort} IS NOT NULL"]
+    params = {"amt": max(0, int(min_amt)), "n": max(1, min(int(limit), 300))}
+    if security_type in ("stock", "etf"):
+        cond.append("security_type = %(st)s")
+        params["st"] = security_type
+    if industry:
+        cond.append("industry = %(ind)s")
+        params["ind"] = industry
+    if accel in ("qoq", "both"):
+        cond.append("eps_accel")
+    if accel in ("yoy", "both"):
+        cond.append("eps_yoy_accel")
+    rows = db.query(
+        "SELECT stock_id, name, industry, security_type, close, ret_3m, rs_rating, "
+        "  eps, eps_ttm, eps_qoq, eps_qoq_prev, eps_yoy, eps_yoy_prev, eps_accel, eps_yoy_accel, "
+        "  gross_margin, gross_margin_chg, op_margin, op_margin_chg, net_margin, roe, rev_yoy, "
+        "  per, per_pctile, per_med3y, as_of_date "
+        f"FROM mv_stock_snapshot WHERE {' AND '.join(cond)} "
+        f"ORDER BY {sort} {'DESC' if desc else 'ASC'} NULLS LAST LIMIT %(n)s", params)
+    as_of = rows[0]["as_of_date"].isoformat() if rows and rows[0].get("as_of_date") else None
+    return {"count": len(rows), "as_of": as_of, "sorts": GROWTH_SORTS, "items": rows}
 
 
 _PAT_GROUP = {k: g for g, ks in swings.GROUPS.items() for k in ks}   # pattern → 所屬組

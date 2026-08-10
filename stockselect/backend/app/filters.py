@@ -30,20 +30,38 @@ FILTERS = {
     # 基本面
     "roe_min":           ("roe >= %(roe_min)s", _NUM),
     "eps_min":           ("eps >= %(eps_min)s", _NUM),
+    "eps_ttm_min":       ("eps_ttm >= %(eps_ttm_min)s", _NUM),
     "gross_margin_min":  ("gross_margin >= %(gross_margin_min)s", _NUM),
+    "op_margin_min":     ("op_margin >= %(op_margin_min)s", _NUM),
     "net_margin_min":    ("net_margin >= %(net_margin_min)s", _NUM),
     "debt_ratio_max":    ("debt_ratio <= %(debt_ratio_max)s", _NUM),
     "rev_yoy_min":       ("rev_yoy >= %(rev_yoy_min)s", _NUM),
+    # 財報成長 / 盈餘加速
+    "eps_qoq_min":       ("eps_qoq >= %(eps_qoq_min)s", _NUM),
+    "eps_yoy_min":       ("eps_yoy >= %(eps_yoy_min)s", _NUM),
+    "eps_accel":         ("eps_accel = %(eps_accel)s", _BOOL),          # 連兩季 EPS 季增
+    "eps_yoy_accel":     ("eps_yoy_accel = %(eps_yoy_accel)s", _BOOL),  # EPS 年增率逐季擴大
+    "gross_margin_chg_min": ("gross_margin_chg >= %(gross_margin_chg_min)s", _NUM),
+    "op_margin_chg_min": ("op_margin_chg >= %(op_margin_chg_min)s", _NUM),
     # 估值
     "per_min":           ("per >= %(per_min)s", _NUM),
     "per_max":           ("(per <= %(per_max)s AND per > 0)", _NUM),
+    "per_pctile_max":    ("per_pctile <= %(per_pctile_max)s", _NUM),    # 本益比在近3年的位置（低=便宜）
+    "per_pctile_min":    ("per_pctile >= %(per_pctile_min)s", _NUM),
     "pbr_max":           ("pbr <= %(pbr_max)s", _NUM),
     "dividend_yield_min":("dividend_yield >= %(dividend_yield_min)s", _NUM),
     # 籌碼
     "inst_net_20d_min":  ("inst_net_20d >= %(inst_net_20d_min)s", _NUM),
     "margin_chg_20d_max":("margin_chg_20d <= %(margin_chg_20d_max)s", _NUM),
+    "margin_util_max":   ("margin_util <= %(margin_util_max)s", _NUM),           # 融資使用率%（低=籌碼乾淨）
+    "margin_util_min":   ("margin_util >= %(margin_util_min)s", _NUM),
+    "short_margin_ratio_min": ("short_margin_ratio >= %(short_margin_ratio_min)s", _NUM),  # 券資比%（高=軋空題材）
+    "short_margin_ratio_max": ("short_margin_ratio <= %(short_margin_ratio_max)s", _NUM),
     "foreign_ratio_min": ("foreign_ratio >= %(foreign_ratio_min)s", _NUM),
     "big1000_pct_min":   ("big1000_pct >= %(big1000_pct_min)s", _NUM),
+    "big1000_chg_min":   ("big1000_chg >= %(big1000_chg_min)s", _NUM),
+    "big1000_up_weeks_min": ("big1000_up_weeks >= %(big1000_up_weeks_min)s", _NUM),   # 大戶連 N 週增加
+    "retail_chg_max":    ("retail_chg <= %(retail_chg_max)s", _NUM),                  # 散戶佔比變化（負=散戶退場）
     # 品質 / 母體
     "amt20_min":         ("amt20 >= %(amt20_min)s", _NUM),
     "industry":          ("industry = %(industry)s", _STR),
@@ -56,9 +74,11 @@ FILTERS = {
 SORT_WHITELIST = {
     "ret_1m", "ret_3m", "ret_6m", "ret_12m", "ret_12_1", "rs_6m", "rs_rating", "pct_from_low",
     "near_pivot", "tight_recent",
-    "roe", "eps", "gross_margin", "net_margin", "rev_yoy",
-    "per", "pbr", "dividend_yield",
-    "inst_net_20d", "margin_chg_20d", "foreign_ratio", "big1000_pct", "big1000_chg", "amt20",
+    "roe", "eps", "eps_ttm", "gross_margin", "op_margin", "net_margin", "rev_yoy",
+    "eps_qoq", "eps_yoy", "gross_margin_chg", "op_margin_chg",
+    "per", "pbr", "dividend_yield", "per_pctile",
+    "inst_net_20d", "margin_chg_20d", "margin_util", "short_margin_ratio",
+    "foreign_ratio", "big1000_pct", "big1000_chg", "big1000_up_weeks", "retail_pct", "retail_chg", "amt20",
     "vpa_accum_20d", "vpa_distrib_20d",
 }
 

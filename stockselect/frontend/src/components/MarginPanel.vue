@@ -24,20 +24,37 @@ function render() {
   chart.setOption({
     grid: { left: 64, right: 60, top: 30, bottom: 30 },
     tooltip: { trigger: 'axis' },
-    legend: { data: ['融資餘額', '融券餘額'], top: 0 },
+    legend: { data: ['融資餘額', '融券餘額', '融資使用率', '券資比'], top: 0 },
     xAxis: { type: 'category', data: x, boundaryGap: false },
     yAxis: [
-      { type: 'value', name: '融資', scale: true },
-      { type: 'value', name: '融券', scale: true },
+      { type: 'value', name: '張', scale: true },
+      { type: 'value', name: '%', scale: true, axisLabel: { formatter: '{value}%' } },
     ],
     series: [
       { name: '融資餘額', type: 'line', showSymbol: false, data: rows.value.map((r) => r.margin_balance),
         lineStyle: { color: '#EA4C4C' }, itemStyle: { color: '#EA4C4C' } },
-      { name: '融券餘額', type: 'line', yAxisIndex: 1, showSymbol: false, data: rows.value.map((r) => r.short_balance),
+      { name: '融券餘額', type: 'line', showSymbol: false, data: rows.value.map((r) => r.short_balance),
         lineStyle: { color: '#3F9E5A' }, itemStyle: { color: '#3F9E5A' } },
+      { name: '融資使用率', type: 'line', yAxisIndex: 1, showSymbol: false,
+        data: rows.value.map((r) => (r.margin_util == null ? null : Number(r.margin_util))),
+        lineStyle: { color: '#FF7A00', type: 'dashed' }, itemStyle: { color: '#FF7A00' } },
+      { name: '券資比', type: 'line', yAxisIndex: 1, showSymbol: false,
+        data: rows.value.map((r) => (r.short_margin_ratio == null ? null : Number(r.short_margin_ratio))),
+        lineStyle: { color: '#2E7DEE', type: 'dashed' }, itemStyle: { color: '#2E7DEE' } },
     ],
   })
 }
+
+// 最新一筆的融資使用率／券資比（給頂部標籤）
+const latest = computed(() => rows.value[rows.value.length - 1] || null)
+const utilTag = computed(() => {
+  const u = latest.value?.margin_util
+  if (u == null) return null
+  const v = Number(u)
+  if (v >= 50) return { t: '融資過熱', type: 'danger' }
+  if (v >= 30) return { t: '融資偏高', type: 'warning' }
+  return { t: '融資溫和', type: 'success' }
+})
 
 async function load() {
   try {
@@ -62,7 +79,16 @@ onBeforeUnmount(() => { window.removeEventListener('resize', onResize); if (char
       <el-radio-button value="M">月</el-radio-button>
       <el-radio-button value="Q">季</el-radio-button>
     </el-radio-group>
-    <span style="margin-left: 10px; color: #999; font-size: 12px">單位：張</span>
+    <span style="margin-left: 10px; color: #999; font-size: 12px">餘額單位：張</span>
+    <template v-if="latest">
+      <span style="margin-left: 12px; color: #666; font-size: 13px">
+        融資使用率 <b>{{ latest.margin_util ?? '—' }}%</b>　券資比 <b>{{ latest.short_margin_ratio ?? '—' }}%</b>
+      </span>
+      <el-tag v-if="utilTag" :type="utilTag.type" size="small" effect="dark" style="margin-left: 8px">{{ utilTag.t }}</el-tag>
+      <span style="margin-left: 10px; color: #999; font-size: 12px">
+        融資使用率＝融資餘額÷融資限額（限額≈發行股數 25%）；越高代表散戶籌碼越重
+      </span>
+    </template>
 
     <div ref="el" style="width: 100%; height: 260px"></div>
 
@@ -77,6 +103,7 @@ onBeforeUnmount(() => { window.removeEventListener('resize', onResize); if (char
       </el-table-column>
       <el-table-column label="融券餘額" align="right"><template #default="{ row }">{{ num(row.short_balance) }}</template></el-table-column>
       <el-table-column label="券資比%" align="right"><template #default="{ row }">{{ row.short_margin_ratio ?? '—' }}</template></el-table-column>
+      <el-table-column label="融資使用率%" align="right" width="120"><template #default="{ row }">{{ row.margin_util ?? '—' }}</template></el-table-column>
     </el-table>
   </div>
 </template>

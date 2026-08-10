@@ -8,8 +8,10 @@ defineProps({
 const emit = defineEmits(['search', 'apply', 'update:sort', 'update:limit'])
 
 const sortCols = [
-  'ret_3m', 'ret_12_1', 'rs_rating', 'roe', 'per', 'dividend_yield',
-  'rev_yoy', 'inst_net_20d', 'big1000_pct', 'amt20',
+  'ret_3m', 'ret_12_1', 'rs_rating', 'roe', 'per', 'per_pctile', 'dividend_yield',
+  'rev_yoy', 'eps_yoy', 'eps_qoq', 'eps_ttm', 'gross_margin', 'gross_margin_chg', 'op_margin', 'op_margin_chg',
+  'inst_net_20d', 'big1000_pct', 'big1000_chg', 'big1000_up_weeks', 'retail_chg',
+  'margin_util', 'short_margin_ratio', 'amt20',
   'vpa_accum_20d', 'vpa_distrib_20d',
 ]
 </script>
@@ -51,13 +53,61 @@ const sortCols = [
       <el-form-item label="ROE≥"><el-input-number v-model="filters.roe_min" controls-position="right" /></el-form-item>
       <el-form-item label="營收YoY≥"><el-input-number v-model="filters.rev_yoy_min" controls-position="right" /></el-form-item>
       <el-form-item label="負債比≤"><el-input-number v-model="filters.debt_ratio_max" controls-position="right" /></el-form-item>
+
+      <el-divider>財報成長</el-divider>
+      <el-form-item label="EPS年增≥">
+        <el-input-number v-model="filters.eps_yoy_min" :step="10" controls-position="right" />
+        <span style="margin-left:6px;color:#999">%</span>
+      </el-form-item>
+      <el-form-item label="EPS季增≥">
+        <el-input-number v-model="filters.eps_qoq_min" :step="10" controls-position="right" />
+        <span style="margin-left:6px;color:#999">%</span>
+      </el-form-item>
+      <el-form-item label="盈餘加速">
+        <el-switch v-model="filters.eps_accel" />
+        <span style="margin-left:6px;color:#999">連兩季EPS季增</span>
+      </el-form-item>
+      <el-form-item label="年增加速">
+        <el-switch v-model="filters.eps_yoy_accel" />
+        <span style="margin-left:6px;color:#999">年增率逐季擴大</span>
+      </el-form-item>
+      <el-form-item label="毛利率≥"><el-input-number v-model="filters.gross_margin_min" controls-position="right" /></el-form-item>
+      <el-form-item label="毛利率季增≥">
+        <el-input-number v-model="filters.gross_margin_chg_min" :step="0.5" :precision="1" controls-position="right" />
+        <span style="margin-left:6px;color:#999">百分點</span>
+      </el-form-item>
+      <el-form-item label="營益率≥"><el-input-number v-model="filters.op_margin_min" controls-position="right" /></el-form-item>
+
+      <el-divider>估值</el-divider>
       <el-form-item label="本益比≤"><el-input-number v-model="filters.per_max" controls-position="right" /></el-form-item>
+      <el-form-item label="PER位階≤">
+        <el-input-number v-model="filters.per_pctile_max" :min="0" :max="100" :step="10" controls-position="right" />
+        <span style="margin-left:6px;color:#999">近3年百分位，低=便宜</span>
+      </el-form-item>
       <el-form-item label="殖利率≥"><el-input-number v-model="filters.dividend_yield_min" :step="0.5" controls-position="right" /></el-form-item>
+
+      <el-divider>籌碼</el-divider>
       <el-form-item label="法人20日≥">
         <el-input-number v-model="filters.inst_net_20d_min" :step="1000000" controls-position="right" />
         <span style="margin-left:6px;color:#999">股</span>
       </el-form-item>
       <el-form-item label="千張大戶%≥"><el-input-number v-model="filters.big1000_pct_min" controls-position="right" /></el-form-item>
+      <el-form-item label="大戶連N週增">
+        <el-input-number v-model="filters.big1000_up_weeks_min" :min="0" :max="26" controls-position="right" />
+        <span style="margin-left:6px;color:#999">週</span>
+      </el-form-item>
+      <el-form-item label="散戶佔比變化≤">
+        <el-input-number v-model="filters.retail_chg_max" :step="0.1" :precision="1" controls-position="right" />
+        <span style="margin-left:6px;color:#999">0=散戶減少</span>
+      </el-form-item>
+      <el-form-item label="融資使用率≤">
+        <el-input-number v-model="filters.margin_util_max" :min="0" :max="100" :step="5" controls-position="right" />
+        <span style="margin-left:6px;color:#999">%，低=籌碼乾淨</span>
+      </el-form-item>
+      <el-form-item label="券資比≥">
+        <el-input-number v-model="filters.short_margin_ratio_min" :step="5" controls-position="right" />
+        <span style="margin-left:6px;color:#999">%，高=軋空題材</span>
+      </el-form-item>
       <el-form-item label="日均額≥">
         <el-input-number v-model="filters.amt20_min" :step="10000000" controls-position="right" />
         <span style="margin-left:6px;color:#999">元</span>

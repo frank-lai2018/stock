@@ -42,7 +42,10 @@ FROM (
          AND u.adj_close >= u.low_52w * 1.30                 -- 6 高於 52 週低 ≥30%
          AND u.adj_close >= u.high_52w * 0.75                -- 7 距 52 週高 <25%
          AND u.rs_rating >= 70                               -- 8 RS 評等 ≥70
-        ) AS trend_template
+        ) AS trend_template,
+        -- 盈餘「年增率」逐季擴大（Minervini 原味的盈餘加速；比季增版嚴格，不受淡旺季干擾）
+        (u.eps_yoy IS NOT NULL AND u.eps_yoy_prev IS NOT NULL
+         AND u.eps_yoy > u.eps_yoy_prev AND u.eps_yoy > 0)   AS eps_yoy_accel
     FROM (
         SELECT t.*,
                -- RS 評等依證券類別分池排名（股票 vs 股票、ETF vs ETF），避免 ETF 汙染個股 RS
@@ -127,12 +130,45 @@ FROM (
                       FROM market_index mi CROSS JOIN d
                       WHERE mi.index_id = 'TAIEX' AND mi.trade_date > d.td - 400) z
             ),
-            fq AS (SELECT DISTINCT ON (stock_id) stock_id, roe, eps, gross_margin, net_margin, debt_ratio
-                   FROM fundamentals_quarterly ORDER BY stock_id, period_date DESC),
+            -- 近 8 季財報（新→舊）：算三率、EPS 季增/年增與「盈餘加速」
+            fqs AS (
+                SELECT stock_id, roe, eps, gross_margin, op_margin, net_margin, debt_ratio,
+                       row_number() OVER (PARTITION BY stock_id ORDER BY period_date DESC) AS rn
+                FROM fundamentals_quarterly
+            ),
+            fq AS (
+                SELECT stock_id,
+                    max(roe)          FILTER (WHERE rn = 1) AS roe,
+                    max(eps)          FILTER (WHERE rn = 1) AS eps,
+                    max(gross_margin) FILTER (WHERE rn = 1) AS gross_margin,
+                    max(op_margin)    FILTER (WHERE rn = 1) AS op_margin,
+                    max(net_margin)   FILTER (WHERE rn = 1) AS net_margin,
+                    max(debt_ratio)   FILTER (WHERE rn = 1) AS debt_ratio,
+                    max(gross_margin) FILTER (WHERE rn = 2) AS gross_margin_p1,
+                    max(op_margin)    FILTER (WHERE rn = 2) AS op_margin_p1,
+                    max(eps)          FILTER (WHERE rn = 2) AS eps_p1,   -- 前一季
+                    max(eps)          FILTER (WHERE rn = 3) AS eps_p2,   -- 前兩季
+                    max(eps)          FILTER (WHERE rn = 5) AS eps_y1,   -- 去年同季
+                    max(eps)          FILTER (WHERE rn = 6) AS eps_y1p1, -- 去年同季的前一季
+                    sum(eps)          FILTER (WHERE rn <= 4) AS eps_ttm  -- 近四季 EPS 合計
+                FROM fqs WHERE rn <= 8 GROUP BY stock_id
+            ),
             rev AS (SELECT DISTINCT ON (stock_id) stock_id, yoy_pct AS rev_yoy, mom_pct AS rev_mom
                     FROM monthly_revenue ORDER BY stock_id, revenue_month DESC),
             val AS (SELECT DISTINCT ON (stock_id) stock_id, per, pbr, dividend_yield
                     FROM valuation_daily ORDER BY stock_id, trade_date DESC),
+            -- 本益比在近 3 年的位置（0=史上最便宜、100=史上最貴）＋分位帶（河流圖用）
+            perp AS (
+                SELECT h.stock_id,
+                    round(100.0 * count(*) FILTER (WHERE h.per <= cur.per) / NULLIF(count(*), 0), 1) AS per_pctile,
+                    round(percentile_cont(0.5) WITHIN GROUP (ORDER BY h.per)::numeric, 2)  AS per_med3y,
+                    round(percentile_cont(0.1) WITHIN GROUP (ORDER BY h.per)::numeric, 2)  AS per_p10_3y,
+                    round(percentile_cont(0.9) WITHIN GROUP (ORDER BY h.per)::numeric, 2)  AS per_p90_3y
+                FROM valuation_daily h CROSS JOIN d
+                JOIN val cur ON cur.stock_id = h.stock_id AND cur.per > 0
+                WHERE h.trade_date > d.td - 1100 AND h.per > 0
+                GROUP BY h.stock_id
+            ),
             inst AS (
                 SELECT stock_id, sum(net) FILTER (WHERE rn <= 20) AS inst_net_20d
                 FROM (SELECT it.stock_id,
@@ -148,22 +184,44 @@ FROM (
                 SELECT stock_id,
                        max(margin_balance) FILTER (WHERE rn = 1)  AS margin_balance,
                        max(margin_balance) FILTER (WHERE rn = 1)
-                         - max(margin_balance) FILTER (WHERE rn = 20) AS margin_chg_20d
-                FROM (SELECT mt.stock_id, mt.margin_balance,
+                         - max(margin_balance) FILTER (WHERE rn = 20) AS margin_chg_20d,
+                       max(short_balance)  FILTER (WHERE rn = 1)  AS short_balance
+                FROM (SELECT mt.stock_id, mt.margin_balance, mt.short_balance,
                              row_number() OVER (PARTITION BY mt.stock_id ORDER BY mt.trade_date DESC) AS rn
                       FROM margin_trading mt CROSS JOIN d
                       WHERE mt.trade_date > d.td - 60) z
                 GROUP BY stock_id
             ),
-            sh AS (SELECT DISTINCT ON (stock_id) stock_id, foreign_ratio
+            sh AS (SELECT DISTINCT ON (stock_id) stock_id, foreign_ratio, shares_issued
                    FROM shareholding ORDER BY stock_id, trade_date DESC),
-            -- 千張大戶%（最新）+ 近5期(約一月)變化
+            -- 千張大戶%（level 15）：最新值、近5期(約一月)變化、連續增加/減少週數
+            bigw AS (
+                SELECT stock_id, pct,
+                       row_number() OVER (PARTITION BY stock_id ORDER BY data_date DESC) AS rn,
+                       pct - lag(pct) OVER (PARTITION BY stock_id ORDER BY data_date) AS chg
+                FROM shareholding_dist WHERE level = 15
+            ),
             big AS (
                 SELECT stock_id,
-                       (array_agg(pct ORDER BY data_date DESC))[1] AS big1000_pct,
-                       (array_agg(pct ORDER BY data_date DESC))[1]
-                         - (array_agg(pct ORDER BY data_date DESC))[5] AS big1000_chg
-                FROM shareholding_dist WHERE level = 15 GROUP BY stock_id
+                       max(pct) FILTER (WHERE rn = 1) AS big1000_pct,
+                       max(pct) FILTER (WHERE rn = 1) - max(pct) FILTER (WHERE rn = 5) AS big1000_chg,
+                       -- 從最近一週往回數到第一個「沒增加」的那週；上限 26 週
+                       coalesce(min(rn) FILTER (WHERE chg IS NULL OR chg <= 0), 27) - 1 AS big1000_up_weeks,
+                       coalesce(min(rn) FILTER (WHERE chg IS NULL OR chg >= 0), 27) - 1 AS big1000_down_weeks
+                FROM bigw WHERE rn <= 27 GROUP BY stock_id
+            ),
+            -- 散戶（level 1~3＝10 張以下）持股佔比：最新值 + 近5期變化（與大戶對照看籌碼集中）
+            retw AS (
+                SELECT stock_id, pct,
+                       row_number() OVER (PARTITION BY stock_id ORDER BY data_date DESC) AS rn
+                FROM (SELECT stock_id, data_date, sum(pct) AS pct FROM shareholding_dist
+                      WHERE level <= 3 GROUP BY stock_id, data_date) a
+            ),
+            ret AS (
+                SELECT stock_id,
+                       max(pct) FILTER (WHERE rn = 1) AS retail_pct,
+                       max(pct) FILTER (WHERE rn = 1) - max(pct) FILTER (WHERE rn = 5) AS retail_chg
+                FROM retw WHERE rn <= 5 GROUP BY stock_id
             )
 
             SELECT
@@ -200,13 +258,31 @@ FROM (
                 round(px.amt20)                                 AS amt20,
                 px.trading_days,
                 -- 基本面
-                fq.roe, fq.eps, fq.gross_margin, fq.net_margin, fq.debt_ratio,
+                fq.roe, fq.eps, fq.gross_margin, fq.op_margin, fq.net_margin, fq.debt_ratio,
+                fq.eps_ttm,
+                round(fq.gross_margin - fq.gross_margin_p1, 2)                   AS gross_margin_chg,  -- 毛利率季增(百分點)
+                round(fq.op_margin - fq.op_margin_p1, 2)                         AS op_margin_chg,
+                -- EPS 成長率（分母取絕對值：由虧轉盈時成長率才有意義）
+                round((fq.eps - fq.eps_p1) / NULLIF(abs(fq.eps_p1), 0) * 100, 2)       AS eps_qoq,
+                round((fq.eps_p1 - fq.eps_p2) / NULLIF(abs(fq.eps_p2), 0) * 100, 2)    AS eps_qoq_prev,
+                round((fq.eps - fq.eps_y1) / NULLIF(abs(fq.eps_y1), 0) * 100, 2)       AS eps_yoy,
+                round((fq.eps_p1 - fq.eps_y1p1) / NULLIF(abs(fq.eps_y1p1), 0) * 100, 2) AS eps_yoy_prev,
+                -- 盈餘加速（Minervini）：連兩季 EPS 一季比一季高，且最新季獲利為正
+                (fq.eps > fq.eps_p1 AND fq.eps_p1 > fq.eps_p2 AND fq.eps > 0)    AS eps_accel,
                 rev.rev_yoy, rev.rev_mom,
                 -- 估值
                 val.per, val.pbr, val.dividend_yield,
+                perp.per_pctile, perp.per_med3y, perp.per_p10_3y, perp.per_p90_3y,
                 -- 籌碼
-                inst.inst_net_20d, mg.margin_balance, mg.margin_chg_20d,
+                inst.inst_net_20d, mg.margin_balance, mg.margin_chg_20d, mg.short_balance,
+                CASE WHEN mg.margin_balance > 0
+                     THEN round(mg.short_balance::numeric / mg.margin_balance * 100, 2) END AS short_margin_ratio,
+                -- 融資使用率%＝融資餘額 ÷ 融資限額（限額≈發行股數的 25%，單位：張）
+                CASE WHEN sh.shares_issued > 0
+                     THEN round(mg.margin_balance::numeric / (sh.shares_issued / 1000.0 * 0.25) * 100, 2) END AS margin_util,
                 sh.foreign_ratio, big.big1000_pct, round(big.big1000_chg, 4) AS big1000_chg,
+                big.big1000_up_weeks, big.big1000_down_weeks,
+                round(ret.retail_pct, 4) AS retail_pct, round(ret.retail_chg, 4) AS retail_chg,
                 (px.trading_days >= 60 AND px.amt20 >= 5000000) AS in_universe
             FROM stock s
             JOIN px            ON px.stock_id = s.stock_id
@@ -214,10 +290,12 @@ FROM (
             LEFT JOIN fq       ON fq.stock_id = s.stock_id
             LEFT JOIN rev      ON rev.stock_id = s.stock_id
             LEFT JOIN val      ON val.stock_id = s.stock_id
+            LEFT JOIN perp     ON perp.stock_id = s.stock_id
             LEFT JOIN inst     ON inst.stock_id = s.stock_id
             LEFT JOIN mg       ON mg.stock_id = s.stock_id
             LEFT JOIN sh       ON sh.stock_id = s.stock_id
             LEFT JOIN big      ON big.stock_id = s.stock_id
+            LEFT JOIN ret      ON ret.stock_id = s.stock_id
         ) t
     ) u
 ) v;

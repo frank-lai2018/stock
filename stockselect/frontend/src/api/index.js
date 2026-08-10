@@ -34,6 +34,14 @@ export const getInstTrades = (id, tf = 'D', bars = 60) =>
   api.get(`/stock/${id}/inst`, { params: { tf, bars } }).then((r) => r.data)
 export const getFundamentals = (id) =>
   api.get(`/stock/${id}/fundamentals`).then((r) => r.data)
+export const getProfitability = (id, quarters = 20) =>
+  api.get(`/stock/${id}/profitability`, { params: { quarters } }).then((r) => r.data)
+export const getHolders = (id, weeks = 104) =>
+  api.get(`/stock/${id}/holders`, { params: { weeks } }).then((r) => r.data)
+export const getValuation = (id, years = 3) =>
+  api.get(`/stock/${id}/valuation`, { params: { years } }).then((r) => r.data)
+export const getGrowthRank = (params = {}) =>
+  api.get('/screen/growth', { params }).then((r) => r.data)
 export const getPatterns = () => api.get('/patterns').then((r) => r.data)
 export const screenPattern = (pattern, limit = 100) =>
   api.get('/screen/pattern', { params: { pattern, limit } }).then((r) => r.data)
