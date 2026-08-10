@@ -48,6 +48,15 @@ export const getDividends = (id) =>
 export const getEtfInfo = (id) =>
   api.get(`/stock/${id}/etf`).then((r) => r.data)
 
+// K 線手繪（趨勢線/水平線/通道/費波）：依 股票+週期+還原 分組
+export const getDrawings = (stock_id, period = 'D', adj = true) =>
+  api.get('/drawings', { params: { stock_id, period, adj } }).then((r) => r.data)
+export const addDrawing = (payload) => api.post('/drawings', payload).then((r) => r.data)
+export const updateDrawing = (id, payload) => api.put(`/drawings/${id}`, payload).then((r) => r.data)
+export const deleteDrawing = (id) => api.delete(`/drawings/${id}`).then((r) => r.data)
+export const clearDrawings = (stock_id, period = 'D', adj = true) =>
+  api.delete('/drawings', { params: { stock_id, period, adj } }).then((r) => r.data)
+
 // 持股診斷 / 交易帳
 export const getPortfolio = (year) =>
   api.get('/portfolio', { params: year ? { year } : {} }).then((r) => r.data)
