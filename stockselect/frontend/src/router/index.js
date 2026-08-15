@@ -15,6 +15,7 @@ export default createRouter({
     { path: '/backtest', name: 'backtest', component: () => import('../views/BacktestView.vue') },
     { path: '/watchlist', name: 'watchlist', component: () => import('../views/WatchlistView.vue') },
     { path: '/portfolio', name: 'portfolio', component: () => import('../views/PortfolioView.vue') },
+    { path: '/review', name: 'review', component: () => import('../views/TradeReviewView.vue') },
     { path: '/stock/:id', name: 'stock', component: () => import('../views/StockDetailView.vue') },
   ],
 })

@@ -68,6 +68,7 @@ export const clearDrawings = (stock_id, period = 'D', adj = true) =>
 // 持股診斷 / 交易帳
 export const getPortfolio = (year) =>
   api.get('/portfolio', { params: year ? { year } : {} }).then((r) => r.data)
+export const getTradeReview = () => api.get('/trades/review').then((r) => r.data)
 export const getTrades = (year) =>
   api.get('/trades', { params: year ? { year } : {} }).then((r) => r.data)
 export const getStockTrades = (stockId) =>

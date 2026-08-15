@@ -16,7 +16,7 @@ def build(txns):
     """txns：同一檔的交易 list[dict]（含 id/action/trade_date/shares/price/fee/tax）。
     回傳：未平倉彙總 + 已實現明細（closed round-trips）。"""
     ordered = sorted(txns, key=lambda t: (t["trade_date"], 0 if t["action"] == "buy" else 1, t["id"]))
-    fifo = []          # 未配對買批：[shares, price, date, fee_per_share]
+    fifo = []          # 未配對買批：[shares, price, date, fee_per_share, trade_type]
     realized = 0.0
     closed = []
     buy_shares = sell_shares = 0.0
@@ -27,7 +27,7 @@ def build(txns):
             continue
         if t["action"] == "buy":
             buy_shares += shares
-            fifo.append([shares, price, t["trade_date"], fee / shares])
+            fifo.append([shares, price, t["trade_date"], fee / shares, t.get("trade_type")])
         else:  # sell（FIFO 配對最早的買批）
             sell_shares += shares
             remain = shares
@@ -43,7 +43,7 @@ def build(txns):
                     "shares": round(take, 3), "buy_date": lot[2].isoformat(), "buy_price": buy_price,
                     "sell_date": t["trade_date"].isoformat(), "sell_price": price,
                     "pnl": round(pnl), "ret_pct": (price / buy_price - 1) if buy_price else None,
-                    "days": days,
+                    "days": days, "trade_type": lot[4] or t.get("trade_type"),   # 以買進那筆的類別為準
                 })
                 lot[0] -= take; remain -= take
                 if lot[0] <= 1e-9:

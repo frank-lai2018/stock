@@ -8,7 +8,7 @@ from datetime import date
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import db, diagnose, ledger, patterns
+from .. import db, diagnose, ledger, patterns, review
 from .stock import levels as compute_levels
 
 router = APIRouter(prefix="/api", tags=["portfolio"])
@@ -183,6 +183,65 @@ def portfolio(year: int | None = None):
     }
     return {"items": items, "summary": summary, "realized": realized, "as_of": as_of,
             "year": year, "years": years}
+
+
+@router.get("/trades/review")
+def trades_review():
+    """交易復盤：全部已實現交易（FIFO 配對）的橫切分析。
+
+    回傳 summary（勝率/賺賠比/獲利因子/期望值/賺賠各抱多久）、cuts（分產業・持有天數・
+    進場動能・進場本益比・站季線與否・交易類別）、periods（年月損益與累計）、items（明細）。
+    進場情境用買進日當下的資料重算（point-in-time），不吃今天的快照。
+    """
+    _ensure()
+    txns = db.query("SELECT id, stock_id, action, trade_date, shares, price, fee, tax, trade_type "
+                    "FROM trade_log")
+    if not txns:
+        return {"count": 0, "summary": None, "cuts": {}, "periods": {"months": [], "years": []}, "items": []}
+
+    by = {}
+    for t in txns:
+        by.setdefault(t["stock_id"], []).append(t)
+    closed = []
+    for sid, ts in by.items():
+        for c in ledger.build(ts)["closed"]:
+            closed.append({**c, "stock_id": sid})
+    if not closed:
+        return {"count": 0, "summary": None, "cuts": {}, "periods": {"months": [], "years": []}, "items": []}
+
+    # 每檔只載自己的交易區間（買進日往前 400 天供均線/52週高，到最後賣出日）
+    span = {}
+    for c in closed:
+        a, b = span.get(c["stock_id"], (c["buy_date"], c["sell_date"]))
+        span[c["stock_id"]] = (min(a, c["buy_date"]), max(b, c["sell_date"]))
+    ids = sorted(span)
+    d0 = [span[i][0] for i in ids]
+    d1 = [span[i][1] for i in ids]
+    rng = {"ids": ids, "d0": d0, "d1": d1}
+    meta = {r["stock_id"]: r for r in
+            db.query("SELECT stock_id, name, industry FROM stock WHERE stock_id = ANY(%(ids)s)", {"ids": ids})}
+    px, val = {}, {}
+    for r in db.query(
+            "SELECT p.stock_id, p.trade_date, p.close, p.high, p.low, p.adj_close FROM price_daily p "
+            "JOIN unnest(%(ids)s::text[], %(d0)s::date[], %(d1)s::date[]) AS r(sid, a, b) "
+            "  ON p.stock_id = r.sid AND p.trade_date BETWEEN r.a - 400 AND r.b "
+            "ORDER BY p.stock_id, p.trade_date", rng):
+        p = px.setdefault(r["stock_id"], {"d": [], "c": [], "h": [], "l": [], "a": []})
+        p["d"].append(r["trade_date"].isoformat())
+        p["c"].append(float(r["close"] or 0)); p["h"].append(float(r["high"] or 0))
+        p["l"].append(float(r["low"] or 0)); p["a"].append(float(r["adj_close"] or 0))
+    for r in db.query(
+            "SELECT v.stock_id, v.trade_date, v.per FROM valuation_daily v "
+            "JOIN unnest(%(ids)s::text[], %(d0)s::date[], %(d1)s::date[]) AS r(sid, a, b) "
+            "  ON v.stock_id = r.sid AND v.trade_date BETWEEN r.a - 10 AND r.b "
+            "ORDER BY v.stock_id, v.trade_date", rng):
+        v = val.setdefault(r["stock_id"], {"d": [], "per": []})
+        v["d"].append(r["trade_date"].isoformat()); v["per"].append(r["per"])
+
+    rows = review.enrich(closed, px, val, meta)
+    rows.sort(key=lambda r: r["sell_date"], reverse=True)
+    return {"count": len(rows), "summary": review.summarize(rows), "cuts": review.cuts(rows),
+            "periods": review.by_period(rows), "items": rows}
 
 
 @router.get("/trades")
