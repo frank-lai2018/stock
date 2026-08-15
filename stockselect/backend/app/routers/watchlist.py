@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from .. import db
-from .screen import _attach_last_pattern
+from .screen import _attach_last_pattern, _attach_recent_eps
 
 
 def _bt_map():
@@ -231,6 +231,7 @@ def category_items(cid: int):
                            if (ep and cl is not None) else None)
         items.append(row)
     _attach_last_pattern(items)
+    _attach_recent_eps(items)                          # 近 4 季 EPS（供前端「每季 EPS >」過濾）
     return {"count": len(items), "as_of": as_of, "items": items}
 
 

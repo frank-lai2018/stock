@@ -1,7 +1,7 @@
 <script setup>
 // 自選股：自建分類（el-tabs 可增刪），每個分類的表格與「型態突破」同構。
 // 來源：其他頁★加入，或此頁手動搜尋加入。價格/RS/近3月為即時，型態為加入當下快照。
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as XLSX from 'xlsx'
 import {
@@ -17,6 +17,27 @@ const asOf = ref('')
 const loading = ref(false)
 const showTarget = ref(true)      // 顯示/隱藏「量測滿足價 / 方向」兩欄
 const showHold = ref(true)        // 顯示/隱藏「進場價 / 持有報酬」兩欄
+const rsMin = ref(0)              // RS 過濾（只顯示 RS ≥ 此值；0=不過濾）
+const epsQ = ref(4)               // EPS 過濾看幾季（1/2/4）
+const epsMin = ref('')            // 近 epsQ 季「每季」EPS 門檻（空=不過濾）
+
+// 前端即時過濾：RS ≥ rsMin，且近 epsQ 季「每季」EPS ≥ epsMin（與型態各頁行為一致）
+const shownItems = computed(() => {
+  const rs = Number(rsMin.value) || 0
+  const em = (epsMin.value === '' || epsMin.value == null) ? null : Number(epsMin.value)
+  const nq = Number(epsQ.value) || 4
+  let arr = items.value
+  if (rs) arr = arr.filter((r) => (r.rs_rating ?? -1) >= rs)
+  if (em != null && !Number.isNaN(em)) {
+    arr = arr.filter((r) => {
+      const e = r.eps_recent || []
+      if (e.length < nq) return false               // 近 nq 季資料不足 → 排除
+      return e.slice(0, nq).every((v) => v != null && Number(v) >= em)
+    })
+  }
+  return arr
+})
+const filtering = computed(() => !!Number(rsMin.value) || (epsMin.value !== '' && epsMin.value != null))
 // 手動加入
 const options = ref([])
 const picked = ref(null)
@@ -132,7 +153,7 @@ const legend = [
   ['近3月', '近 3 個月漲跌%'],
 ]
 function downloadXlsx() {
-  if (!items.value.length) return ElMessage.warning('目前沒有結果可下載')
+  if (!shownItems.value.length) return ElMessage.warning('目前沒有結果可下載')
   const cols = [
     ['代碼', (r) => r.stock_id],
     ['名稱', (r) => r.name],
@@ -159,7 +180,7 @@ function downloadXlsx() {
     ['關鍵點', (r) => pts(r)],
   ]
   const aoa = [cols.map((c) => c[0])]
-  for (const r of items.value) aoa.push(cols.map((c) => { const v = c[1](r); return v == null ? '' : v }))
+  for (const r of shownItems.value) aoa.push(cols.map((c) => { const v = c[1](r); return v == null ? '' : v }))
   const ws = XLSX.utils.aoa_to_sheet(aoa)
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, '自選股')
@@ -185,11 +206,21 @@ function downloadXlsx() {
           <el-option v-for="s in options" :key="s.stock_id" :label="`${s.stock_id} ${s.name}`" :value="s.stock_id" />
         </el-select>
         <el-button type="primary" :disabled="!picked" @click="addPicked">加入本分類</el-button>
-        <el-button type="success" :disabled="!items.length" @click="downloadXlsx">⬇ 下載 Excel</el-button>
+        <el-button type="success" :disabled="!shownItems.length" @click="downloadXlsx">⬇ 下載 Excel</el-button>
         <el-checkbox v-model="showTarget" size="small" label="滿足價/方向" border />
         <el-checkbox v-model="showHold" size="small" label="進場價/持有報酬" border />
+        <span style="color: #666; font-size: 13px">RS &gt;</span>
+        <el-input-number v-model="rsMin" :min="0" :max="99" :step="5" size="small" controls-position="right" style="width: 110px" />
+        <span style="color: #666; font-size: 13px">近</span>
+        <el-select v-model="epsQ" size="small" style="width: 80px">
+          <el-option label="1 季" :value="1" />
+          <el-option label="2 季" :value="2" />
+          <el-option label="4 季" :value="4" />
+        </el-select>
+        <span style="color: #666; font-size: 13px">每季EPS &gt;</span>
+        <el-input v-model="epsMin" type="number" size="small" placeholder="不限" style="width: 96px" clearable />
         <el-tag v-if="asOf">資料日 {{ asOf }}</el-tag>
-        <el-tag type="danger" effect="dark">{{ items.length }} 檔</el-tag>
+        <el-tag type="danger" effect="dark">{{ shownItems.length }} 檔<span v-if="filtering"> / 共 {{ items.length }}</span></el-tag>
         <span style="color: #999; font-size: 12px">即時：價格 / RS / 近3月 / 突破後 / 持有報酬；型態為加入當下快照。點列看 K 線</span>
       </div>
 
@@ -208,7 +239,7 @@ function downloadXlsx() {
         </el-collapse-item>
       </el-collapse>
 
-      <PatternResultTable :items="items" :loading="loading" :show-target="showTarget" :show-dir="true"
+      <PatternResultTable :items="shownItems" :loading="loading" :show-target="showTarget" :show-dir="true"
                           :show-hold="showHold" :show-track="true">
         <template #action="{ row }">
           <el-button size="small" text bg circle title="移出自選" @click.stop="removeItem(row)">✕</el-button>
