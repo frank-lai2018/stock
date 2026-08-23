@@ -83,7 +83,7 @@ python rag_news.py --stock 2330 --q "台積電最近的基本面與法人動向�
 > **資料更新管道**：① 每日的價量與籌碼（股價/法人/融資/PER/外資持股/大盤·櫃買指數）走**證交所 by-date**（`daily_update.py`，快、免 token）；② 月營收走**官方 OpenAPI by-date**（`update_revenue.py`）；③ 集保股權分散走 **TDCC opendata by-date**（`update_holderdist.py`）；④ 低頻的財報/EPS/股利/減資走 **FinMind 逐檔**（`update_fundamentals.py`）。
 
 > **🌙 日常操作＝每晚一條 `nightly.py`**（或設排程全自動）。它會自動幫「今天」跑 `daily_update`（含股價/籌碼/外資/指數）＋集保＋月營收＋刷新選股視圖；股利只在 **5~8 月週六/日**自動跑。**只有連續多天沒跑、資料出現斷洞時**，才需對漏掉的交易日各跑一次 `daily_update.py --date YYYY-MM-DD` 補洞（休市日跑了會自動跳過）。
-> **FinMind 自動限流**：`fetch_fundamentals.py` 內建滑動視窗限流，預設**每小時最多 600 次**（免費層額度），達上限自動暫停等視窗釋放，不會撞 402——可一行跑到底、無人值守（`--max-per-hour` 可調，付費層調高、0=不限）。`batch_/update_fundamentals` 皆沿用。
+> **FinMind 自動限流**：`fetch_fundamentals.py` 內建滑動視窗限流，預設**每小時最多 550 次**（帳號額度 600/hr，留 50 次緩衝），達上限自動暫停等視窗釋放，不會撞 402——可一行跑到底、無人值守（`--max-per-hour` 或環境變數 `FINMIND_MAX_PER_HOUR` 可調，0=不限）。用量寫在 `finmind_rate_state.json`，**跨行程共用**：nightly 連續起多支子行程（dividend、capreduction…）會共用同一份額度，不會各自重新計數而合計超額。`batch_/update_fundamentals` 皆沿用。
 
 ## 輸出結構
 ```
@@ -268,7 +268,7 @@ python update_revenue.py --dsn "..." --dry-run  # 只印月份與筆數
 - 各公司申報時間不一，單次通常涵蓋 ~1750 檔，晚申報者隔幾天重跑即補齊（upsert 可重複）。
 
 **③ 財報 / EPS / 股利 / 減資（每季 / 每年 / 偶發）— `update_fundamentals.py`**
-低頻資料沿用 FinMind 逐檔（成本可接受）；串「fetch → load」一鍵，**內建 600/hr 限流可一行跑到底**：
+低頻資料沿用 FinMind 逐檔（成本可接受）；串「fetch → load」一鍵，**內建 550/hr 限流可一行跑到底**：
 ```bash
 # 季報季（2/5/8/11 月中）補最新季財報/EPS
 python update_fundamentals.py --preset quarterly --start 2025-06-30 --dsn "..."
@@ -280,7 +280,7 @@ python update_fundamentals.py --preset quarterly --codes 2330,2317 --start 2025-
 python update_fundamentals.py --preset capreduction --codes-file remaining.txt --start 2010-01-01 --dsn "..."  # 用清單續跑
 ```
 - `--start` 給近一年即可（只重抓/入庫近期）；需 `FINMIND_TOKEN`。preset：`quarterly`（財報+EPS）/ `dividend` / `revenue` / `capreduction`（減資）/ `all`。
-- **限流**：全市場 ~1970 檔逐檔（1 檔 1 請求含全歷史），在 600/hr 下自動衝→睡→衝，約 3~4 小時無人值守跑完；不用再手動分時段。`--max-per-hour` 可調。
+- **限流**：全市場 ~1970 檔逐檔（1 檔 1 請求含全歷史），在 550/hr 下自動衝→睡→衝，約 3.5~4 小時無人值守跑完；不用再手動分時段。`--max-per-hour` 可調。
 - **續跑**：`--codes-file 檔案`（每行一代碼）可只跑指定清單，用於中斷後接續。
 
 **④ 集保戶股權分散（每週）— `update_holderdist.py`**
@@ -327,7 +327,7 @@ python nightly.py --dsn "postgresql://帳號:密碼@localhost:5432/twstock" #每
 | revenue（月營收）| 每月 11~20 號 | 便宜，窗口內每晚跑以補晚申報 |
 | quarterly（財報/EPS）| 4月(年報)、5/16、8/15、11/15 起 | 狀態檔記「本季已跑」，跨夜不重跑 |
 | dividend（股利，重工作 ~3-4hr）| 5~8 月**只在週六/日**每週一次 | 狀態檔記「本週已跑」；平日一律略過 |
-| capreduction（減資，還原價用）| 綁季報窗口（4/5/8/11 月）| 狀態檔記「本季已跑」，跨夜不重跑 |
+| capreduction（減資，還原價用）| 綁季報窗口，但**避開股利旺季 5~8 月** → 實際只在 **4 月、11 月**各跑一次 | 狀態檔記「本季已跑」，跨夜不重跑；5/8 月窗口讓給 dividend，避免兩支 ~4.5hr 重工作同晚（會拖到 ~9hr）。臨時要補：`python nightly.py --only capreduction` |
 | etfnav（ETF 淨值/折溢價/規模）| 每晚固定（mis.twse 單一請求，便宜）| — |
 | refresh | 以上跑完後刷新 `mv_stock_snapshot`（選股器同步最新）| `--skip-refresh` 可略過 |
 

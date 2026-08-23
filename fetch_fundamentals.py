@@ -15,8 +15,10 @@ r"""fetch_fundamentals.py — 給股票代碼，抓 FinMind 各項「個股」�
 
 Token：FinMind 免費註冊拿 token（https://finmindtrade.com）。免 token 額度極低、易被擋。
        設環境變數 FINMIND_TOKEN，或用 --token。
-限流：預設「每小時最多 600 次請求」（滑動視窗，符合 FinMind 免費層），達上限自動等視窗釋放，
-      不會再撞 402。用 --max-per-hour 調整（付費層可調高；0=不限）。batch_/update_fundamentals 皆沿用。
+限流：預設「每小時最多 550 次請求」（滑動視窗；帳號額度 600/hr，留 50 次緩衝），達上限自動等
+      視窗釋放，不會再撞 402。用 --max-per-hour 調整（付費層可調高；0=不限）。
+      用量記在 finmind_rate_state.json，**跨行程共用**：nightly 連續起 dividend / capreduction
+      等多支子行程時共用同一份額度，不會各自重新計數而合計超額。batch_/update_fundamentals 皆沿用。
 注意：還原股價（TaiwanStockPriceAdj）是 FinMind 付費資料集，免費 token 抓不到，故不在此列。
 
 需求：pip install pandas
@@ -28,6 +30,7 @@ Token：FinMind 免費註冊拿 token（https://finmindtrade.com）。免 token 
 """
 import argparse
 import collections
+import contextlib
 import json
 import os
 import ssl
@@ -41,27 +44,96 @@ import pandas as pd
 API = "https://api.finmindtrade.com/api/v4/data"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
-# ---- 每小時請求限流（滑動視窗）：預設 FinMind 免費層約 600 次/hr ----
-MAX_PER_HOUR = int(os.environ.get("FINMIND_MAX_PER_HOUR") or 600)   # 每小時請求上限；0=不限流
+# ---- 每小時請求限流（滑動視窗，跨行程共用）----
+# 帳號額度 600/hr，預設只用 550 留緩衝（重試、其他手動腳本也會吃額度）。
+MAX_PER_HOUR = int(os.environ.get("FINMIND_MAX_PER_HOUR") or 550)   # 每小時請求上限；0=不限流
 _WINDOW = 3600.0
-_REQ_TIMES = collections.deque()
+_REQ_TIMES = collections.deque()          # 記憶體鏡像；只有搶不到鎖時才單獨依賴它
+
+# 用量落地成檔案，讓「連續啟動的多支子行程」共用同一份額度。
+# nightly 會依序起 dividend、capreduction…，若各自在記憶體計數，每支都拿到完整 550 次 → 合計超額撞 402。
+_STATE_FILE = os.environ.get("FINMIND_RATE_STATE") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "finmind_rate_state.json")
+_LOCK_FILE = _STATE_FILE + ".lock"
+
+
+@contextlib.contextmanager
+def _state_lock(timeout=30.0):
+    """用 O_EXCL 建鎖檔互斥（Windows 也適用）。搶不到就 yield False 放行——
+    寧可這幾次少算，也不要讓整批抓取卡死在鎖上。"""
+    deadline = time.time() + timeout
+    fd = None
+    while fd is None:
+        try:
+            fd = os.open(_LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+        except FileExistsError:
+            try:                                        # 撿走殘留鎖（上次被 Ctrl-C 中斷）
+                if time.time() - os.path.getmtime(_LOCK_FILE) > 60:
+                    os.unlink(_LOCK_FILE)
+                    continue
+            except OSError:
+                pass
+            if time.time() >= deadline:
+                yield False
+                return
+            time.sleep(0.05)
+        except OSError:                                 # 目錄唯讀等 → 退回記憶體計數
+            yield False
+            return
+    try:
+        yield True
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(fd)
+            os.unlink(_LOCK_FILE)
+
+
+def _load_times(now):
+    """讀出「還在一小時視窗內」的請求時間戳。檔案壞掉就當作空的重來。"""
+    try:
+        with open(_STATE_FILE, encoding="utf-8") as f:
+            times = json.load(f)
+    except (OSError, ValueError):
+        return []
+    if not isinstance(times, list):
+        return []
+    return sorted(t for t in times if isinstance(t, (int, float)) and 0 <= now - t < _WINDOW)
+
+
+def _save_times(times):
+    tmp = f"{_STATE_FILE}.{os.getpid()}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump([round(t, 3) for t in times], f)
+        os.replace(tmp, _STATE_FILE)                    # 原子寫入，避免讀到半截 JSON
+    except OSError as e:
+        print(f"    [限流] 用量檔寫入失敗（{e}），本行程改用記憶體計數", flush=True)
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+
 
 def _rate_limit():
-    """符合「每小時 MAX_PER_HOUR 次」：達上限就睡到最舊那次請求滿 1 小時、視窗釋放為止。"""
+    """全機每小時最多 MAX_PER_HOUR 次：達上限就睡到最舊那次請求滿 1 小時、視窗釋放為止。"""
     if not MAX_PER_HOUR:
         return
-    now = time.time()
-    while _REQ_TIMES and now - _REQ_TIMES[0] >= _WINDOW:
-        _REQ_TIMES.popleft()
-    if len(_REQ_TIMES) >= MAX_PER_HOUR:
-        wait = _WINDOW - (now - _REQ_TIMES[0]) + 1
-        if wait > 0:
-            print(f"    [限流] 近一小時已用 {len(_REQ_TIMES)}/{MAX_PER_HOUR} 次，暫停 {wait:.0f}s 等視窗釋放…", flush=True)
-            time.sleep(wait)
+    while True:
         now = time.time()
-        while _REQ_TIMES and now - _REQ_TIMES[0] >= _WINDOW:
-            _REQ_TIMES.popleft()
-    _REQ_TIMES.append(time.time())
+        with _state_lock() as locked:
+            if locked:
+                times = _load_times(now)
+            else:                                       # 搶不到鎖 → 退回本行程記憶體
+                times = [t for t in _REQ_TIMES if 0 <= now - t < _WINDOW]
+            if len(times) < MAX_PER_HOUR:
+                times.append(now)
+                _REQ_TIMES.clear()
+                _REQ_TIMES.extend(times)
+                if locked:
+                    _save_times(times)
+                return
+            wait = _WINDOW - (now - times[0]) + 1
+        # 鎖已釋放才睡，不然會擋住其他行程
+        print(f"    [限流] 近一小時已用 {len(times)}/{MAX_PER_HOUR} 次，暫停 {wait:.0f}s 等視窗釋放…", flush=True)
+        time.sleep(max(wait, 1.0))
 
 # 與其他抓取器一致：對公開資料站放寬 SSL（避免憑證瑕疵造成失敗）
 SSL_CTX = ssl.create_default_context()
@@ -209,8 +281,8 @@ def main():
     ap.add_argument("--token", default=os.environ.get("FINMIND_TOKEN", ""),
                     help="FinMind token（或設環境變數 FINMIND_TOKEN）")
     ap.add_argument("--delay", type=float, default=2.0, help="每請求間隔秒數（預設 2）")
-    ap.add_argument("--max-per-hour", type=int, default=int(os.environ.get("FINMIND_MAX_PER_HOUR") or 600),
-                    help="每小時請求上限（滑動視窗；預設讀環境變數 FINMIND_MAX_PER_HOUR 或 600，0=不限）")
+    ap.add_argument("--max-per-hour", type=int, default=int(os.environ.get("FINMIND_MAX_PER_HOUR") or 550),
+                    help="每小時請求上限（滑動視窗、跨行程共用；預設讀環境變數 FINMIND_MAX_PER_HOUR 或 550，0=不限）")
     ap.add_argument("--refresh", action="store_true", help="重抓覆蓋已存在的 CSV")
     args = ap.parse_args()
 

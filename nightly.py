@@ -8,10 +8,19 @@ r"""nightly.py — 排程大腦：每晚無腦執行這一支，由它依「今�
   daily      每晚都跑 daily_update.py（股價+法人+融資+PER）；非交易日腳本自己會跳過。
   holderdist 每晚檢查 update_holderdist.py（集保股權分散；TDCC 週資料，idempotent 自動抓最新週 + 存快照）。
   revenue    每月 11~20 號跑 update_revenue.py（月營收；cheap，順便補晚申報者）。
-  quarterly  季報公告後跑 update_fundamentals.py --preset quarterly（重工作）：
-               4 月=年報/Q4、5/16 起=Q1、8/15 起=Q2、11/15 起=Q3。
-  dividend   股利旺季 5~8 月「週六/日」每週跑一次 update_fundamentals.py --preset dividend（重工作，避開平日）。
-  capreduction 減資（還原價會用到）：綁季報窗口跑（4/5/8/11 月），狀態檔防重（本季一次）。
+  quarterly  每晚跑 update_fundamentals_opendata.py（TWSE/櫃買 opendata 當期財報，全市場
+               約 10 個請求、幾分鐘）。各家申報時間不一，每晚重跑才會陸續補齊。
+  dividend   股利旺季 5~8 月「週日」每週跑一次 update_fundamentals.py --preset dividend（重工作）。
+  capreduction 減資（還原價會用到）：綁季報窗口的「週日」跑，狀態檔防重（本季一次）。且**避開股利
+               旺季**（5~8 月週日都被 dividend 佔用）→ 實際只在 4 月（Q4 窗口）與 11 月（Q3 窗口）
+               各跑一次，一年兩次。要臨時補：python nightly.py --only capreduction
+
+重工作為何只排週日：capreduction / dividend 走 FinMind 逐檔抓，約 2,300 檔，撞每小時上限
+        （run_nightly.bat 設 FINMIND_MAX_PER_HOUR=550，帳號額度 600 留緩衝）就得睡到視窗釋放
+        ≈ 4~5hr，平常上班日晚上跑不完。真的要在平日補跑：python nightly.py --only dividend
+        （--only 會忽略此限制）。季報原本也是重工作（3 資料集 ≈ 6,900 次 ≈ 13hr），已改走 opendata。
+        限流用量記在 finmind_rate_state.json，跨行程共用：同一晚先跑 dividend 再跑 capreduction
+        不會各自重新計數，合計仍受 550/hr 約束。
   etfnav     每晚固定跑 fetch_etf_nav.py（ETF 淨值/折溢價/規模；mis.twse 單一請求，便宜）。
   refresh    以上跑完後，刷新選股物化視圖 mv_stock_snapshot（選股器同步最新；--skip-refresh 可略過）。
 
@@ -21,6 +30,7 @@ r"""nightly.py — 排程大腦：每晚無腦執行這一支，由它依「今�
 其他用法：
   python nightly.py --plan                      # 只印「今天會跑哪些、為什麼」，不執行
   python nightly.py --only quarterly --dsn ...  # 強制只跑某工作（忽略排程/狀態檔）
+  python nightly.py --skip capreduction --dsn ...  # 今晚略過某支重工作，其餘照排程跑
   python nightly.py --date 2026-08-15 --plan    # 模擬某天的排程決策
 """
 import argparse
@@ -35,6 +45,7 @@ STATE_FILE = os.path.join(HERE, "nightly_state.json")
 DAILY = os.path.join(HERE, "daily_update.py")
 REVENUE = os.path.join(HERE, "update_revenue.py")
 FUND = os.path.join(HERE, "update_fundamentals.py")
+FUND_OPEN = os.path.join(HERE, "update_fundamentals_opendata.py")   # 財報走 TWSE/櫃買 opendata（便宜）
 HOLDERDIST = os.path.join(HERE, "update_holderdist.py")
 ETFNAV = os.path.join(HERE, "fetch_etf_nav.py")
 BACKTEST_DIR = os.path.join(HERE, "stockselect", "backend")   # 回測腳本在後端（需 import app）
@@ -57,6 +68,35 @@ def save_state(state):
 
 # ---------- 排程規則：回傳今天各工作的決策 ----------
 
+# FinMind 逐檔抓的重工作：約 2,300 檔 × 資料集，撞每小時上限（run_nightly.bat 設
+# FINMIND_MAX_PER_HOUR=550）就得睡到視窗釋放 → 平常上班日晚上跑不完，一律排週日。
+#   capreduction / dividend 各 1 資料集 ≈ 2,300 次 ≈ 4~5hr（兩者同日跑則共用額度，會接著排隊）
+# （季報原本 3 資料集 ≈ 6,900 次 ≈ 23hr，已改走 TWSE/櫃買 opendata，見 update_fundamentals_opendata.py）
+JOBS = ["daily", "holderdist", "revenue", "quarterly", "dividend",
+        "capreduction", "etfnav", "backtest"]     # --only / --skip 可指定的工作名
+
+HEAVY_DAY = {"capreduction": 6, "dividend": 6}   # 6=週日（季報已改走 opendata，不再是重工作）
+HEAVY_NAME = {"capreduction": "減資", "dividend": "股利"}
+DAY_NAME = {5: "週六", 6: "週日"}
+
+
+DIVIDEND_MONTHS = (5, 8)                         # 股利旺季：這幾個月每個週日都跑 dividend
+
+
+def in_dividend_season(d):
+    return DIVIDEND_MONTHS[0] <= d.month <= DIVIDEND_MONTHS[1]
+
+
+def heavy_why(job):
+    """重工作被擋掉時的說明（給 --plan 看）。"""
+    return (f"{HEAVY_NAME[job]}為 FinMind 逐檔重工作，平日晚上跑不完 → "
+            f"固定排{DAY_NAME[HEAVY_DAY[job]]}")
+
+
+def on_heavy_day(d, job):
+    return d.weekday() == HEAVY_DAY[job]
+
+
 def due_quarterly(d):
     """今天是否在某季報的更新窗口 → 回傳 (季別標籤, fetch/load 起始日) 或 (None, None)。"""
     y = d.year
@@ -76,8 +116,9 @@ def week_label(d):
     return f"{iso[0]}W{iso[1]:02d}"
 
 
-def plan_jobs(d, state, only):
-    """回傳 [(job, 理由, 是否執行, cmd_extra)]；cmd_extra 供組指令用。"""
+def plan_jobs(d, state, only, skip=()):
+    """回傳 [(job, 理由, 是否執行, cmd_extra)]；cmd_extra 供組指令用。
+    skip：本次要略過的工作（--skip）；用於「今晚不想跑某支重工作，但其他照跑」。"""
     jobs = []
 
     # daily：每晚都跑
@@ -99,25 +140,18 @@ def plan_jobs(d, state, only):
         run, why = False, "本次 --only 指定其他工作"
     jobs.append(("revenue", why, run, {}))
 
-    # quarterly：季報窗口 + 狀態檔防重
+    # quarterly：改走 TWSE/櫃買 opendata（全市場當期，約 10 個請求）→ 便宜到可以每晚跑。
+    # 不再綁公告窗口/狀態檔：各家申報時間不一，每晚重跑才會把陸續公告的補進來（upsert 冪等）。
     q_label, q_start = due_quarterly(d)
-    done_q = state.get("quarterly")
-    if only == "quarterly":
-        run, why = True, "強制 --only quarterly"
-        q_label = q_label or f"{d.year}Q?"
-        q_start = q_start or f"{d.year - 1}-01-01"
-    elif only is None:
-        if q_label is None:
-            run, why = False, "不在季報公告窗口"
-        elif done_q == q_label:
-            run, why = False, f"{q_label} 本季已跑過（狀態檔）"
-        else:
-            run, why = True, f"季報窗口 {q_label}，尚未跑"
-    else:
-        run, why = False, "本次 --only 指定其他工作"
-    jobs.append(("quarterly", why, run, {"label": q_label, "start": q_start}))
+    run = only in (None, "quarterly")
+    jobs.append(("quarterly", "每晚檢查（opendata 當期財報，全市場約 10 個請求）", run,
+                 {"label": q_label, "start": q_start}))
 
     # capreduction：減資（還原價會用到）；綁季報窗口跑，狀態檔防重（本季只跑一次）
+    # 且避開股利旺季：5~8 月每個週日都被 dividend 佔滿，兩支各 ~4.5hr 的重工作若同晚跑會拖到 ~9hr。
+    # → 減資只排「dividend 不跑」的兩個窗口：4 月（Q4）與 11 月（Q3），一年更新兩次。
+    #   4 月/11 月都用 --refresh 從 q_start 全量重抓，所以中間發生的減資不會漏，只是延後入庫。
+    #   急著要（例如某檔剛減資、要算還原價）：python nightly.py --only capreduction
     done_c = state.get("capreduction")
     if only == "capreduction":
         run, why = True, "強制 --only capreduction"
@@ -127,10 +161,15 @@ def plan_jobs(d, state, only):
         c_label, c_start = q_label, q_start
         if q_label is None:
             run, why = False, "不在季報窗口（減資綁季報窗口跑）"
+        elif in_dividend_season(d):
+            run, why = False, (f"股利旺季（{DIVIDEND_MONTHS[0]}~{DIVIDEND_MONTHS[1]} 月）週日都被 dividend 佔用 → "
+                               f"減資只排 4 月／11 月窗口（避免同晚兩支重工作）")
         elif done_c == q_label:
             run, why = False, f"{q_label} 本季已跑過減資（狀態檔）"
+        elif not on_heavy_day(d, "capreduction"):
+            run, why = False, f"{heavy_why('capreduction')}；{q_label} 窗口內，等最近的週日"
         else:
-            run, why = True, f"季報窗口 {q_label}，跑減資"
+            run, why = True, f"季報窗口 {q_label}（週日），跑減資"
     else:
         run, why = False, "本次 --only 指定其他工作"
         c_label, c_start = q_label, q_start
@@ -142,14 +181,14 @@ def plan_jobs(d, state, only):
     if only == "dividend":
         run, why = True, "強制 --only dividend"
     elif only is None:
-        if not (5 <= d.month <= 8):
-            run, why = False, "不在股利旺季（5~8 月）"
-        elif d.weekday() < 5:                            # 只在週六(5)/週日(6)跑，避開平日長工作
-            run, why = False, "股利僅週六/日跑（避開平日 3~4hr 長工作）"
+        if not in_dividend_season(d):
+            run, why = False, f"不在股利旺季（{DIVIDEND_MONTHS[0]}~{DIVIDEND_MONTHS[1]} 月）"
+        elif not on_heavy_day(d, "dividend"):
+            run, why = False, heavy_why("dividend")
         elif done_w == wl:
             run, why = False, f"本週 {wl} 已跑過（狀態檔）"
         else:
-            run, why = True, f"股利旺季週末，本週 {wl} 尚未跑"
+            run, why = True, f"股利旺季週日，本週 {wl} 尚未跑"
     else:
         run, why = False, "本次 --only 指定其他工作"
     jobs.append(("dividend", why, run, {"label": wl, "start": f"{d.year}-01-01"}))
@@ -173,6 +212,9 @@ def plan_jobs(d, state, only):
         run, why = False, "本次 --only 指定其他工作"
     jobs.append(("backtest", why, run, {"label": wl}))
 
+    if skip:            # --skip 最後統一蓋掉，語意單純：不管排程怎麼判，指定的就是不跑
+        jobs = [(j, "--skip 指定略過" if j in skip else why, run and j not in skip, e)
+                for j, why, run, e in jobs]
     return jobs
 
 
@@ -209,7 +251,7 @@ def build_cmd(job, d, dsn, extra):
     if job == "holderdist":
         return [sys.executable, HOLDERDIST, "--dsn", dsn, "--raw-root", HOLDERS_RAW]
     if job == "quarterly":
-        return [sys.executable, FUND, "--preset", "quarterly", "--start", extra["start"], "--dsn", dsn]
+        return [sys.executable, FUND_OPEN, "--dsn", dsn]        # opendata：全市場當期，約 10 個請求
     if job == "dividend":
         return [sys.executable, FUND, "--preset", "dividend", "--start", extra["start"], "--dsn", dsn]
     if job == "capreduction":
@@ -225,8 +267,9 @@ def main():
     ap = argparse.ArgumentParser(description="排程大腦：依今天日期自動決定該跑哪些更新")
     ap.add_argument("--dsn", default=os.environ.get("DATABASE_URL", ""), help="PostgreSQL 連線字串")
     ap.add_argument("--date", default=date.today().isoformat(), help="模擬日期 YYYY-MM-DD（預設今天）")
-    ap.add_argument("--only", choices=["daily", "holderdist", "revenue", "quarterly", "dividend",
-                                       "capreduction", "etfnav", "backtest"], help="強制只跑某工作")
+    ap.add_argument("--only", choices=JOBS, help="強制只跑某工作")
+    ap.add_argument("--skip", default="", help="本次略過某些工作（逗號分隔，如 --skip capreduction）；"
+                                               "其餘照排程跑。適合「今晚不想跑某支重工作」")
     ap.add_argument("--skip-refresh", action="store_true", help="跑完不刷新 mv_stock_snapshot 選股視圖")
     ap.add_argument("--plan", action="store_true", help="只印排程決策，不執行")
     args = ap.parse_args()
@@ -241,8 +284,12 @@ def main():
     except ValueError:
         raise SystemExit("--date 需為 YYYY-MM-DD 格式")
 
+    skip = {s.strip() for s in args.skip.split(",") if s.strip()}
+    if skip - set(JOBS):
+        raise SystemExit(f"--skip 有無效工作名：{sorted(skip - set(JOBS))}；可選：{JOBS}")
+
     state = load_state()
-    jobs = plan_jobs(d, state, args.only)
+    jobs = plan_jobs(d, state, args.only, skip)
 
     print(f"=== nightly {args.date}（{['一','二','三','四','五','六','日'][d.weekday()]}）"
           f" @ {datetime.now():%H:%M:%S} ===")

@@ -7,3 +7,8 @@ etf_codes.txt
 *.xlsx
 rclone-*/
 scratchpad_*.sql
+
+# FinMind 限流用量檔（跨行程共用的滑動視窗狀態，機器本地狀態，勿進版控）
+finmind_rate_state.json
+finmind_rate_state.json.lock
+finmind_rate_state.json.*.tmp
