@@ -1,4 +1,7 @@
 <script setup>
+import { ref, onMounted } from 'vue'
+import { getIndustries } from '../api'
+
 defineProps({
   filters: { type: Object, required: true },   // 直接雙向綁定其屬性（reactive 物件）
   strategies: { type: Object, default: () => ({}) },
@@ -14,6 +17,11 @@ const sortCols = [
   'margin_util', 'short_margin_ratio', 'amt20',
   'vpa_accum_20d', 'vpa_distrib_20d',
 ]
+
+const industries = ref([])
+onMounted(async () => {
+  try { industries.value = await getIndustries() } catch (e) { /* 下拉沒清單不影響篩選 */ }
+})
 </script>
 
 <template>
@@ -31,6 +39,11 @@ const sortCols = [
           <el-option label="全部（含 ETF）" value="" />
           <el-option label="只看個股" value="stock" />
           <el-option label="只看 ETF" value="etf" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="產業">
+        <el-select v-model="filters.industry" style="width: 160px" filterable clearable placeholder="全部產業">
+          <el-option v-for="n in industries" :key="n" :label="n" :value="n" />
         </el-select>
       </el-form-item>
       <el-form-item label="近3月報酬≥">

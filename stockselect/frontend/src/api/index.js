@@ -3,6 +3,7 @@ import axios from 'axios'
 const api = axios.create({ baseURL: '/api' })
 
 export const getStrategies = () => api.get('/strategies').then((r) => r.data)
+export const getIndustries = () => api.get('/industries').then((r) => r.data)
 export const searchStocks = (q) => api.get('/search', { params: { q } }).then((r) => r.data)
 export const getMarketOverview = () => api.get('/market/overview').then((r) => r.data)
 export const getMarketIndex = (days = 120, index_id = 'TAIEX') =>

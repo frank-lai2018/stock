@@ -146,6 +146,14 @@ def strategies():
     return STRATEGIES
 
 
+@router.get("/industries")
+def industries():
+    """產業別清單（母體內有股票的），供選股器/排行榜的產業下拉。"""
+    return [r["industry"] for r in db.query(
+        "SELECT DISTINCT industry FROM mv_stock_snapshot "
+        "WHERE in_universe AND industry IS NOT NULL AND industry <> '' ORDER BY industry")]
+
+
 @router.post("/screen")
 def screen(req: ScreenRequest):
     where, params = build_where(req.filters)
