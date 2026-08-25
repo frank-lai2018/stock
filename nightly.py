@@ -22,6 +22,8 @@ r"""nightly.py — 排程大腦：每晚無腦執行這一支，由它依「今�
         限流用量記在 finmind_rate_state.json，跨行程共用：同一晚先跑 dividend 再跑 capreduction
         不會各自重新計數，合計仍受 550/hr 約束。
   etfnav     每晚固定跑 fetch_etf_nav.py（ETF 淨值/折溢價/規模；mis.twse 單一請求，便宜）。
+  renko      每晚固定跑 renko_etl.py（磚形圖/三線反轉狀態 → renko_state；全市場約 35 秒）。
+               **必須排在 refresh 之前**，否則選股視圖 join 到的是昨天的狀態。
   refresh    以上跑完後，刷新選股物化視圖 mv_stock_snapshot（選股器同步最新；--skip-refresh 可略過）。
 
 防重複：quarterly / dividend 是 FinMind 逐檔的重工作，用狀態檔 nightly_state.json 記錄
@@ -50,6 +52,7 @@ HOLDERDIST = os.path.join(HERE, "update_holderdist.py")
 ETFNAV = os.path.join(HERE, "fetch_etf_nav.py")
 BACKTEST_DIR = os.path.join(HERE, "stockselect", "backend")   # 回測腳本在後端（需 import app）
 BACKTEST = os.path.join(BACKTEST_DIR, "backtest_patterns.py")
+RENKO = os.path.join(BACKTEST_DIR, "renko_etl.py")            # 磚形圖狀態（同樣需 import app）
 HOLDERS_RAW = r"H:\data\Holders"           # 集保週快照封存（往後自建歷史）
 
 
@@ -73,7 +76,7 @@ def save_state(state):
 #   capreduction / dividend 各 1 資料集 ≈ 2,300 次 ≈ 4~5hr（兩者同日跑則共用額度，會接著排隊）
 # （季報原本 3 資料集 ≈ 6,900 次 ≈ 23hr，已改走 TWSE/櫃買 opendata，見 update_fundamentals_opendata.py）
 JOBS = ["daily", "holderdist", "revenue", "quarterly", "dividend",
-        "capreduction", "etfnav", "backtest"]     # --only / --skip 可指定的工作名
+        "capreduction", "etfnav", "renko", "backtest"]   # --only / --skip 可指定的工作名
 
 HEAVY_DAY = {"capreduction": 6, "dividend": 6}   # 6=週日（季報已改走 opendata，不再是重工作）
 HEAVY_NAME = {"capreduction": "減資", "dividend": "股利"}
@@ -197,6 +200,11 @@ def plan_jobs(d, state, only, skip=()):
     run = only in (None, "etfnav")
     jobs.append(("etfnav", "每晚固定（ETF 淨值/規模，單一請求）", run, {}))
 
+    # renko：磚形圖/三線反轉狀態（全市場 ~35 秒，冪等）。要在 refresh 之前跑完，
+    # 選股視圖才 join 得到今天的狀態。非交易日重跑結果相同，成本低就不特別擋。
+    run = only in (None, "renko")
+    jobs.append(("renko", "每晚固定（磚形圖狀態 → renko_state，約 35 秒；須早於 refresh）", run, {}))
+
     # backtest：型態回測，每週一次（週日跑；重工作 ~數十分鐘，狀態檔防重）
     done_bt = state.get("backtest")
     if only == "backtest":
@@ -258,6 +266,8 @@ def build_cmd(job, d, dsn, extra):
         return [sys.executable, FUND, "--preset", "capreduction", "--start", extra["start"], "--dsn", dsn]
     if job == "etfnav":
         return [sys.executable, ETFNAV, "--dsn", dsn]
+    if job == "renko":
+        return [sys.executable, RENKO]             # 同 backtest：cwd=BACKTEST_DIR 才 import 得到 app
     if job == "backtest":
         return [sys.executable, BACKTEST]          # 讀 backend/.env 的 DATABASE_URL；cwd=BACKTEST_DIR
     raise ValueError(job)
@@ -316,7 +326,7 @@ def main():
     for job, extra in to_run:
         print(f"\n----- {job} -----")
         try:
-            cwd = BACKTEST_DIR if job == "backtest" else HERE
+            cwd = BACKTEST_DIR if job in ("backtest", "renko") else HERE
             rc = run_cmd(build_cmd(job, d, args.dsn, extra), cwd=cwd)
         except Exception as e:
             rc, msg = 1, str(e)[:120]

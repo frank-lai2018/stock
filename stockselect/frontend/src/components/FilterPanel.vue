@@ -63,6 +63,28 @@ onMounted(async () => {
       <el-form-item label="VCP 收縮"><el-switch v-model="filters.vcp" /></el-form-item>
       <el-form-item label="主力承接"><el-switch v-model="filters.mf_accumulate" /></el-form-item>
       <el-form-item label="主力出貨"><el-switch v-model="filters.mf_distribute" /></el-form-item>
+
+      <el-divider>磚形圖 / 三線反轉（降噪過濾層）</el-divider>
+      <el-form-item label="磚形圖為多">
+        <el-switch v-model="filters.renko_bull" />
+        <span style="margin-left:6px;color:#999">Renko 目前紅磚</span>
+      </el-form-item>
+      <el-form-item label="連續同向≥">
+        <el-input-number v-model="filters.renko_run_min" :min="1" :max="20" controls-position="right" />
+        <span style="margin-left:6px;color:#999">塊，越多動能越延續</span>
+      </el-form-item>
+      <el-form-item label="剛翻多">
+        <el-switch v-model="filters.renko_fresh_bull" />
+        <span style="margin-left:6px;color:#999">10 個交易日內由空翻多</span>
+      </el-form-item>
+      <el-form-item label="翻轉在">
+        <el-input-number v-model="filters.renko_flip_days_max" :min="1" :max="120" controls-position="right" />
+        <span style="margin-left:6px;color:#999">個交易日內</span>
+      </el-form-item>
+      <el-form-item label="三線同向">
+        <el-switch v-model="filters.renko_tlb_agree" />
+        <span style="margin-left:6px;color:#999">兩張圖方向一致＝第二確認</span>
+      </el-form-item>
       <el-form-item label="ROE≥"><el-input-number v-model="filters.roe_min" controls-position="right" /></el-form-item>
       <el-form-item label="營收YoY≥"><el-input-number v-model="filters.rev_yoy_min" controls-position="right" /></el-form-item>
       <el-form-item label="負債比≤"><el-input-number v-model="filters.debt_ratio_max" controls-position="right" /></el-form-item>

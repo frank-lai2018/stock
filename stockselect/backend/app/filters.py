@@ -27,6 +27,15 @@ FILTERS = {
     "mf_distribute":     ("mf_distribute = %(mf_distribute)s", _BOOL),
     "vpa_accum_min":     ("vpa_accum_20d >= %(vpa_accum_min)s", _NUM),
     "vpa_distrib_min":   ("vpa_distrib_20d >= %(vpa_distrib_min)s", _NUM),
+    # Renko / 三線反轉（《Beyond Candlesticks》磚形圖；由 renko_etl.py 算進 renko_state）
+    # 這是「狀態特徵」不是訊號——單獨用翻轉進出場實測勝率約 50%，請當過濾層疊在其他因子上
+    # 布林一律綁參數：前端 cleanFilters 會把 false 送上來，開關關掉要能表達「反向」而非硬套條件
+    "renko_bull":        ("(renko_dir = 1) = %(renko_bull)s", _BOOL),         # 磚形圖為多(false=為空)
+    "renko_fresh_bull":  ("renko_fresh_bull = %(renko_fresh_bull)s", _BOOL),  # 多方且10日內剛翻
+    "renko_run_min":     ("renko_run >= %(renko_run_min)s", _NUM),            # 連續同向≥N塊（動能強度）
+    "renko_flip_days_max": ("renko_flip_days <= %(renko_flip_days_max)s", _NUM),  # 翻轉在N日內
+    "tlb_bull":          ("(tlb_dir = 1) = %(tlb_bull)s", _BOOL),             # 三線反轉為多
+    "renko_tlb_agree":   ("(renko_dir = tlb_dir) = %(renko_tlb_agree)s", _BOOL),  # 兩圖同向（第二確認）
     # 基本面
     "roe_min":           ("roe >= %(roe_min)s", _NUM),
     "eps_min":           ("eps >= %(eps_min)s", _NUM),
@@ -80,6 +89,7 @@ SORT_WHITELIST = {
     "inst_net_20d", "margin_chg_20d", "margin_util", "short_margin_ratio",
     "foreign_ratio", "big1000_pct", "big1000_chg", "big1000_up_weeks", "retail_pct", "retail_chg", "amt20",
     "vpa_accum_20d", "vpa_distrib_20d",
+    "renko_run", "renko_flip_days", "tlb_run",
 }
 
 

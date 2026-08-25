@@ -88,6 +88,24 @@ STRATEGIES = {
         "filters": {"vcp": True, "in_universe": True},
         "sort": "rs_rating",
     },
+    "renko_trend": {
+        "name": "趨勢範本 + 磚形圖確認",
+        "desc": "《超級績效》趨勢範本 + 《Beyond Candlesticks》磚形圖為多且連 2 塊以上、"
+                "三線反轉同向（降噪確認）。註：磚形圖是過濾層不是訊號，單獨用無優勢",
+        "filters": {"trend_template": True, "renko_bull": True, "renko_run_min": 2,
+                    "renko_tlb_agree": True, "in_universe": True},
+        "sort": "rs_rating",
+        "limit": 100,
+    },
+    "renko_fresh": {
+        "name": "磚形圖剛翻多",
+        "desc": "《Beyond Candlesticks》磚形圖近 10 個交易日內由空翻多、三線反轉同向確認 + 站上季線。"
+                "偏早期訊號，務必配合基本面/籌碼一起看",
+        "filters": {"renko_fresh_bull": True, "renko_tlb_agree": True,
+                    "above_ma60": True, "in_universe": True},
+        "sort": "renko_flip_days",
+        "limit": 100,
+    },
     "mf_accumulate": {
         "name": "主力承接",
         "desc": "《不說謊的價量》VPA：近20日承接訊號(停損量/承接量/測試無賣壓)淨多 + 大戶或法人進場",

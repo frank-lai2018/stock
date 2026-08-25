@@ -24,6 +24,9 @@ SELECT v.*,
      AND v.vpa_accum_20d >= 2
      AND (coalesce(v.big1000_chg, 0) > 0 OR coalesce(v.inst_net_20d, 0) > 0)
     ) AS mf_accumulate,
+    -- Renko 剛翻多（《Beyond Candlesticks》磚形圖）：方向為多且翻轉在近 10 個交易日內
+    -- 特徵而非訊號——單獨用勝率約 50%，請搭既有因子並用 backtest_patterns 驗證後再採用
+    (v.renko_dir = 1 AND v.renko_flip_days IS NOT NULL AND v.renko_flip_days <= 10) AS renko_fresh_bull,
     -- 主力出貨（VPA 偏空・警示）：近20日出貨訊號淨多 + 大戶或法人退場 + 高檔
     (v.in_universe
      AND v.vpa_distrib_20d > v.vpa_accum_20d
@@ -283,6 +286,8 @@ FROM (
                 sh.foreign_ratio, big.big1000_pct, round(big.big1000_chg, 4) AS big1000_chg,
                 big.big1000_up_weeks, big.big1000_down_weeks,
                 round(ret.retail_pct, 4) AS retail_pct, round(ret.retail_chg, 4) AS retail_chg,
+                rk.renko_dir, rk.renko_run, rk.renko_flip_days, rk.brick AS renko_brick,
+                rk.tlb_dir, rk.tlb_run, rk.tlb_flip_days,
                 (px.trading_days >= 60 AND px.amt20 >= 5000000) AS in_universe
             FROM stock s
             JOIN px            ON px.stock_id = s.stock_id
@@ -296,6 +301,7 @@ FROM (
             LEFT JOIN sh       ON sh.stock_id = s.stock_id
             LEFT JOIN big      ON big.stock_id = s.stock_id
             LEFT JOIN ret      ON ret.stock_id = s.stock_id
+            LEFT JOIN renko_state rk ON rk.stock_id = s.stock_id   -- 由 renko_etl.py 產出
         ) t
     ) u
 ) v;
@@ -306,3 +312,4 @@ CREATE INDEX IF NOT EXISTS idx_snapshot_trend ON mv_stock_snapshot (trend_templa
 CREATE INDEX IF NOT EXISTS idx_snapshot_vcp ON mv_stock_snapshot (vcp);
 CREATE INDEX IF NOT EXISTS idx_snapshot_accum ON mv_stock_snapshot (mf_accumulate);
 CREATE INDEX IF NOT EXISTS idx_snapshot_distrib ON mv_stock_snapshot (mf_distribute);
+CREATE INDEX IF NOT EXISTS idx_snapshot_renko ON mv_stock_snapshot (renko_dir);
