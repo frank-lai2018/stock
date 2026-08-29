@@ -29,7 +29,8 @@ def screen_pattern(pattern: str, limit: int = 100):
         return {"pattern": pattern, "name": patterns.CATALOG[pattern][0], "count": 0, "items": []}
     n = max(1, min(int(limit), 300))
     snap = db.query(
-        "SELECT stock_id, name, industry, close, ret_1m, ret_3m, per, inst_net_20d, big1000_pct, rs_rating "
+        "SELECT stock_id, name, industry, close, ret_1m, ret_3m, per, per_pctile, inst_net_20d, "
+        "  big1000_pct, big1000_up_weeks, rs_rating, eps_accel, eps_yoy_accel, eps_yoy "
         "FROM mv_stock_snapshot WHERE stock_id = ANY(%(ids)s) AND in_universe "
         "ORDER BY amt20 DESC NULLS LAST LIMIT %(n)s",
         {"ids": matches, "n": n})

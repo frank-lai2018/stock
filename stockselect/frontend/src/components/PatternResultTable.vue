@@ -147,6 +147,27 @@ function clearSel() { tableRef.value?.clearSelection(); selected.value = [] }
     <el-table-column label="近3月" width="86" sortable :sort-method="(a, b) => (a.ret_3m ?? -9) - (b.ret_3m ?? -9)">
       <template #default="{ row }"><span :style="{ color: upc(row.ret_3m) }">{{ pct(row.ret_3m) }}</span></template>
     </el-table-column>
+    <el-table-column label="加速" width="106">
+      <template #default="{ row }">
+        <el-tag v-if="row.eps_accel" size="small" type="danger" effect="dark">季增</el-tag>
+        <el-tag v-if="row.eps_yoy_accel" size="small" type="danger" effect="plain" style="margin-left: 3px">年增</el-tag>
+      </template>
+    </el-table-column>
+    <el-table-column label="PER位階" width="92" sortable
+                     :sort-method="(a, b) => (a.per_pctile ?? 999) - (b.per_pctile ?? 999)">
+      <template #default="{ row }">
+        <span :style="{ color: row.per_pctile >= 80 ? '#f56c6c' : row.per_pctile <= 20 ? '#67c23a' : '#909399' }">
+          {{ row.per_pctile == null ? '—' : row.per_pctile + '%' }}
+        </span>
+      </template>
+    </el-table-column>
+    <el-table-column label="千張大戶%" width="128" sortable
+                     :sort-method="(a, b) => (a.big1000_pct ?? -1) - (b.big1000_pct ?? -1)">
+      <template #default="{ row }">
+        {{ row.big1000_pct ?? '—' }}
+        <el-tag v-if="row.big1000_up_weeks >= 2" size="small" type="danger" effect="plain">連{{ row.big1000_up_weeks }}週↑</el-tag>
+      </template>
+    </el-table-column>
     <el-table-column prop="industry" label="產業" min-width="120" show-overflow-tooltip />
     <el-table-column v-if="$slots.action" label="操作" width="66" fixed="right">
       <template #default="{ row }"><slot name="action" :row="row" /></template>

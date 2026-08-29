@@ -15,6 +15,7 @@ const loading = ref(false)
 const rsMin = ref(0)                                // RS 過濾（只顯示 RS ≥ 此值；0=不過濾）
 const epsQ = ref(4)                                 // EPS 過濾看幾季（1/2/4）
 const epsMin = ref('')                              // 近 epsQ 季「每季」EPS 門檻（空=不過濾）
+const accel = ref('')                               // 盈餘加速：qoq / yoy / both / ''=不過濾
 const tableRef = ref()
 const selected = ref([])
 function onSel(rows) { selected.value = rows }
@@ -27,6 +28,8 @@ const shownItems = computed(() => {
   const nq = Number(epsQ.value) || 4
   let arr = items.value
   if (rs) arr = arr.filter((r) => (r.rs_rating ?? -1) >= rs)
+  if (accel.value === 'qoq' || accel.value === 'both') arr = arr.filter((r) => r.eps_accel)
+  if (accel.value === 'yoy' || accel.value === 'both') arr = arr.filter((r) => r.eps_yoy_accel)
   if (em != null && !Number.isNaN(em)) {
     arr = arr.filter((r) => {
       const e = r.eps_recent || []
@@ -36,7 +39,8 @@ const shownItems = computed(() => {
   }
   return arr
 })
-const filtering = computed(() => !!Number(rsMin.value) || (epsMin.value !== '' && epsMin.value != null))
+const filtering = computed(() => !!Number(rsMin.value) || !!accel.value
+  || (epsMin.value !== '' && epsMin.value != null))
 
 const dirColor = { bull: '#EA4C4C', bear: '#3F9E5A', neutral: '#909399' }
 const dirText = { bull: '偏多', bear: '偏空', neutral: '中性' }
@@ -44,6 +48,8 @@ const pct = (v) => (v == null ? '' : (Number(v) * 100).toFixed(1) + '%')
 const num = (v) => (v == null ? '' : Number(v).toLocaleString('en-US'))
 // 近 4 季 EPS（新到舊），缺料季顯示 -
 const eps = (row) => (row.eps_recent || []).map((v) => (v == null ? '-' : Number(v).toFixed(2))).join(' / ')
+// 本益比位階：低（相對自己歷史便宜）綠、高（貴）紅
+const perClr = (v) => (v == null ? '' : Number(v) >= 80 ? '#EA4C4C' : Number(v) <= 20 ? '#3F9E5A' : '#909399')
 
 onMounted(async () => {
   try {
@@ -94,6 +100,13 @@ function go(row, column) {
         </el-select>
         <span style="color: #666; font-size: 13px">每季EPS &gt;</span>
         <el-input v-model="epsMin" type="number" size="small" placeholder="不限" style="width: 96px" clearable />
+        <span style="color: #666; font-size: 13px">盈餘加速</span>
+        <el-select v-model="accel" size="small" style="width: 150px">
+          <el-option label="不過濾" value="" />
+          <el-option label="連兩季 EPS 季增" value="qoq" />
+          <el-option label="年增率逐季擴大" value="yoy" />
+          <el-option label="兩者皆是" value="both" />
+        </el-select>
         <span style="color: #999; font-size: 12px">最新交易日出現該型態、且在母體內；依流動性排序</span>
       </div>
     </el-card>
@@ -123,11 +136,26 @@ function go(row, column) {
       <el-table-column label="近4季EPS" width="180" show-overflow-tooltip><template #default="{ row }">
         <span style="color: #666">{{ eps(row) }}</span>
       </template></el-table-column>
+      <el-table-column label="加速" width="106">
+        <template #default="{ row }">
+          <el-tag v-if="row.eps_accel" size="small" type="danger" effect="dark">季增</el-tag>
+          <el-tag v-if="row.eps_yoy_accel" size="small" type="danger" effect="plain" style="margin-left: 3px">年增</el-tag>
+        </template>
+      </el-table-column>
       <el-table-column prop="per" label="PER" width="80" />
+      <el-table-column label="PER位階" width="92" sortable
+                       :sort-method="(a, b) => (a.per_pctile ?? 999) - (b.per_pctile ?? 999)">
+        <template #default="{ row }">
+          <span :style="{ color: perClr(row.per_pctile) }">{{ row.per_pctile == null ? '' : row.per_pctile + '%' }}</span>
+        </template>
+      </el-table-column>
       <el-table-column label="法人20日(股)" width="130"><template #default="{ row }">
         <span :style="{ color: row.inst_net_20d >= 0 ? '#EA4C4C' : '#3F9E5A' }">{{ num(row.inst_net_20d) }}</span>
       </template></el-table-column>
-      <el-table-column label="千張大戶%" width="100"><template #default="{ row }">{{ row.big1000_pct }}</template></el-table-column>
+      <el-table-column label="千張大戶%" width="130"><template #default="{ row }">
+        {{ row.big1000_pct }}
+        <el-tag v-if="row.big1000_up_weeks >= 2" size="small" type="danger" effect="plain">連{{ row.big1000_up_weeks }}週↑</el-tag>
+      </template></el-table-column>
       <el-table-column label="自選" width="66" fixed="right">
         <template #default="{ row }"><WatchlistAddButton :row="row" /></template>
       </el-table-column>

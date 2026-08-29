@@ -31,18 +31,21 @@ const showTarget = ref(true)
 const rsMin = ref(0)                                // RS 過濾（只顯示 RS ≥ 此值；0=不過濾）
 const epsQ = ref(4)                                 // EPS 過濾看幾季（1/2/4）
 const epsMin = ref('')                              // 近 epsQ 季「每季」EPS 門檻（空=不過濾）
+const accel = ref('')                               // 盈餘加速：qoq / yoy / both / ''=不過濾
 const items = ref([])
 const count = ref(0)
 const asOf = ref('')
 const loading = ref(false)
 
-// 前端即時過濾：RS ≥ rsMin，且近 epsQ 季「每季」EPS ≥ epsMin
+// 前端即時過濾：RS ≥ rsMin、盈餘加速、且近 epsQ 季「每季」EPS ≥ epsMin
 const shownItems = computed(() => {
   const rs = Number(rsMin.value) || 0
   const em = (epsMin.value === '' || epsMin.value == null) ? null : Number(epsMin.value)
   const nq = Number(epsQ.value) || 4
   let arr = items.value
   if (rs) arr = arr.filter((r) => (r.rs_rating ?? -1) >= rs)
+  if (accel.value === 'qoq' || accel.value === 'both') arr = arr.filter((r) => r.eps_accel)
+  if (accel.value === 'yoy' || accel.value === 'both') arr = arr.filter((r) => r.eps_yoy_accel)
   if (em != null && !Number.isNaN(em)) {
     arr = arr.filter((r) => {
       const e = r.eps_recent || []
@@ -52,6 +55,8 @@ const shownItems = computed(() => {
   }
   return arr
 })
+const filtering = computed(() => !!Number(rsMin.value) || !!accel.value
+  || (epsMin.value !== '' && epsMin.value != null))
 
 async function loadCatalog() {
   try {
@@ -107,6 +112,9 @@ const legend = [
   ['突破收盤', '突破那天的收盤價（＝突破後報酬的計算基準）'],
   ['量比', '突破當天成交量 ÷ 前 50 日均量（越大代表突破越有量）'],
   ['RS評等', '相對強弱評等 0~99，≥70 屬強勢'],
+  ['加速', '季增＝連兩季 EPS 一季比一季高；年增＝EPS 年增率逐季擴大（Minervini 盈餘加速）'],
+  ['PER位階', '目前本益比在該股近 3 年的百分位；低＝相對自己歷史便宜、高＝偏貴'],
+  ['千張大戶%', '集保持股 1000 張以上者的持股佔比；「連N週↑」＝連續 N 週增加'],
   ['股價', '最新收盤價（即時）'],
   ['近3月', '近 3 個月漲跌%'],
 ]
@@ -189,8 +197,15 @@ function downloadXlsx() {
         </el-select>
         <span style="color: #666; font-size: 13px">每季EPS &gt;</span>
         <el-input v-model="epsMin" type="number" size="small" placeholder="不限" style="width: 96px" clearable />
+        <span style="color: #666; font-size: 13px">盈餘加速</span>
+        <el-select v-model="accel" size="small" style="width: 150px">
+          <el-option label="不過濾" value="" />
+          <el-option label="連兩季 EPS 季增" value="qoq" />
+          <el-option label="年增率逐季擴大" value="yoy" />
+          <el-option label="兩者皆是" value="both" />
+        </el-select>
         <el-tag v-if="asOf">資料日 {{ asOf }}</el-tag>
-        <el-tag type="danger" effect="dark">符合 {{ shownItems.length }} 檔<span v-if="rsMin || (epsMin !== '' && epsMin != null)"> / 共 {{ count }}</span></el-tag>
+        <el-tag type="danger" effect="dark">符合 {{ shownItems.length }} 檔<span v-if="filtering"> / 共 {{ count }}</span></el-tag>
         <span style="color: #999; font-size: 12px">
           <template v-if="isNear">收盤已逼近頸線但<b>尚未</b>突破（距突破越小越接近）；帶量與否未過濾，請點列看圖確認</template>
           <template v-else>收盤突破/跌破頸線帶量。波段偵測有假訊號，請點列看圖確認</template>

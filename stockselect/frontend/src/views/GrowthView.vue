@@ -4,7 +4,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import * as XLSX from 'xlsx'
-import { getGrowthRank } from '../api'
+import { getGrowthRank, getIndustries } from '../api'
 import WatchlistAddButton from '../components/WatchlistAddButton.vue'
 import WatchlistBatchAdd from '../components/WatchlistBatchAdd.vue'
 
@@ -12,6 +12,8 @@ const router = useRouter()
 const sortKey = ref('eps_yoy')
 const accel = ref('')
 const secType = ref('stock')
+const industry = ref('')
+const industries = ref([])
 const minAmt = ref(20000000)
 const items = ref([])
 const sorts = ref({})
@@ -35,7 +37,7 @@ async function run() {
   try {
     const res = await getGrowthRank({
       sort: sortKey.value, accel: accel.value, security_type: secType.value,
-      min_amt: minAmt.value, limit: 150,
+      industry: industry.value, min_amt: minAmt.value, limit: 150,
     })
     items.value = res.items
     sorts.value = res.sorts
@@ -46,7 +48,10 @@ async function run() {
     loading.value = false
   }
 }
-onMounted(run)
+onMounted(async () => {
+  try { industries.value = await getIndustries() } catch (e) { /* 下拉沒清單不影響查詢 */ }
+  run()
+})
 
 function go(row, column) {
   if (column && column.type === 'selection') return
@@ -95,6 +100,10 @@ function downloadXlsx() {
         <el-select v-model="secType" style="width: 120px" @change="run">
           <el-option label="只個股" value="stock" />
           <el-option label="含 ETF" value="" />
+        </el-select>
+        <el-select v-model="industry" style="width: 170px" filterable clearable
+                   placeholder="全部產業" @change="run">
+          <el-option v-for="n in industries" :key="n" :label="n" :value="n" />
         </el-select>
         <span style="color: #666; font-size: 13px">日均額≥</span>
         <el-select v-model="minAmt" style="width: 120px" @change="run">
