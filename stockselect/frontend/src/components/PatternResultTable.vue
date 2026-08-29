@@ -13,6 +13,7 @@ defineProps({
   near: { type: Boolean, default: false },        // 接近突破模式：顯示「距突破%」、突破日改標「最新」
   showHold: { type: Boolean, default: false },    // 自選股：顯示進場價 / 進場日 / 持有報酬
   showTrack: { type: Boolean, default: false },   // 自選股：突破後實際 vs 型態回測期望對照
+  showTargetTrack: { type: Boolean, default: false },  // 自選股：滿足價達標追蹤（達標/進度/距滿足價）
 })
 const nearPct = (v) => (v == null ? '' : (Number(v) * 100).toFixed(1) + '%')
 // 「相對型態」提示：實際(順型態方向) − 該型態回測同期均報酬
@@ -114,6 +115,40 @@ function clearSel() { tableRef.value?.clearSelection(); selected.value = [] }
       <template #default="{ row }">
         <b v-if="row.track?.rel != null" :style="{ color: upc(row.track.rel) }">
           {{ row.track.rel >= 0 ? '▲優 ' : '▼弱 ' }}{{ nearPct(row.track.rel) }}</b>
+        <span v-else style="color: #ccc">—</span>
+      </template>
+    </el-table-column>
+    <el-table-column v-if="showTargetTrack" label="達標" width="94" sortable
+                     :sort-method="(a, b) => (a.target_track?.hit ? 1 : 0) - (b.target_track?.hit ? 1 : 0)">
+      <template #default="{ row }">
+        <span v-if="row.target_track?.hit" style="color: #67c23a">
+          ✔ {{ row.target_track.days_to_hit }} 日
+          <div style="color: #bbb; font-size: 11px; line-height: 1">{{ row.target_track.hit_date }}</div>
+        </span>
+        <span v-else-if="row.target_track" style="color: #999">
+          ✘ 未達
+          <div style="color: #bbb; font-size: 11px; line-height: 1">已 {{ row.target_track.days_elapsed }} 日</div>
+        </span>
+        <span v-else style="color: #ccc">—</span>
+      </template>
+    </el-table-column>
+    <el-table-column v-if="showTargetTrack" label="進度" width="96" sortable
+                     :sort-method="(a, b) => (a.target_track?.progress ?? -9) - (b.target_track?.progress ?? -9)">
+      <template #default="{ row }">
+        <span v-if="row.target_track">
+          <b :style="{ color: upc(row.target_track.progress) }">{{ nearPct(row.target_track.progress) }}</b>
+          <div style="color: #bbb; font-size: 11px; line-height: 1">
+            最佳 {{ nearPct(row.target_track.best_progress) }}</div>
+        </span>
+        <span v-else style="color: #ccc">—</span>
+      </template>
+    </el-table-column>
+    <el-table-column v-if="showTargetTrack" label="距滿足價" width="96" sortable
+                     :sort-method="(a, b) => (a.target_track?.gap_pct ?? 9) - (b.target_track?.gap_pct ?? 9)">
+      <template #default="{ row }">
+        <span v-if="row.target_track?.gap_pct != null"
+              :style="{ color: row.target_track.gap_pct <= 0 ? '#67c23a' : '#666' }">
+          {{ row.target_track.gap_pct <= 0 ? '已超過' : '還差' }} {{ nearPct(Math.abs(row.target_track.gap_pct)) }}</span>
         <span v-else style="color: #ccc">—</span>
       </template>
     </el-table-column>

@@ -11,7 +11,7 @@ from datetime import date
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import db
+from .. import db, target_track
 from .screen import _attach_last_pattern, _attach_recent_eps
 
 
@@ -36,6 +36,40 @@ def _pick_horizon(horizons, elapsed):
         if h >= elapsed:
             return h, False
     return horizons[-1], True                      # 已過觀察期，仍以最長持有期當參考
+
+def _attach_target_track(items):
+    """為有突破快照的列附上「量測滿足價」達成追蹤 row["target_track"]。
+
+    一次撈齊所有股票自最早突破日起的還原價日線，再依各自的突破日切片——
+    逐檔發 query 會有幾百次來回。
+    """
+    todo = [(r, r["breakout"]) for r in items
+            if r.get("breakout") and r["breakout"].get("target") and r["breakout"].get("breakout_date")]
+    if not todo:
+        return
+    ids = sorted({r["stock_id"] for r, _ in todo})
+    since = min(bk["breakout_date"][:10] for _, bk in todo)
+    rows = db.query(
+        "SELECT stock_id, trade_date, adj_high AS high, adj_low AS low, adj_close AS close "
+        "FROM price_daily WHERE stock_id = ANY(%(ids)s) AND trade_date >= %(d)s::date "
+        "  AND adj_close IS NOT NULL ORDER BY stock_id, trade_date",
+        {"ids": ids, "d": since})
+    by, dates = {}, {}
+    for b in rows:
+        by.setdefault(b["stock_id"], []).append(b)
+    for sid, bs in by.items():
+        dates[sid] = [b["trade_date"] for b in bs]
+    for r, bk in todo:
+        bs = by.get(r["stock_id"])
+        if not bs:
+            continue
+        i = bisect.bisect_left(dates[r["stock_id"]], date.fromisoformat(bk["breakout_date"][:10]))
+        t = target_track.track(bk, bs[i:])
+        if t:
+            if t.get("hit_date"):                     # date → 字串，給 JSON
+                t["hit_date"] = t["hit_date"].isoformat()
+            r["target_track"] = t
+
 
 router = APIRouter(prefix="/api/watchlist", tags=["watchlist"])
 
@@ -230,9 +264,11 @@ def category_items(cid: int):
         row["hold_pct"] = (round(float(cl) / float(ep) - 1, 4)
                            if (ep and cl is not None) else None)
         items.append(row)
+    _attach_target_track(items)                        # 量測滿足價：是否達標/幾天到/還差多少
     _attach_last_pattern(items)
     _attach_recent_eps(items)                          # 近 4 季 EPS（供前端「每季 EPS >」過濾）
-    return {"count": len(items), "as_of": as_of, "items": items}
+    return {"count": len(items), "as_of": as_of, "items": items,
+            "target_summary": target_track.summarize([i.get("target_track") for i in items])}
 
 
 @router.post("/items")

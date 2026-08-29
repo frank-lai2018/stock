@@ -16,6 +16,7 @@ const items = ref([])
 const asOf = ref('')
 const loading = ref(false)
 const showTarget = ref(true)      // 顯示/隱藏「量測滿足價 / 方向」兩欄
+const showTargetTrack = ref(true)  // 顯示/隱藏「達標 / 進度 / 距滿足價」三欄
 const showHold = ref(true)        // 顯示/隱藏「進場價 / 持有報酬」兩欄
 const rsMin = ref(0)              // RS 過濾（只顯示 RS ≥ 此值；0=不過濾）
 const epsQ = ref(4)               // EPS 過濾看幾季（1/2/4）
@@ -177,6 +178,12 @@ function downloadXlsx() {
     ['實際(順勢)%', (r) => (r.track?.actual == null ? '' : Number((r.track.actual * 100).toFixed(2)))],
     ['型態同期均%', (r) => (r.track?.exp_ret == null ? '' : Number((r.track.exp_ret * 100).toFixed(2)))],
     ['相對型態%', (r) => (r.track?.rel == null ? '' : Number((r.track.rel * 100).toFixed(2)))],
+    ['滿足價', (r) => r.target_track?.target ?? ''],
+    ['是否達標', (r) => (r.target_track ? (r.target_track.hit ? '是' : '否') : '')],
+    ['達標天數', (r) => r.target_track?.days_to_hit ?? ''],
+    ['達標日', (r) => r.target_track?.hit_date ?? ''],
+    ['進度%', (r) => (r.target_track ? Number((r.target_track.progress * 100).toFixed(1)) : '')],
+    ['距滿足價%', (r) => (r.target_track?.gap_pct == null ? '' : Number((r.target_track.gap_pct * 100).toFixed(2)))],
     ['近3月%', (r) => (r.ret_3m == null ? '' : Number((r.ret_3m * 100).toFixed(2)))],
     ['產業', (r) => r.industry],
     ['加入時間', (r) => (r.added_at ? r.added_at.slice(0, 10) : '')],
@@ -211,6 +218,7 @@ function downloadXlsx() {
         <el-button type="primary" :disabled="!picked" @click="addPicked">加入本分類</el-button>
         <el-button type="success" :disabled="!shownItems.length" @click="downloadXlsx">⬇ 下載 Excel</el-button>
         <el-checkbox v-model="showTarget" size="small" label="滿足價/方向" border />
+        <el-checkbox v-model="showTargetTrack" size="small" label="達標/進度" border />
         <el-checkbox v-model="showHold" size="small" label="進場價/持有報酬" border />
         <span style="color: #666; font-size: 13px">RS &gt;</span>
         <el-input-number v-model="rsMin" :min="0" :max="99" :step="5" size="small" controls-position="right" style="width: 110px" />
@@ -243,7 +251,7 @@ function downloadXlsx() {
       </el-collapse>
 
       <PatternResultTable :items="shownItems" :loading="loading" :show-target="showTarget" :show-dir="true"
-                          :show-hold="showHold" :show-track="true">
+                          :show-hold="showHold" :show-track="true" :show-target-track="showTargetTrack">
         <template #action="{ row }">
           <el-button size="small" text bg circle title="移出自選" @click.stop="removeItem(row)">✕</el-button>
         </template>
