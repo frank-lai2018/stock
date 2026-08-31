@@ -78,6 +78,15 @@ export const addTrade = (t) => api.post('/trades', t).then((r) => r.data)
 export const deleteTrade = (id) => api.delete(`/trades/${id}`).then((r) => r.data)
 
 // 自選股（自建分類 + 成員）
+// 看圖練習器
+export const newDrill = (bars = 120, horizon = 20) =>
+  api.post('/drill/new', null, { params: { bars, horizon } }).then((r) => r.data)
+export const answerDrill = (id, payload) => api.post(`/drill/${id}/answer`, payload).then((r) => r.data)
+export const revealDrill = (id) => api.post(`/drill/${id}/reveal`).then((r) => r.data)
+export const getDrillStats = () => api.get('/drill/stats').then((r) => r.data)
+export const getDrillHistory = (limit = 50) =>
+  api.get('/drill/history', { params: { limit } }).then((r) => r.data)
+
 export const getWatchCategories = () => api.get('/watchlist/categories').then((r) => r.data)
 export const addWatchCategory = (name) => api.post('/watchlist/categories', { name }).then((r) => r.data)
 export const renameWatchCategory = (id, name) =>

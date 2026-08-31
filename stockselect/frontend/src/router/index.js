@@ -16,6 +16,7 @@ export default createRouter({
     { path: '/watchlist', name: 'watchlist', component: () => import('../views/WatchlistView.vue') },
     { path: '/portfolio', name: 'portfolio', component: () => import('../views/PortfolioView.vue') },
     { path: '/review', name: 'review', component: () => import('../views/TradeReviewView.vue') },
+    { path: '/drill', name: 'drill', component: () => import('../views/DrillView.vue') },
     { path: '/stock/:id', name: 'stock', component: () => import('../views/StockDetailView.vue') },
   ],
 })

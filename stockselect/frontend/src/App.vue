@@ -21,6 +21,7 @@ const route = useRoute()
         <el-menu-item index="/watchlist">自選股</el-menu-item>
         <el-menu-item index="/portfolio">持股診斷</el-menu-item>
         <el-menu-item index="/review">交易復盤</el-menu-item>
+        <el-menu-item index="/drill">看圖練習</el-menu-item>
       </el-menu>
       <SearchBox />
     </el-header>
