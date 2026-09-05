@@ -3,9 +3,13 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import * as echarts from 'echarts'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getMarketOverview, getMarketIndex, getMovers, getSectors, getMoneyflow, getMarketMargin } from '../api'
+import { getMarketOverview, getMarketIndex, getMovers, getSectors, getMoneyflow, getMarketMargin,
+         getDrawingAlerts } from '../api'
 
 const router = useRouter()
+async function loadAlerts() {
+  try { alerts.value = await getDrawingAlerts(0.02) } catch (e) { /* 沒畫線或後端舊版 → 不顯示 */ }
+}
 const ov = ref(null)
 const moverType = ref('gainers')
 const movers = ref([])
@@ -14,6 +18,13 @@ const sectors = ref([])
 const flow = ref([])
 const marginMarket = ref('ALL')                   // 大盤信用交易：ALL 合計 / TWSE 上市 / TPEx 上櫃
 const marginRows = ref([])
+// 手繪線警報：把個股圖上畫的趨勢線/水平線延伸到今天，比對收盤有沒有穿越
+const alerts = ref({ count: 0, as_of: null, items: [] })
+const SIG = {
+  break_down: { type: 'success', label: '跌破' },      // 綠＝偏空（台股慣例）
+  break_up: { type: 'danger', label: '站上' },
+  near: { type: 'warning', label: '接近' },
+}
 const chartEl = ref(null)
 let chart = null
 const idxSel = ref('TWSE')                        // 走勢圖選擇的指數（TWSE=加權股價指數）
@@ -70,6 +81,7 @@ onMounted(async () => {
     await loadMovers()
     await loadSectors()
     await loadMargin()
+    await loadAlerts()
   } catch (e) {
     ElMessage.error('載入大盤失敗：' + (e?.response?.data?.detail || e.message))
   }
@@ -139,6 +151,44 @@ function go(id) { router.push(`/stock/${id}`) }
         <template v-else><div style="font-size: 20px; margin-top: 6px">—</div></template>
       </el-card>
     </div>
+
+    <!-- 手繪線警報：只有真的觸發才顯示，沒畫線就完全不佔版面 -->
+    <el-card v-if="alerts.count" shadow="never" style="margin-top: 16px">
+      <template #header>
+        <span style="font-weight: 600">✏ 手繪線警報</span>
+        <el-tag type="danger" effect="dark" size="small" style="margin-left: 8px">{{ alerts.count }} 筆</el-tag>
+        <span style="color: #999; font-size: 12px; margin-left: 8px">
+          你在個股 K 線上畫的線延伸到 {{ alerts.as_of }}，與收盤比對；點列看圖
+        </span>
+      </template>
+      <el-table :data="alerts.items" size="small" stripe style="cursor: pointer"
+                @row-click="(r) => router.push(`/stock/${r.stock_id}`)">
+        <el-table-column label="訊號" width="86">
+          <template #default="{ row }">
+            <el-tag :type="SIG[row.signal].type" size="small" effect="dark">{{ SIG[row.signal].label }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="stock_id" label="代碼" width="76" />
+        <el-table-column prop="name" label="名稱" width="110" />
+        <el-table-column prop="text" label="說明" min-width="220" />
+        <el-table-column label="收盤" width="90" align="right"><template #default="{ row }">{{ row.close }}</template></el-table-column>
+        <el-table-column label="線價位" width="90" align="right"><template #default="{ row }">{{ row.line }}</template></el-table-column>
+        <el-table-column label="距線" width="90" align="right">
+          <template #default="{ row }">
+            <span :style="{ color: row.gap >= 0 ? '#EA4C4C' : '#3F9E5A' }">
+              {{ row.gap == null ? '—' : (row.gap >= 0 ? '+' : '') + (row.gap * 100).toFixed(2) + '%' }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="線別" width="150">
+          <template #default="{ row }">
+            <span style="color: #666">{{ row.tool_name }}</span>
+            <span style="color: #bbb; font-size: 12px; margin-left: 4px">{{ row.period }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="note" label="備註" min-width="120" show-overflow-tooltip />
+      </el-table>
+    </el-card>
 
     <el-card shadow="never" style="margin-top: 16px">
       <template #header>

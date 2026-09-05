@@ -9,6 +9,7 @@
 故以 (stock_id, period, adj) 分組存取，切換週期只會看到該組畫過的線。
 """
 import json
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -76,6 +77,138 @@ def _clean_points(points):
     if not out:
         raise HTTPException(400, "points 至少要有一個含 timestamp/value 的點")
     return out
+
+
+TOOL_NAME = {"rayLine": "趨勢線", "segment": "線段", "straightLine": "直線",
+             "horizontalStraightLine": "水平線", "horizontalRayLine": "水平射線",
+             "horizontalSegment": "水平線段", "priceChannelLine": "平行通道",
+             "parallelStraightLine": "平行線", "fibonacciLine": "費波南希", "priceLine": "價格線"}
+FLAT_TOOLS = {"horizontalStraightLine", "horizontalRayLine", "horizontalSegment", "priceLine"}
+
+
+def _ms(d):
+    """交易日 → 毫秒 timestamp（與前端 klinecharts 存的 points 同基準：UTC 當日零時）。"""
+    return int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp() * 1000)
+
+
+def _bars(stock_id, period, adj, n=2):
+    """該股在此週期／還原設定下最近 n 根 K 棒的 (日期, 收盤)，由舊到新。"""
+    col = "adj_close" if adj else "close"
+    if period == "D":
+        rows = db.query(
+            f"SELECT * FROM (SELECT trade_date, {col} AS close FROM price_daily WHERE stock_id=%(id)s "
+            "ORDER BY trade_date DESC LIMIT %(n)s) z ORDER BY trade_date", {"id": stock_id, "n": n})
+    else:
+        unit = {"W": "week", "M": "month"}.get(period, "week")
+        rows = db.query(
+            "SELECT * FROM (SELECT date_trunc(%(u)s, trade_date)::date AS trade_date, "
+            f"  (array_agg({col} ORDER BY trade_date DESC))[1] AS close "
+            "  FROM price_daily WHERE stock_id=%(id)s GROUP BY 1 ORDER BY 1 DESC LIMIT %(n)s) z "
+            "ORDER BY trade_date", {"id": stock_id, "u": unit, "n": n})
+    return [(r["trade_date"], float(r["close"])) for r in rows if r["close"] is not None]
+
+
+def _line_at(pts, tool, ts):
+    """線在時間 ts 的價位；工具的有效範圍外回 None（線段畫完就結束、射線不往回延伸）。"""
+    ps = [(p.get("timestamp"), p.get("value")) for p in (pts or [])
+          if p.get("timestamp") is not None and p.get("value") is not None]
+    if not ps:
+        return None
+    if tool in FLAT_TOOLS:
+        return float(ps[0][1])
+    if len(ps) < 2:
+        return None
+    (t0, v0), (t1, v1) = ps[0], ps[1]
+    if t1 == t0:
+        return None
+    if tool == "segment" and not (min(t0, t1) <= ts <= max(t0, t1)):
+        return None                                   # 線段只在兩點之間有效
+    if tool == "rayLine" and ts < min(t0, t1):
+        return None                                   # 射線不往起點左邊延伸
+    return float(v0) + (float(v1) - float(v0)) / (t1 - t0) * (ts - t0)
+
+
+def _values_at(d, ts):
+    """回傳 [(子線名, 價位)]；平行通道有主軌+平行軌，其餘一條。"""
+    tool, pts = d["tool"], d.get("points") or []
+    base = _line_at(pts, tool, ts)
+    if base is None:
+        return []
+    if tool in ("priceChannelLine", "parallelStraightLine") and len(pts) >= 3:
+        anchor = _line_at(pts, tool, pts[2].get("timestamp"))
+        if anchor is not None and pts[2].get("value") is not None:
+            return [("主軌", base), ("平行軌", base + float(pts[2]["value"]) - anchor)]
+    return [("", base)]
+
+
+@router.get("/alerts")
+def alerts(band: float = 0.02):
+    """手繪線警報：把每條線延伸到最新一根 K 棒，比對收盤價。
+
+    穿越判定用「前一根 vs 這一根」：由上而下穿過＝跌破、由下而上穿過＝站上；
+    沒穿越但距線在 band 內（預設 2%）回報「接近」。
+    上升線（斜率為正）是支撐、下降線是壓力，所以同樣是跌破，意義不同。
+    費波南希多層次、雜訊高，不納入警報。
+    """
+    _ensure()
+    rows = db.query("SELECT id, stock_id, period, adj, tool, points, note FROM chart_drawing "
+                    "WHERE tool <> 'fibonacciLine' ORDER BY stock_id")
+    if not rows:
+        return {"count": 0, "as_of": None, "items": []}
+    names = {r["stock_id"]: r["name"] for r in
+             db.query("SELECT stock_id, name FROM stock WHERE stock_id = ANY(%(ids)s)",
+                      {"ids": sorted({r["stock_id"] for r in rows})})}
+    cache, out, as_of = {}, [], None
+    for d in rows:
+        key = (d["stock_id"], d["period"], d["adj"])
+        if key not in cache:
+            cache[key] = _bars(*key)
+        bars = cache[key]
+        if len(bars) < 2:
+            continue
+        (pd_, pc), (cd, cc) = bars[-2], bars[-1]
+        if d["period"] == "D" and (as_of is None or cd.isoformat() > as_of):
+            as_of = cd.isoformat()
+        cur = _values_at(d, _ms(cd))
+        prev = dict(_values_at(d, _ms(pd_)))
+        for label, line in cur:
+            pline = prev.get(label)
+            sig = None
+            if pline is not None:
+                if pc >= pline and cc < line:
+                    sig = "break_down"
+                elif pc <= pline and cc > line:
+                    sig = "break_up"
+            gap = cc / line - 1 if line else None
+            if sig is None and gap is not None and abs(gap) <= band:
+                sig = "near"
+            if not sig:
+                continue
+            slope = (line - pline) if pline is not None else 0
+            kind = ("水平線" if d["tool"] in FLAT_TOOLS else
+                    "上升趨勢線" if slope > 0 else "下降趨勢線" if slope < 0 else "水平趨勢線")
+            out.append({
+                "id": d["id"], "stock_id": d["stock_id"], "name": names.get(d["stock_id"], d["stock_id"]),
+                "period": d["period"], "adj": d["adj"], "tool": d["tool"],
+                "tool_name": TOOL_NAME.get(d["tool"], d["tool"]) + (f"·{label}" if label else ""),
+                "kind": kind, "note": d.get("note"),
+                "date": cd.isoformat(), "close": round(cc, 2), "line": round(line, 2),
+                "gap": round(gap, 4) if gap is not None else None,
+                "signal": sig,
+                "text": _alert_text(sig, kind, gap),
+            })
+    order = {"break_down": 0, "break_up": 1, "near": 2}
+    out.sort(key=lambda x: (order[x["signal"]], abs(x["gap"] or 0)))
+    return {"count": len(out), "as_of": as_of, "items": out}
+
+
+def _alert_text(sig, kind, gap):
+    if sig == "break_down":
+        return f"跌破{kind}" + ("（支撐失守）" if kind == "上升趨勢線" else "")
+    if sig == "break_up":
+        return f"站上{kind}" + ("（壓力突破）" if kind == "下降趨勢線" else "")
+    side = "上方" if (gap or 0) >= 0 else "下方"
+    return f"逼近{kind}（在線{side} {abs(gap or 0) * 100:.1f}%）"
 
 
 @router.get("")

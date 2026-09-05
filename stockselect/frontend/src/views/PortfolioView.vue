@@ -23,6 +23,13 @@ const LEVEL = {
 }
 const dirColor = { bull: '#EA4C4C', bear: '#3F9E5A', neutral: '#909399' }
 
+// 停利／停損警示（來自復盤發現：賠錢單中途平均曾浮盈 +3.94%，17 筆曾賺逾 10% 最後收黑）
+const ALERT = {
+  trim: { label: '該停利', type: 'warning', hint: '曾賺逾 10%，已回吐一半以上獲利' },
+  watch: { label: '留意', type: 'info', hint: '曾賺逾 10%，開始回吐獲利' },
+  stop: { label: '該停損', type: 'danger', hint: '未實現虧損已逾 10%' },
+}
+
 const money = (v) => (v == null ? '—' : Math.round(Number(v)).toLocaleString('en-US'))
 const pct = (v) => (v == null ? '—' : (v >= 0 ? '+' : '') + (Number(v) * 100).toFixed(2) + '%')
 const up = (v) => (v == null ? '' : Number(v) >= 0 ? '#EA4C4C' : '#3F9E5A')
@@ -140,6 +147,17 @@ onMounted(load)
         </div>
       </el-card>
       <el-card shadow="never" style="flex: 1 1 240px">
+        <div style="color: #999">停利／停損監控</div>
+        <div style="font-size: 16px; margin-top: 6px" v-if="data.summary.alerts">
+          <span style="color: #E6A23C">該停利 {{ data.summary.alerts.trim }}</span>
+          <span style="color: #909399; margin: 0 8px">留意 {{ data.summary.alerts.watch }}</span>
+          <span style="color: #EA4C4C">該停損 {{ data.summary.alerts.stop }}</span>
+        </div>
+        <div style="color: #999; font-size: 12px; margin-top: 6px">
+          以「最後一次加碼日」起算最大浮盈，回吐過半即提醒
+        </div>
+      </el-card>
+      <el-card shadow="never" style="flex: 1 1 240px">
         <div style="color: #999">診斷分佈（{{ data.summary.n }} 檔）</div>
         <div style="font-size: 16px; margin-top: 6px">
           <span style="color: #EA4C4C">續抱 {{ data.summary.levels.strong }}</span>
@@ -180,6 +198,32 @@ onMounted(load)
             <template #default="{ row }">
               <span :style="{ color: up(row.unrealized_pct) }">{{ pct(row.unrealized_pct) }}</span>
               <span v-if="row.unrealized != null" style="color: #999; font-size: 12px"> {{ money(row.unrealized) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="曾賺" width="120">
+            <template #default="{ row }">
+              <span :style="{ color: up(row.peak_gain) }">{{ pct(row.peak_gain) }}</span>
+              <div v-if="row.peak_date" style="color: #bbb; font-size: 11px; line-height: 1">
+                高點 {{ row.peak_date.slice(5) }} @{{ row.peak_price }}
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="回吐" width="110">
+            <template #default="{ row }">
+              <span v-if="row.giveback != null" style="color: #3F9E5A">
+                −{{ (row.giveback * 100).toFixed(1) }}pp
+              </span>
+              <span v-else>—</span>
+              <div v-if="row.giveback_ratio != null" style="color: #bbb; font-size: 11px; line-height: 1">
+                吐回 {{ (row.giveback_ratio * 100).toFixed(0) }}%
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="警示" width="92">
+            <template #default="{ row }">
+              <el-tooltip v-if="row.alert" :content="ALERT[row.alert].hint" placement="top">
+                <el-tag :type="ALERT[row.alert].type" size="small" effect="dark">{{ ALERT[row.alert].label }}</el-tag>
+              </el-tooltip>
             </template>
           </el-table-column>
           <el-table-column label="支撐/壓力" width="126">

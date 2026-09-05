@@ -63,6 +63,8 @@ export const getDrawings = (stock_id, period = 'D', adj = true) =>
 export const addDrawing = (payload) => api.post('/drawings', payload).then((r) => r.data)
 export const updateDrawing = (id, payload) => api.put(`/drawings/${id}`, payload).then((r) => r.data)
 export const deleteDrawing = (id) => api.delete(`/drawings/${id}`).then((r) => r.data)
+export const getDrawingAlerts = (band = 0.02) =>
+  api.get('/drawings/alerts', { params: { band } }).then((r) => r.data)
 export const clearDrawings = (stock_id, period = 'D', adj = true) =>
   api.delete('/drawings', { params: { stock_id, period, adj } }).then((r) => r.data)
 

@@ -59,4 +59,10 @@ def build(txns):
         "realized_pnl": round(realized),
         "closed": closed,
         "buy_shares": round(buy_shares, 3), "sell_shares": round(sell_shares, 3),
+        # 未平倉的買批（FIFO 未配對者）：停利監控要用「最早那批的買進日」當觀察起點
+        "open_lots": [{"shares": round(x[0], 3), "price": x[1], "date": x[2].isoformat()} for x in fifo],
+        "first_open_date": fifo[0][2].isoformat() if fifo else None,
+        # 最後一批未平倉買進日：avg_cost 要到這天才成立（加碼攤平會拉低均價），
+        # 停利監控的「曾賺多少」必須從這天起算，否則會把加碼前的高點當成浮盈。
+        "last_open_date": max(x[2] for x in fifo).isoformat() if fifo else None,
     }

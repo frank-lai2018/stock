@@ -69,8 +69,17 @@ def _last_patterns(ids):
 
 
 @router.get("/portfolio")
-def portfolio(year: int | None = None):
-    """未平倉持股 + 每檔診斷 + 未實現損益，及組合總覽。
+def portfolio(year: int | None = None, peak_min: float = 0.10,
+              giveback: float = 0.5, stop_pct: float = -0.10):
+    """未平倉持股 + 每檔診斷 + 未實現損益 + 停利監控，及組合總覽。
+
+    停利監控（回應交易復盤的發現：賠錢單中途平均曾浮盈 +3.94%，17 筆曾賺逾 10% 最後收黑）：
+    以「最後一次加碼日」為起點（均價要到部位建完才成立；用最早買進日會把加碼前的高點
+    當成浮盈），取期間最高價算最大浮盈，再看目前回吐了多少獲利。
+      peak_min  觸發監控的最低曾浮盈（0.10＝曾賺 10% 才管）
+      giveback  回吐比例達此值 → alert=trim（該考慮停利）；達 0.6 倍 → watch
+      stop_pct  未實現跌破此值 → alert=stop（停損提醒）
+    最高價用未還原價，與實際成交價同基準。
 
     未平倉部位／未實現／診斷分佈＝目前持股（當下快照）；已實現損益與總損益
     只計算 `year`（預設當年度）內賣出配對的部分。回傳 years 供前端下拉。
@@ -94,6 +103,19 @@ def portfolio(year: int | None = None):
              db.query("SELECT * FROM mv_stock_snapshot WHERE stock_id = ANY(%(ids)s)", {"ids": open_ids})} \
         if open_ids else {}
     pats = _last_patterns(open_ids)
+
+    # 進場後最高價 + 那天的日期（停利監控用；未還原價，對齊實際成交價）
+    peaks = {}
+    spans = [(sid, leds[sid]["last_open_date"]) for sid in open_ids if leds[sid].get("last_open_date")]
+    if spans:
+        for r in db.query(
+                "SELECT DISTINCT ON (p.stock_id) p.stock_id, p.trade_date, p.high FROM price_daily p "
+                "JOIN unnest(%(ids)s::text[], %(d0)s::date[]) AS r(sid, d0) "
+                "  ON p.stock_id = r.sid AND p.trade_date >= r.d0 "
+                "ORDER BY p.stock_id, p.high DESC, p.trade_date",
+                {"ids": [x[0] for x in spans], "d0": [x[1] for x in spans]}):
+            peaks[r["stock_id"]] = (float(r["high"]), r["trade_date"].isoformat())
+    alerts_cnt = {"trim": 0, "watch": 0, "stop": 0}
 
     items, as_of = [], None
     tot_mv = tot_cost = 0.0
@@ -119,6 +141,22 @@ def portfolio(year: int | None = None):
         sup = next((x["price"] for x in lv if x["type"] == "support"), None) \
             or next((x["price"] for x in lv if x["type"] == "neckline"), None)
 
+        # 停利監控：曾經最多賺多少 → 現在回吐了幾成
+        pk, pk_date = peaks.get(sid, (None, None))
+        peak_gain = (pk / avg_cost - 1) if (pk and avg_cost) else None
+        give = (peak_gain - unreal_pct) if (peak_gain is not None and unreal_pct is not None) else None
+        give_ratio = (give / peak_gain) if (peak_gain and peak_gain > 0 and give is not None) else None
+        alert = None
+        if unreal_pct is not None and unreal_pct <= stop_pct:
+            alert = "stop"                                   # 已虧損逾門檻 → 停損提醒
+        elif peak_gain is not None and peak_gain >= peak_min and give_ratio is not None:
+            if give_ratio >= giveback:
+                alert = "trim"                               # 賺過又吐回大半 → 該考慮停利
+            elif give_ratio >= giveback * 0.6:
+                alert = "watch"
+        if alert:
+            alerts_cnt[alert] += 1
+
         if s and s.get("as_of_date"):
             as_of = s["as_of_date"].isoformat()
         items.append({
@@ -132,6 +170,10 @@ def portfolio(year: int | None = None):
             "vpa_distrib_20d": s.get("vpa_distrib_20d") if s else None,
             "support": sup, "resistance": res,
             "last_patterns": pats.get(sid, []),
+            "entry_date": leds[sid].get("first_open_date"),
+            "basis_date": leds[sid].get("last_open_date"),      # 均價成立日＝最後一次加碼
+            "peak_price": pk, "peak_date": pk_date, "peak_gain": peak_gain,
+            "giveback": give, "giveback_ratio": give_ratio, "alert": alert,
         })
         levels_cnt[dg["level"]] += 1
         if s and s.get("rs_rating") is not None:
@@ -179,6 +221,7 @@ def portfolio(year: int | None = None):
         "accum_n": accum_n, "distrib_n": distrib_n,
         "top_industry": top_ind[0] if top_ind else None,
         "top_industry_share": round(top_ind[1] / tot_mv * 100, 1) if (top_ind and tot_mv) else None,
+        "alerts": alerts_cnt,
         "year": year,
     }
     return {"items": items, "summary": summary, "realized": realized, "as_of": as_of,
