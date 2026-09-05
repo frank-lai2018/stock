@@ -4,6 +4,14 @@ r"""nightly.py — 排程大腦：每晚無腦執行這一支，由它依「今�
   python nightly.py --dsn "postgresql://frank:pwd@localhost:5432/twstock"
 （或設環境變數 DATABASE_URL / FINMIND_TOKEN 後直接 python nightly.py）
 
+補跑（例：漏了 9/3、9/4 兩個交易日）：依日期先後跑，只有最後一天讓它 refresh
+（還原價是累積計算的，順序不可顛倒；mv_stock_snapshot 刷新一次要 ~200 秒，不必每天刷）：
+  python nightly.py --only daily --date 2026-09-03 --skip-refresh
+  python nightly.py --only daily --date 2026-09-04
+連線字串請走環境變數，別寫進這個檔（本檔有進版控）：
+  PowerShell：$env:DATABASE_URL = "postgresql://USER:PASSWORD@localhost:5432/twstock"
+  或每條指令帶 --dsn "$env:DATABASE_URL"
+
 它管理的工作與排程規則：
   daily      每晚都跑 daily_update.py（股價+法人+融資+PER）；非交易日腳本自己會跳過。
   holderdist 每晚檢查 update_holderdist.py（集保股權分散；TDCC 週資料，idempotent 自動抓最新週 + 存快照）。
