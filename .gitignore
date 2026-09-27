@@ -16,3 +16,6 @@ finmind_rate_state.json.*.tmp
 # Python 編譯快取（本機產物，勿進版控）
 __pycache__/
 *.pyc
+
+# 族群候選清單（theme_candidates.py 產生、人工勾選的工作檔，勿進版控）
+族群候選_*.csv

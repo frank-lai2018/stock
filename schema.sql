@@ -5,6 +5,7 @@
 --   1) 建 database：  psql -U postgres -c "CREATE DATABASE twstock ENCODING 'UTF8';"
 --   2) 建核心表：     psql -U postgres -d twstock -f schema.sql
 --   3) RAG 向量表：   裝好 pgvector 後再跑 schema_rag.sql
+--   4) 族群分類表：   psql -U postgres -d twstock -f schema_theme.sql（L2 產業鏈／L3 題材／每日熱度，見 族群分類設計.md）
 --
 -- 全部 CREATE ... IF NOT EXISTS，可重複執行。
 
