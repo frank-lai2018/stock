@@ -14,6 +14,7 @@ const route = useRoute()
         <el-menu-item index="/screener">選股器</el-menu-item>
         <el-menu-item index="/patterns">型態選股</el-menu-item>
         <el-menu-item index="/breakout">型態突破</el-menu-item>
+        <el-menu-item index="/breakout-decision">突破決策</el-menu-item>
         <el-menu-item index="/toppattern">頭部反轉</el-menu-item>
         <el-menu-item index="/continuation">整理突破</el-menu-item>
         <el-menu-item index="/near-breakout">接近突破</el-menu-item>

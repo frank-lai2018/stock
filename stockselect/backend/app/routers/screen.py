@@ -4,6 +4,7 @@ import contextlib
 from fastapi import APIRouter, HTTPException
 
 from .. import db, patterns, swings
+from ..breakout_rank import score_breakout
 from ..filters import SORT_WHITELIST, build_where
 from ..schemas import ScreenRequest
 
@@ -296,7 +297,8 @@ def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 1
                      mode: str = "breakout", near_band: float = 0.05, recent: int = 3):
     """全市場掃描型態（Python 波段偵測，非 MV 篩選）。
 
-    group：bottom（底部反轉）/ top（頭部反轉）/ continuation（連續整理）。
+    group：bottom（底部反轉）/ top（頭部反轉）/ continuation（連續整理）/
+           bull（底部反轉＋整理突破，供突破決策頁使用）。
     pattern：型態 key，或 all=該組全部（依優先序，每檔取第一個命中）。可逗號多選。
     mode：breakout＝已確認突破（收盤穿頸線帶量）；near＝接近突破（收盤在頸線 near_band 內、尚未穿越）。
     recent：突破觀察窗（幾個交易日內發生的突破才收錄，預設 3；近2週≈10、近1月≈20）。
@@ -304,7 +306,8 @@ def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 1
     """
     rec = max(1, min(int(recent), 25))
     if pattern in ("", "all"):
-        keys = list(swings.GROUPS.get(group, swings.DETECTORS))
+        keys = list(swings.DETECTORS) + list(swings.DETECTORS_CONT) if group == "bull" \
+            else list(swings.GROUPS.get(group, swings.DETECTORS))
     else:
         keys = [p for p in pattern.split(",") if p in swings.ALL]
     if not keys:
@@ -339,6 +342,18 @@ def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 1
             for key in keys:                          # 依優先序，取第一個命中的型態
                 bk = swings.ALL[key](bars, recent=rec)
                 if bk:
+                    # bull 是「多方決策」集合；整理型態可能回傳 bear，略過後繼續找下一種多方型態。
+                    if group == "bull" and bk.get("dir") == "bear":
+                        continue
+                    # 決策頁需要一致的參考風險：最後 14 日 ATR、目前還原收盤。
+                    if len(bars) >= 15:
+                        trs = []
+                        for prev, cur in zip(bars[-15:-1], bars[-14:]):
+                            pc = float(prev["close"])
+                            hi, lo = float(cur["high"]), float(cur["low"])
+                            trs.append(max(hi - lo, abs(hi - pc), abs(lo - pc)))
+                        bk["atr14"] = round(sum(trs) / len(trs), 4) if trs else None
+                    bk["current_adj_close"] = round(float(bars[-1]["close"]), 4)
                     if near is not None:              # 附上「距突破%」（尚需上漲/下跌多少才觸發）
                         lvl, cl = bk.get("neckline"), bk.get("breakout_close")
                         if bk.get("dir") == "bear":
@@ -365,3 +380,30 @@ def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 1
     _attach_recent_eps(out)                           # 近 4 季 EPS（供前端「每季 EPS >」過濾）
     as_of = out[0]["as_of_date"].isoformat() if out and out[0].get("as_of_date") else None
     return {"count": len(out), "as_of": as_of, "items": out}
+
+
+@router.get("/screen/breakout-ranking")
+def breakout_ranking(security_type: str = "stock", min_amt: int = 20000000,
+                     recent: int = 3, limit: int = 200):
+    """多方突破決策排行：底部反轉＋整理突破，附可解釋的五面向分數與風險檢查。"""
+    scan = pattern_breakout(pattern="all", group="bull", limit=500,
+                            security_type=security_type, min_amt=max(0, int(min_amt)),
+                            mode="breakout", recent=recent)
+    bt_rows = db.query(
+        "SELECT pattern,n,win_rate,avg_ret,median_ret,avg_excess "
+        "FROM pattern_backtest WHERE horizon=20") \
+        if db.query("SELECT to_regclass('public.pattern_backtest') AS t")[0]["t"] else []
+    bt = {r["pattern"]: dict(r) for r in bt_rows}
+    for row in scan["items"]:
+        row["decision"] = score_breakout(row, bt.get(row.get("pattern")))
+    scan["items"].sort(key=lambda r: (
+        {"priority": 2, "watch": 1, "skip": 0}[r["decision"]["status"]],
+        r["decision"]["score"], r.get("rs_rating") or 0), reverse=True)
+    scan["items"] = scan["items"][:max(1, min(int(limit), 500))]
+    scan["count"] = len(scan["items"])
+    scan["summary"] = {
+        k: sum(1 for r in scan["items"] if r["decision"]["status"] == k)
+        for k in ("priority", "watch", "skip")
+    }
+    scan["method"] = "規則評分 v1；分數用於同批相對排序，不代表預測報酬"
+    return scan

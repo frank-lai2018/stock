@@ -28,6 +28,8 @@ export const getThemeOptions = () => api.get('/themes/options').then((r) => r.da
 export const runScreen = (payload) => api.post('/screen', payload).then((r) => r.data)
 export const screenBreakout = (params = {}) =>
   api.get('/screen/pattern-breakout', { params }).then((r) => r.data)
+export const getBreakoutRanking = (params = {}) =>
+  api.get('/screen/breakout-ranking', { params }).then((r) => r.data)
 export const getBreakoutPatterns = (group = 'bottom') =>
   api.get('/screen/breakout-patterns', { params: { group } }).then((r) => r.data)
 export const getPatternBacktest = () => api.get('/screen/backtest').then((r) => r.data)

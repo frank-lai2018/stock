@@ -11,6 +11,7 @@
 把「散在各表的台股資料」變成一套**可互動選股**的網頁工具：
 
 - **選股器**：用動能 / 基本面 / 估值 / 籌碼條件篩選，結果依分數排名。
+- **突破決策**：把底部反轉與整理突破候選做五面向評分，列出參考停損、報酬風險比與淘汰原因。
 - **預設策略**：動能股 / 價值成長 / 高息存股 / 籌碼強勢，一鍵套用。
 - **個股頁**：還原 K 線圖 + 基本面 + 籌碼（法人/融資/大戶）+ 新聞。
 - **自選股**：加入追蹤、批次看訊號。
@@ -104,6 +105,7 @@ stockselect/
 |--------|------|------|-----------|
 | GET | `/api/strategies` | 預設策略清單（動能/價值/高息/籌碼）| — |
 | POST | `/api/screen` | 依條件篩選 + 排名，回傳股票清單 | `mv_stock_snapshot` |
+| GET | `/api/screen/breakout-ranking` | 多方突破二次評分與風險檢查 | `mv_stock_snapshot`, `price_daily`, `pattern_backtest` |
 | GET | `/api/stock/{id}` | 個股最新特徵快照 | `mv_stock_snapshot`, `stock` |
 | GET | `/api/stock/{id}/prices?from&to&adj=1` | K 線 OHLC（還原）| `price_daily` |
 | GET | `/api/stock/{id}/chips?days=60` | 法人/融資/大戶時序 | `inst_trades`,`margin_trading`,`shareholding_dist` |
