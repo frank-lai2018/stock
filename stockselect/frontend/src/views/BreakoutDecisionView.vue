@@ -8,6 +8,10 @@ const loading = ref(false)
 const items = ref([])
 const asOf = ref('')
 const method = ref('')
+const stockIdInput = ref('')
+const analysisStockId = ref('')
+const analysis = ref(null)
+const analysisError = ref('')
 const secType = ref('stock')
 const recent = ref(3)
 const minAmt = ref(20000000)
@@ -35,16 +39,43 @@ async function load() {
   loading.value = true
   try {
     const data = await getBreakoutRanking({
-      security_type: secType.value, recent: recent.value, min_amt: minAmt.value, limit: 300,
+      security_type: secType.value, recent: recent.value, min_amt: minAmt.value,
+      stock_id: analysisStockId.value || undefined, limit: 300,
     })
     items.value = data.items || []
     asOf.value = data.as_of || ''
     method.value = data.method || ''
+    analysis.value = data.analysis || null
+    analysisError.value = ''
   } catch (e) {
-    ElMessage.error('排行載入失敗：' + (e?.response?.data?.detail || e.message))
+    items.value = []
+    analysis.value = null
+    analysisError.value = e?.response?.data?.detail || e.message
+    ElMessage.error('排行載入失敗：' + analysisError.value)
   } finally {
     loading.value = false
   }
+}
+
+async function analyzeStock() {
+  const id = stockIdInput.value.trim().toUpperCase()
+  if (!id) {
+    ElMessage.warning('請輸入股票代號')
+    return
+  }
+  analysisStockId.value = id
+  stockIdInput.value = id
+  minScore.value = 0
+  status.value = ''
+  await load()
+}
+
+async function clearStockAnalysis() {
+  stockIdInput.value = ''
+  analysisStockId.value = ''
+  analysis.value = null
+  analysisError.value = ''
+  await load()
 }
 
 onMounted(load)
@@ -64,7 +95,7 @@ const statusOf = (row) => STATUS[row.decision?.status] || STATUS.skip
           <div class="subtitle">把底部反轉與整理突破做第二次排序；先看風險，再決定是否進場。</div>
         </div>
         <div class="filters">
-          <el-select v-model="secType" style="width: 112px" @change="load">
+          <el-select v-model="secType" :disabled="!!analysisStockId" style="width: 112px" @change="load">
             <el-option label="只看個股" value="stock" />
             <el-option label="只看 ETF" value="etf" />
           </el-select>
@@ -73,7 +104,7 @@ const statusOf = (row) => STATUS[row.decision?.status] || STATUS.skip
             <el-option label="近 2 週" :value="10" />
             <el-option label="近 1 月" :value="20" />
           </el-select>
-          <el-select v-model="minAmt" style="width: 145px" @change="load">
+          <el-select v-model="minAmt" :disabled="!!analysisStockId" style="width: 145px" @change="load">
             <el-option label="均額 2千萬+" :value="20000000" />
             <el-option label="均額 5千萬+" :value="50000000" />
             <el-option label="均額 1億+" :value="100000000" />
@@ -85,6 +116,14 @@ const statusOf = (row) => STATUS[row.decision?.status] || STATUS.skip
           <span class="muted">最低分</span>
           <el-button type="primary" :loading="loading" @click="load">重新掃描</el-button>
         </div>
+      </div>
+      <div class="stock-analyzer">
+        <b>指定個股分析</b>
+        <el-input v-model="stockIdInput" clearable maxlength="10" placeholder="輸入股票代號，例如 2330"
+                  style="width: 235px" @keyup.enter="analyzeStock" />
+        <el-button type="primary" :loading="loading" @click="analyzeStock">分析這檔</el-button>
+        <el-button v-if="analysisStockId" @click="clearStockAnalysis">回到全市場</el-button>
+        <span v-if="analysisStockId" class="muted">個股模式會忽略證券類別、流動性及母體限制</span>
       </div>
     </el-card>
 
@@ -103,12 +142,17 @@ const statusOf = (row) => STATUS[row.decision?.status] || STATUS.skip
       </el-card>
     </div>
 
+    <el-alert v-if="analysisStockId" :type="analysisError ? 'error' : items.length ? 'success' : 'warning'" :closable="false" show-icon class="notice">
+      <template #title>{{ analysisStockId }} 個股突破分析</template>
+      {{ analysisError || analysis?.reason || `找到 ${items.length} 個近期已確認的突破訊號` }}
+    </el-alert>
+
     <el-alert type="warning" :closable="false" show-icon class="notice">
       <template #title>分數只用來比較同批候選，不是買進指令或報酬預測</template>
       參考停損統一用「頸線下 1 ATR」以便比較；實際下單前仍應看圖確認結構、隔日跳空與產業持倉。
     </el-alert>
 
-    <el-table :data="shown" v-loading="loading" stripe border height="calc(100vh - 310px)" row-key="stock_id">
+    <el-table :data="shown" v-loading="loading" stripe border height="calc(100vh - 375px)" row-key="stock_id">
       <el-table-column type="index" label="#" width="48" fixed />
       <el-table-column label="結論" width="105" fixed>
         <template #default="{ row }">
@@ -178,6 +222,9 @@ const statusOf = (row) => STATUS[row.decision?.status] || STATUS.skip
       <el-table-column label="追蹤" width="82" fixed="right">
         <template #default="{ row }"><WatchlistAddButton :row="row" /></template>
       </el-table-column>
+      <template #empty>
+        <el-empty :description="analysisError || (analysisStockId ? `${analysisStockId} 近 ${recent} 日沒有已確認的多方型態突破` : '目前條件沒有突破候選')" />
+      </template>
     </el-table>
     <div class="method">{{ method }}｜目前顯示 {{ shown.length }} 檔</div>
   </div>
@@ -191,6 +238,7 @@ h2 { margin: 0 0 4px; font-size: 22px; }
 .subtitle, .muted { color: #909399; }
 .small { font-size: 12px; margin-top: 3px; }
 .filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.stock-analyzer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid #ebeef5; }
 .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 10px; margin-bottom: 10px; }
 .summary { cursor: pointer; }
 .summary :deep(.el-card__body) { display: flex; justify-content: space-between; align-items: baseline; padding: 13px 18px; }

@@ -8,6 +8,10 @@ const loading = ref(false)
 const items = ref([])
 const asOf = ref('')
 const method = ref('')
+const stockIdInput = ref('')
+const analysisStockId = ref('')
+const analysis = ref(null)
+const analysisError = ref('')
 const secType = ref('stock')
 const minAmt = ref(20000000)
 const lookback = ref(5)
@@ -55,6 +59,13 @@ const summary = computed(() => Object.fromEntries(
   Object.keys(CONCLUSIONS).map((key) => [key, baseShown.value.filter((r) => r.decision?.conclusion === key).length]),
 ))
 
+const analysisMessage = computed(() => {
+  if (analysisError.value) return analysisError.value
+  if (analysis.value?.reason) return analysis.value.reason
+  const chartName = items.value[0]?.chart_pattern_name
+  return chartName ? `已完成分析；同時命中 ${chartName}` : '已完成分析；近期沒有波段突破型態'
+})
+
 async function load() {
   loading.value = true
   try {
@@ -69,16 +80,45 @@ async function load() {
       revenue_month_streak: revenueMonthStreak.value,
       revenue_quarter_streak: revenueQuarterStreak.value,
       gross_margin_quarter_streak: grossMarginQuarterStreak.value,
+      stock_id: analysisStockId.value || undefined,
       limit: 300,
     })
     items.value = data.items || []
     asOf.value = data.as_of || ''
     method.value = data.method || ''
+    analysis.value = data.analysis || null
+    analysisError.value = ''
   } catch (e) {
-    ElMessage.error('裸 K 決策載入失敗：' + (e?.response?.data?.detail || e.message))
+    items.value = []
+    analysis.value = null
+    analysisError.value = e?.response?.data?.detail || e.message
+    ElMessage.error('裸 K 決策載入失敗：' + analysisError.value)
   } finally {
     loading.value = false
   }
+}
+
+async function analyzeStock() {
+  const id = stockIdInput.value.trim().toUpperCase()
+  if (!id) {
+    ElMessage.warning('請輸入股票代號')
+    return
+  }
+  analysisStockId.value = id
+  stockIdInput.value = id
+  minScore.value = 0
+  conclusion.value = ''
+  signalState.value = ''
+  direction.value = ''
+  await load()
+}
+
+async function clearStockAnalysis() {
+  stockIdInput.value = ''
+  analysisStockId.value = ''
+  analysis.value = null
+  analysisError.value = ''
+  await load()
 }
 
 function toggleConclusion(key) {
@@ -116,11 +156,11 @@ const directionName = (v) => v === 'bull' ? '多方' : v === 'bear' ? '空方' :
           <div class="subtitle">先找波段型態，再用裸 K 的結構、位置、確認與風險做第二層篩選。</div>
         </div>
         <div class="filters">
-          <el-select v-model="secType" style="width: 112px" @change="load">
+          <el-select v-model="secType" :disabled="!!analysisStockId" style="width: 112px" @change="load">
             <el-option label="只看個股" value="stock" />
             <el-option label="只看 ETF" value="etf" />
           </el-select>
-          <el-select v-model="minAmt" style="width: 145px" @change="load">
+          <el-select v-model="minAmt" :disabled="!!analysisStockId" style="width: 145px" @change="load">
             <el-option label="均額 2千萬+" :value="20000000" />
             <el-option label="均額 5千萬+" :value="50000000" />
             <el-option label="均額 1億+" :value="100000000" />
@@ -138,9 +178,17 @@ const directionName = (v) => v === 'bull' ? '多方' : v === 'bear' ? '空方' :
           <el-button type="primary" :loading="loading" @click="load">重新掃描</el-button>
         </div>
       </div>
+      <div class="stock-analyzer">
+        <b>指定個股分析</b>
+        <el-input v-model="stockIdInput" clearable maxlength="10" placeholder="輸入股票代號，例如 2330"
+                  style="width: 235px" @keyup.enter="analyzeStock" />
+        <el-button type="primary" :loading="loading" @click="analyzeStock">分析這檔</el-button>
+        <el-button v-if="analysisStockId" @click="clearStockAnalysis">回到全市場</el-button>
+        <span v-if="analysisStockId" class="muted">個股模式忽略母體、流動性與基本面門檻，但保留裸 K 觀察窗</span>
+      </div>
       <div class="server-filters">
         <span class="filter-label">波段型態</span>
-        <el-select v-model="chartPattern" style="width: 185px">
+        <el-select v-model="chartPattern" :disabled="!!analysisStockId" style="width: 185px">
           <el-option label="不限（只看裸 K）" value="" />
           <el-option label="任何多方型態" value="any" />
           <el-option-group label="底部反轉">
@@ -156,16 +204,16 @@ const directionName = (v) => v === 'bull' ? '多方' : v === 'bear' ? '空方' :
           <el-option label="近 20 日突破" :value="20" />
         </el-select>
         <span class="filter-label">單季 EPS ≥</span>
-        <el-input-number v-model="epsMin" :step="0.5" :precision="2" controls-position="right" style="width: 125px" />
-        <el-select v-model="revenueMonthStreak" style="width: 165px">
+        <el-input-number v-model="epsMin" :disabled="!!analysisStockId" :step="0.5" :precision="2" controls-position="right" style="width: 125px" />
+        <el-select v-model="revenueMonthStreak" :disabled="!!analysisStockId" style="width: 165px">
           <el-option label="月營收不限" :value="0" />
           <el-option v-for="n in [1, 2, 3, 6]" :key="n" :label="`月營收連增 ${n} 月`" :value="n" />
         </el-select>
-        <el-select v-model="revenueQuarterStreak" style="width: 165px">
+        <el-select v-model="revenueQuarterStreak" :disabled="!!analysisStockId" style="width: 165px">
           <el-option label="季營收不限" :value="0" />
           <el-option v-for="n in [1, 2, 3, 4]" :key="n" :label="`季營收連增 ${n} 季`" :value="n" />
         </el-select>
-        <el-select v-model="grossMarginQuarterStreak" style="width: 175px">
+        <el-select v-model="grossMarginQuarterStreak" :disabled="!!analysisStockId" style="width: 175px">
           <el-option label="毛利率季增不限" :value="0" />
           <el-option v-for="n in [1, 2, 3, 4]" :key="n" :label="`毛利率連增 ${n} 季`" :value="n" />
         </el-select>
@@ -205,12 +253,17 @@ const directionName = (v) => v === 'bull' ? '多方' : v === 'bear' ? '空方' :
       </el-card>
     </div>
 
+    <el-alert v-if="analysisStockId" :type="analysisError ? 'error' : items.length ? 'success' : 'warning'" :closable="false" show-icon class="notice">
+      <template #title>{{ analysisStockId }} 個股裸 K 分析</template>
+      {{ analysisMessage }}
+    </el-alert>
+
     <el-alert type="info" :closable="false" show-icon class="notice">
       <template #title>波段型態、基本面是過濾層；裸 K 分數仍只使用還原後 OHLC</template>
       月營收可檢查連續月增，季營收與毛利率可檢查連續季增；財報沒有逐月毛利率資料，因此不做失真的月毛利條件。
     </el-alert>
 
-    <el-table :data="shown" v-loading="loading" stripe border height="calc(100vh - 425px)" row-key="stock_id">
+    <el-table :data="shown" v-loading="loading" stripe border height="calc(100vh - 490px)" row-key="stock_id">
       <el-table-column type="index" label="#" width="48" fixed />
       <el-table-column label="決策" width="112" fixed>
         <template #default="{ row }">
@@ -295,7 +348,7 @@ const directionName = (v) => v === 'bull' ? '多方' : v === 'bear' ? '空方' :
         <template #default="{ row }"><WatchlistAddButton :row="row" /></template>
       </el-table-column>
       <template #empty>
-        <el-empty description="目前型態、裸 K 與成長條件沒有交集候選" />
+        <el-empty :description="analysisError || (analysisStockId ? `${analysisStockId} 近 ${lookback} 根 K 棒沒有可評估的裸 K 訊號` : '目前型態、裸 K 與成長條件沒有交集候選')" />
       </template>
     </el-table>
     <div class="method">{{ method }}｜目前顯示 {{ shown.length }}／{{ items.length }} 檔</div>
@@ -309,7 +362,8 @@ const directionName = (v) => v === 'bull' ? '多方' : v === 'bear' ? '空方' :
 h2 { margin: 0 0 4px; font-size: 22px; }
 .subtitle, .muted { color: #909399; }
 .small { font-size: 12px; }
-.filters, .server-filters, .client-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.filters, .stock-analyzer, .server-filters, .client-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.stock-analyzer { margin-top: 12px; padding-top: 12px; border-top: 1px solid #ebeef5; }
 .server-filters { margin-top: 12px; padding-top: 12px; border-top: 1px solid #ebeef5; }
 .client-filters { margin-top: 12px; padding-top: 12px; border-top: 1px solid #ebeef5; }
 .filter-label { color: #606266; font-size: 13px; }

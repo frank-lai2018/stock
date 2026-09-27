@@ -95,24 +95,31 @@ def screen_price_action(security_type: str = "stock", min_amt: int = 20000000,
                         lookback: int = 5, expiry: int = 5, limit: int = 300,
                         chart_pattern: str = "", pattern_recent: int = 10,
                         eps_min: float = None, revenue_month_streak: int = 0,
-                        revenue_quarter_streak: int = 0, gross_margin_quarter_streak: int = 0):
+                        revenue_quarter_streak: int = 0, gross_margin_quarter_streak: int = 0,
+                        stock_id: str = ""):
     """型態＋裸 K 決策；基本面只做過濾，不混入裸 K 分數。"""
-    cond = ["in_universe", "amt20 >= %(amt)s"]
-    params = {"amt": max(0, int(min_amt))}
-    if security_type in ("stock", "etf"):
-        cond.append("security_type = %(st)s"); params["st"] = security_type
-    if eps_min is not None:
-        cond.append("eps >= %(eps_min)s"); params["eps_min"] = float(eps_min)
+    sid = stock_id.strip().upper()
+    if sid:
+        cond, params = ["stock_id = %(sid)s"], {"sid": sid}
+    else:
+        cond = ["in_universe", "amt20 >= %(amt)s"]
+        params = {"amt": max(0, int(min_amt))}
+        if security_type in ("stock", "etf"):
+            cond.append("security_type = %(st)s"); params["st"] = security_type
+        if eps_min is not None:
+            cond.append("eps >= %(eps_min)s"); params["eps_min"] = float(eps_min)
     snap = {r["stock_id"]: r for r in db.query(
         "SELECT stock_id,name,industry,security_type,close,amt20,as_of_date,"
         " eps,eps_ttm,eps_qoq,eps_yoy,rev_mom,rev_yoy,gross_margin,gross_margin_chg "
         f"FROM mv_stock_snapshot WHERE {' AND '.join(cond)}", params)}
     if not snap:
+        if sid:
+            raise HTTPException(404, f"找不到股票代號：{sid}")
         return {"count": 0, "as_of": None, "summary": {}, "items": []}
     trends = _fundamental_trends(list(snap))
-    month_n = max(0, min(int(revenue_month_streak), 6))
-    quarter_n = max(0, min(int(revenue_quarter_streak), 4))
-    margin_n = max(0, min(int(gross_margin_quarter_streak), 4))
+    month_n = 0 if sid else max(0, min(int(revenue_month_streak), 6))
+    quarter_n = 0 if sid else max(0, min(int(revenue_quarter_streak), 4))
+    margin_n = 0 if sid else max(0, min(int(gross_margin_quarter_streak), 4))
     snap = {sid: {**dict(row), "fundamental_trend": trends.get(sid, {})}
             for sid, row in snap.items()
             if trends.get(sid, {}).get("revenue_month_streak", 0) >= month_n
@@ -133,8 +140,8 @@ def screen_price_action(security_type: str = "stock", min_amt: int = 20000000,
     out = []
     pat_recent = max(1, min(int(pattern_recent), 25))
     for sid, bars in grouped.items():
-        chart = _chart_pattern(bars, chart_pattern, pat_recent)
-        if chart_pattern and not chart:
+        chart = _chart_pattern(bars, "any" if stock_id.strip() else chart_pattern, pat_recent)
+        if chart_pattern and not stock_id.strip() and not chart:
             continue
         decision = price_action.analyze(bars, max(1, min(int(lookback), 10)), max(1, min(int(expiry), 10)))
         if decision:
@@ -149,7 +156,15 @@ def screen_price_action(security_type: str = "stock", min_amt: int = 20000000,
     out = out[:max(1, min(int(limit), 500))]
     summary = {k: sum(1 for r in out if r["decision"]["conclusion"] == k)
                for k in ("priority", "waiting", "watch", "skip")}
-    as_of = out[0]["as_of_date"].isoformat() if out and out[0].get("as_of_date") else None
-    return {"count": len(out), "as_of": as_of, "summary": summary,
+    first_snap = next(iter(snap.values()), {})
+    as_of_date = out[0].get("as_of_date") if out else first_snap.get("as_of_date")
+    as_of = as_of_date.isoformat() if as_of_date else None
+    response = {"count": len(out), "as_of": as_of, "summary": summary,
             "method": "型態＋裸K規則評分 v1；裸K分數只使用 OHLC，波段型態與基本面為獨立過濾層",
             "items": out}
+    if stock_id.strip():
+        response["analysis"] = {
+            "stock_id": stock_id.strip().upper(), "matched": bool(out),
+            "reason": None if out else f"近 {max(1, min(int(lookback), 10))} 根 K 棒沒有可評估的裸 K 訊號",
+        }
+    return response

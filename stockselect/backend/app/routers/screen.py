@@ -294,7 +294,8 @@ def breakout_patterns(group: str = "bottom"):
 @router.get("/screen/pattern-breakout")
 def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 100,
                      security_type: str = "", min_amt: int = 20000000,
-                     mode: str = "breakout", near_band: float = 0.05, recent: int = 3):
+                     mode: str = "breakout", near_band: float = 0.05, recent: int = 3,
+                     stock_id: str = ""):
     """全市場掃描型態（Python 波段偵測，非 MV 篩選）。
 
     group：bottom（底部反轉）/ top（頭部反轉）/ continuation（連續整理）/
@@ -313,15 +314,21 @@ def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 1
     if not keys:
         raise HTTPException(400, f"未知型態：{pattern}")
 
-    cond = ["in_universe = true", "amt20 >= %(amt)s"]
-    params = {"amt": min_amt}
-    if security_type in ("stock", "etf"):
-        cond.append("security_type = %(st)s")
-        params["st"] = security_type
+    sid = stock_id.strip().upper()
+    if sid:
+        cond, params = ["stock_id = %(sid)s"], {"sid": sid}
+    else:
+        cond = ["in_universe = true", "amt20 >= %(amt)s"]
+        params = {"amt": min_amt}
+        if security_type in ("stock", "etf"):
+            cond.append("security_type = %(st)s")
+            params["st"] = security_type
     snap = {r["stock_id"]: r for r in
             db.query(f"SELECT * FROM mv_stock_snapshot WHERE {' AND '.join(cond)}", params)}
     ids = list(snap.keys())
     if not ids:
+        if sid:
+            raise HTTPException(404, f"找不到股票代號：{sid}")
         return {"count": 0, "as_of": None, "items": []}
 
     bars_rows = db.query(
@@ -378,17 +385,19 @@ def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 1
     out = out[:max(1, min(int(limit), 500))]
     _attach_last_pattern(out)
     _attach_recent_eps(out)                           # 近 4 季 EPS（供前端「每季 EPS >」過濾）
-    as_of = out[0]["as_of_date"].isoformat() if out and out[0].get("as_of_date") else None
+    first_snap = next(iter(snap.values()), {})
+    as_of_date = out[0].get("as_of_date") if out else first_snap.get("as_of_date")
+    as_of = as_of_date.isoformat() if as_of_date else None
     return {"count": len(out), "as_of": as_of, "items": out}
 
 
 @router.get("/screen/breakout-ranking")
 def breakout_ranking(security_type: str = "stock", min_amt: int = 20000000,
-                     recent: int = 3, limit: int = 200):
+                     recent: int = 3, limit: int = 200, stock_id: str = ""):
     """多方突破決策排行：底部反轉＋整理突破，附可解釋的五面向分數與風險檢查。"""
     scan = pattern_breakout(pattern="all", group="bull", limit=500,
                             security_type=security_type, min_amt=max(0, int(min_amt)),
-                            mode="breakout", recent=recent)
+                            mode="breakout", recent=recent, stock_id=stock_id)
     bt_rows = db.query(
         "SELECT pattern,n,win_rate,avg_ret,median_ret,avg_excess "
         "FROM pattern_backtest WHERE horizon=20") \
@@ -406,4 +415,10 @@ def breakout_ranking(security_type: str = "stock", min_amt: int = 20000000,
         for k in ("priority", "watch", "skip")
     }
     scan["method"] = "規則評分 v1；分數用於同批相對排序，不代表預測報酬"
+    if stock_id.strip():
+        scan["analysis"] = {
+            "stock_id": stock_id.strip().upper(),
+            "matched": bool(scan["items"]),
+            "reason": None if scan["items"] else f"近 {max(1, min(int(recent), 25))} 日沒有已確認的多方型態突破",
+        }
     return scan
