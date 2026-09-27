@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import CORS_ORIGINS
-from .routers import drawings, drill, market, patterns, portfolio, screen, stock, watchlist
+from .routers import drawings, drill, market, patterns, portfolio, screen, stock, themes, watchlist
 
 app = FastAPI(title="stockselect API", description="台股選股系統後端（讀 twstock）", version="0.1.0")
 
@@ -20,6 +20,7 @@ app.include_router(patterns.router)
 app.include_router(portfolio.router)
 app.include_router(screen.router)
 app.include_router(stock.router)
+app.include_router(themes.router)
 app.include_router(watchlist.router)
 
 

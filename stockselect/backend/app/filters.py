@@ -74,6 +74,11 @@ FILTERS = {
     # 品質 / 母體
     "amt20_min":         ("amt20 >= %(amt20_min)s", _NUM),
     "industry":          ("industry = %(industry)s", _STR),
+    # 族群（L3 市場題材 / L2 櫃買產業鏈節點，見 族群分類設計.md）：直查 stock_theme，
+    # 確認／否決即時生效、不必等 mv 刷新；L2 節點含其子節點成分（t.parent_code 命中）
+    "theme":             ("stock_id IN (SELECT st.stock_id FROM stock_theme st JOIN theme t USING (theme_id) "
+                          "WHERE (t.code = %(theme)s OR t.parent_code = %(theme)s) AND t.is_active "
+                          "AND st.valid_to IS NULL AND st.status IN ('confirmed', 'seed'))", _STR),
     "market":            ("market = %(market)s", _STR),
     "security_type":     ("security_type = %(security_type)s", _STR),   # stock / etf
     "in_universe":       ("in_universe = %(in_universe)s", _BOOL),

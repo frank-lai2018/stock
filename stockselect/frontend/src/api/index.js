@@ -16,6 +16,15 @@ export const getSectors = (market = '上市') =>
   api.get('/market/sectors', { params: { market } }).then((r) => r.data)
 export const getMoneyflow = (market = '上市') =>
   api.get('/market/moneyflow', { params: { market } }).then((r) => r.data)
+// 族群熱度（L3 市場題材 / L2 櫃買產業鏈節點；見 族群分類設計.md）
+export const getThemeRanking = (layer = 3, limit = 50) =>
+  api.get('/themes/ranking', { params: { layer, limit } }).then((r) => r.data)
+export const getThemeHeatmap = (layer = 3, { days = 20, top = 20, metric = 'heat_score' } = {}) =>
+  api.get('/themes/heatmap', { params: { layer, days, top, metric } }).then((r) => r.data)
+export const getThemeMembers = (code) => api.get('/themes/members', { params: { code } }).then((r) => r.data)
+export const getThemeToday = (top = 10) => api.get('/themes/today', { params: { top } }).then((r) => r.data)
+export const getStockThemes = (stock_id) => api.get('/themes/of', { params: { stock_id } }).then((r) => r.data)
+export const getThemeOptions = () => api.get('/themes/options').then((r) => r.data)
 export const runScreen = (payload) => api.post('/screen', payload).then((r) => r.data)
 export const screenBreakout = (params = {}) =>
   api.get('/screen/pattern-breakout', { params }).then((r) => r.data)

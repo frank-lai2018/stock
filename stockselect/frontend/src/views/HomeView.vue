@@ -4,12 +4,20 @@ import * as echarts from 'echarts'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getMarketOverview, getMarketIndex, getMovers, getSectors, getMoneyflow, getMarketMargin,
-         getDrawingAlerts } from '../api'
+         getDrawingAlerts, getThemeToday } from '../api'
 
 const router = useRouter()
 async function loadAlerts() {
   try { alerts.value = await getDrawingAlerts(0.02) } catch (e) { /* 沒畫線或後端舊版 → 不顯示 */ }
 }
+
+// 今日族群熱度（nightly 的 theme 工作產生；完整排行／熱力圖在 /themes）
+const themeToday = ref(null)
+async function loadThemeToday() {
+  try { themeToday.value = await getThemeToday(10) } catch (e) { /* 族群表未建或尚未算熱度 → 不顯示 */ }
+}
+const pctf = (v) => (v == null ? '—' : (v >= 0 ? '+' : '') + (Number(v) * 100).toFixed(1) + '%')   // 小數 → %
+function openTheme(code, layer = 3) { router.push({ path: '/themes', query: { code, layer } }) }
 const ov = ref(null)
 const moverType = ref('gainers')
 const movers = ref([])
@@ -75,6 +83,7 @@ function renderChart(rows) {
 function onResize() { if (chart) chart.resize() }
 
 onMounted(async () => {
+  loadThemeToday()                        // 獨立載入：大盤其他區塊失敗也不影響族群卡片
   try {
     ov.value = await getMarketOverview()
     await loadIndex()
@@ -188,6 +197,79 @@ function go(id) { router.push(`/stock/${id}`) }
         </el-table-column>
         <el-table-column prop="note" label="備註" min-width="120" show-overflow-tooltip />
       </el-table>
+    </el-card>
+
+    <!-- 今日族群熱度：同 nightly log 的族群排行段落；點題材或個股可深入 -->
+    <el-card v-if="themeToday && themeToday.rows.length" shadow="never" style="margin-top: 16px">
+      <template #header>
+        <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 8px">
+          <span style="font-weight: 600">今日族群熱度</span>
+          <span style="color: #999; font-size: 12px">
+            市場題材｜資料日 {{ themeToday.as_of }}｜名次變化對照 {{ themeToday.prev }}｜點列看成分股
+          </span>
+          <el-button link type="primary" style="margin-left: auto" @click="router.push('/themes')">完整排行與熱力圖 →</el-button>
+        </div>
+      </template>
+      <div style="display: flex; gap: 20px; flex-wrap: wrap">
+        <el-table :data="themeToday.rows" size="small" style="flex: 3 1 520px; cursor: pointer"
+                  @row-click="(r) => openTheme(r.code)">
+          <el-table-column label="名次" width="54" align="center">
+            <template #default="{ row }"><b>{{ row.heat_rank }}</b></template>
+          </el-table-column>
+          <el-table-column label="變化" width="58" align="center">
+            <template #default="{ row }">
+              <span v-if="row.rank_chg > 0" style="color: #EA4C4C">▲{{ row.rank_chg }}</span>
+              <span v-else-if="row.rank_chg < 0" style="color: #3F9E5A">▼{{ -row.rank_chg }}</span>
+              <span v-else style="color: #999">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="name" label="題材" min-width="170" show-overflow-tooltip />
+          <el-table-column label="5日" width="74" align="right">
+            <template #default="{ row }"><span :style="{ color: up(row.ret_5d) }">{{ pctf(row.ret_5d) }}</span></template>
+          </el-table-column>
+          <el-table-column label="20日" width="78" align="right">
+            <template #default="{ row }"><span :style="{ color: up(row.ret_20d) }">{{ pctf(row.ret_20d) }}</span></template>
+          </el-table-column>
+          <el-table-column label="站上月線" width="80" align="right">
+            <template #default="{ row }">{{ Math.round((row.breadth_ma20 || 0) * 100) }}%</template>
+          </el-table-column>
+          <el-table-column label="法人" width="72" align="right">
+            <template #default="{ row }"><span :style="{ color: up(row.inst_ratio) }">{{ pctf(row.inst_ratio) }}</span></template>
+          </el-table-column>
+          <el-table-column label="熱度" width="64" align="right">
+            <template #default="{ row }"><b>{{ Number(row.heat_score).toFixed(0) }}</b></template>
+          </el-table-column>
+        </el-table>
+
+        <div style="flex: 2 1 340px; font-size: 13px">
+          <div v-for="s in themeToday.spotlight" :key="s.code" style="margin-bottom: 14px">
+            <div style="font-weight: 600; margin-bottom: 4px; cursor: pointer" @click="openTheme(s.code)">{{ s.name }}</div>
+            <div style="line-height: 2">
+              <el-tag size="small" type="danger" effect="plain">領頭羊</el-tag>
+              <span v-for="x in s.leaders" :key="x.stock_id" style="margin-left: 10px; cursor: pointer" @click="go(x.stock_id)">
+                {{ x.name }} <span :style="{ color: up(x.ret_20d) }">{{ pctf(x.ret_20d) }}</span>
+              </span>
+            </div>
+            <div style="line-height: 2">
+              <el-tag size="small" type="warning" effect="plain">落後補漲</el-tag>
+              <span v-for="x in s.laggards" :key="x.stock_id" style="margin-left: 10px; cursor: pointer" @click="go(x.stock_id)">
+                {{ x.name }} <span :style="{ color: up(x.ret_20d) }">{{ pctf(x.ret_20d) }}</span>
+              </span>
+              <span v-if="!s.laggards.length" style="margin-left: 10px; color: #999">（無：落後者都已跌破季線）</span>
+            </div>
+          </div>
+          <div v-if="themeToday.nodes.length" style="color: #666; border-top: 1px dashed #e5e5e5; padding-top: 8px; line-height: 1.9">
+            <span style="color: #999">產業鏈雷達</span>
+            <div v-for="n in themeToday.nodes" :key="n.code" style="cursor: pointer" @click="openTheme(n.code, 2)">
+              #{{ n.heat_rank }} {{ n.name }}
+              <span :style="{ color: up(n.ret_20d) }">20日 {{ pctf(n.ret_20d) }}</span>
+            </div>
+          </div>
+          <div style="color: #bbb; font-size: 12px; margin-top: 6px">
+            落後補漲＝20 日報酬低於族群中位數、但仍站上季線。
+          </div>
+        </div>
+      </div>
     </el-card>
 
     <el-card shadow="never" style="margin-top: 16px">

@@ -2,7 +2,7 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getStock, getFundamentals, getStockPatterns, getStockVpa, getDividends, getEtfInfo } from '../api'
+import { getStock, getFundamentals, getStockPatterns, getStockVpa, getDividends, getEtfInfo, getStockThemes } from '../api'
 import PriceChart from '../components/PriceChart.vue'
 import MarginPanel from '../components/MarginPanel.vue'
 import InstPanel from '../components/InstPanel.vue'
@@ -14,6 +14,7 @@ const pats = ref([])
 const vpa = ref([])
 const div = ref(null)
 const etf = ref(null)
+const themes = ref([])                   // 所屬族群（L3 市場題材在前，附熱度名次）
 const dirColor = { bull: '#EA4C4C', bear: '#3F9E5A', neutral: '#909399' }
 const dirText = { bull: '偏多', bear: '偏空', neutral: '中性' }
 const PHASES = ['承接', '測試', '出貨']
@@ -46,13 +47,24 @@ onMounted(async () => {
   } catch (e) {
     ElMessage.error('載入失敗：' + (e?.response?.data?.detail || e.message))
   }
+  try { themes.value = await getStockThemes(route.params.id) } catch (e) { /* 族群表未建時不影響個股頁 */ }
 })
+
+function openTheme(t) { router.push({ path: '/themes', query: { code: t.code, layer: t.layer } }) }
 
 onBeforeUnmount(() => window.removeEventListener('resize', updateCols))
 </script>
 
 <template>
   <el-page-header @back="router.back()" :content="s ? `${s.stock_id} ${s.name}（${s.industry || ''}）` : '載入中…'" />
+  <div v-if="themes.length" style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center">
+    <span style="color: #999; font-size: 13px">所屬族群</span>
+    <el-tag v-for="t in themes" :key="t.code" :type="t.layer === 3 ? 'danger' : 'info'" effect="plain" size="small"
+            style="cursor: pointer" :title="t.layer === 3 ? '市場題材（點看族群熱度）' : '櫃買產業鏈節點（點看族群熱度）'"
+            @click="openTheme(t)">
+      {{ t.name }}<template v-if="t.heat_rank">　熱度#{{ t.heat_rank }}</template>
+    </el-tag>
+  </div>
 
   <template v-if="s">
     <el-descriptions :column="cols" border style="margin-top: 16px" title="快照">

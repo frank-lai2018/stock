@@ -30,6 +30,9 @@ r"""nightly.py — 排程大腦：每晚無腦執行這一支，由它依「今�
         限流用量記在 finmind_rate_state.json，跨行程共用：同一晚先跑 dividend 再跑 capreduction
         不會各自重新計數，合計仍受 550/hr 約束。
   etfnav     每晚固定跑 fetch_etf_nav.py（ETF 淨值/折溢價/規模；mis.twse 單一請求，便宜）。
+  tpexchain  每月第一個晚上跑 fetch_tpex_chain.py（櫃買產業價值鏈 → 族群 L2；約 1 分鐘，狀態檔防重）。
+  theme      每晚固定跑 build_theme_daily.py（族群熱度 → theme_daily；約 10 秒，log 會印當天族群排行）。
+               排在 tpexchain 之後，當月新成分當晚就生效。說明見 族群分類設計.md。
   renko      每晚固定跑 renko_etl.py（磚形圖/三線反轉狀態 → renko_state；全市場約 35 秒）。
                **必須排在 refresh 之前**，否則選股視圖 join 到的是昨天的狀態。
   refresh    以上跑完後，刷新選股物化視圖 mv_stock_snapshot（選股器同步最新；--skip-refresh 可略過）。
@@ -58,6 +61,8 @@ FUND = os.path.join(HERE, "update_fundamentals.py")
 FUND_OPEN = os.path.join(HERE, "update_fundamentals_opendata.py")   # 財報走 TWSE/櫃買 opendata（便宜）
 HOLDERDIST = os.path.join(HERE, "update_holderdist.py")
 ETFNAV = os.path.join(HERE, "fetch_etf_nav.py")
+TPEXCHAIN = os.path.join(HERE, "fetch_tpex_chain.py")          # 櫃買產業價值鏈 → 族群 L2
+THEME = os.path.join(HERE, "build_theme_daily.py")             # 族群熱度 → theme_daily
 BACKTEST_DIR = os.path.join(HERE, "stockselect", "backend")   # 回測腳本在後端（需 import app）
 BACKTEST = os.path.join(BACKTEST_DIR, "backtest_patterns.py")
 RENKO = os.path.join(BACKTEST_DIR, "renko_etl.py")            # 磚形圖狀態（同樣需 import app）
@@ -84,7 +89,7 @@ def save_state(state):
 #   capreduction / dividend 各 1 資料集 ≈ 2,300 次 ≈ 4~5hr（兩者同日跑則共用額度，會接著排隊）
 # （季報原本 3 資料集 ≈ 6,900 次 ≈ 23hr，已改走 TWSE/櫃買 opendata，見 update_fundamentals_opendata.py）
 JOBS = ["daily", "holderdist", "revenue", "quarterly", "dividend",
-        "capreduction", "etfnav", "renko", "backtest"]   # --only / --skip 可指定的工作名
+        "capreduction", "etfnav", "tpexchain", "theme", "renko", "backtest"]   # --only / --skip 可指定的工作名
 
 HEAVY_DAY = {"capreduction": 6, "dividend": 6}   # 6=週日（季報已改走 opendata，不再是重工作）
 HEAVY_NAME = {"capreduction": "減資", "dividend": "股利"}
@@ -208,6 +213,22 @@ def plan_jobs(d, state, only, skip=()):
     run = only in (None, "etfnav")
     jobs.append(("etfnav", "每晚固定（ETF 淨值/規模，單一請求）", run, {}))
 
+    # tpexchain：櫃買產業價值鏈（族群 L2）每月一次；平台更新不頻繁，也對網站友善。狀態檔防重。
+    ml = f"{d:%Y-%m}"
+    done_t = state.get("tpexchain")
+    if only == "tpexchain":
+        run, why = True, "強制 --only tpexchain"
+    elif only is None:
+        run = done_t != ml
+        why = f"本月 {ml} 尚未更新產業鏈" if run else f"本月 {ml} 已更新過產業鏈（狀態檔）"
+    else:
+        run, why = False, "本次 --only 指定其他工作"
+    jobs.append(("tpexchain", why, run, {"label": ml}))
+
+    # theme：族群熱度（全市場約 10 秒，冪等）。排在 tpexchain 之後，當月新成分當晚就生效。
+    run = only in (None, "theme")
+    jobs.append(("theme", "每晚固定（族群熱度 → theme_daily，約 10 秒）", run, {}))
+
     # renko：磚形圖/三線反轉狀態（全市場 ~35 秒，冪等）。要在 refresh 之前跑完，
     # 選股視圖才 join 得到今天的狀態。非交易日重跑結果相同，成本低就不特別擋。
     run = only in (None, "renko")
@@ -274,6 +295,10 @@ def build_cmd(job, d, dsn, extra):
         return [sys.executable, FUND, "--preset", "capreduction", "--start", extra["start"], "--dsn", dsn]
     if job == "etfnav":
         return [sys.executable, ETFNAV, "--dsn", dsn]
+    if job == "tpexchain":
+        return [sys.executable, TPEXCHAIN, "--dsn", dsn]
+    if job == "theme":
+        return [sys.executable, THEME, "--dsn", dsn]
     if job == "renko":
         return [sys.executable, RENKO]             # 同 backtest：cwd=BACKTEST_DIR 才 import 得到 app
     if job == "backtest":
@@ -355,7 +380,7 @@ def main():
             print(f"    例外：{msg}")
         ok = rc == 0
         results.append((job, ok))
-        if ok and job in ("quarterly", "dividend", "capreduction", "backtest"):   # 重工作成功才記狀態，避免跨夜重跑
+        if ok and job in ("quarterly", "dividend", "capreduction", "backtest", "tpexchain"):   # 成功才記狀態，避免跨夜重跑
             state[job] = extra["label"]
             state.setdefault("last_run", {})[job] = f"{args.date} {datetime.now():%H:%M:%S}"
             save_state(state)

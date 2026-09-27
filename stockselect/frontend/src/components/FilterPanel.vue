@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { getIndustries } from '../api'
+import { getIndustries, getThemeOptions } from '../api'
 
 defineProps({
   filters: { type: Object, required: true },   // 直接雙向綁定其屬性（reactive 物件）
@@ -19,8 +19,15 @@ const sortCols = [
 ]
 
 const industries = ref([])
+const themes3 = ref([])                  // 市場題材（L3）
+const themes2 = ref([])                  // 櫃買產業鏈節點（L2）
 onMounted(async () => {
   try { industries.value = await getIndustries() } catch (e) { /* 下拉沒清單不影響篩選 */ }
+  try {
+    const t = await getThemeOptions()
+    themes3.value = t.filter((x) => x.layer === 3)
+    themes2.value = t.filter((x) => x.layer === 2)
+  } catch (e) { /* 族群表尚未建立時不影響其他篩選 */ }
 })
 </script>
 
@@ -44,6 +51,16 @@ onMounted(async () => {
       <el-form-item label="產業">
         <el-select v-model="filters.industry" style="width: 160px" filterable clearable placeholder="全部產業">
           <el-option v-for="n in industries" :key="n" :label="n" :value="n" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="族群">
+        <el-select v-model="filters.theme" style="width: 160px" filterable clearable placeholder="全部族群">
+          <el-option-group label="市場題材">
+            <el-option v-for="t in themes3" :key="t.code" :label="`${t.name}（${t.n}）`" :value="t.code" />
+          </el-option-group>
+          <el-option-group label="產業鏈節點（櫃買）">
+            <el-option v-for="t in themes2" :key="t.code" :label="`${t.name}（${t.n}）`" :value="t.code" />
+          </el-option-group>
         </el-select>
       </el-form-item>
       <el-form-item label="近3月報酬≥">
