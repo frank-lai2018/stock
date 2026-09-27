@@ -12,3 +12,7 @@ scratchpad_*.sql
 finmind_rate_state.json
 finmind_rate_state.json.lock
 finmind_rate_state.json.*.tmp
+
+# Python 編譯快取（本機產物，勿進版控）
+__pycache__/
+*.pyc
