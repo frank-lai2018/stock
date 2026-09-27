@@ -34,6 +34,9 @@ export const getActiveEtfFund = (etfId, date) =>
 export const getActiveEtfStock = (stockId, days = 120) =>
   api.get(`/active-etf/stock/${stockId}`, { params: { days } }).then((r) => r.data)
 export const getActiveEtfToday = (top = 5) => api.get('/active-etf/today', { params: { top } }).then((r) => r.data)
+export const getActiveEtfBacktest = () => api.get('/active-etf/backtest').then((r) => r.data)
+export const getActiveEtfBacktestEvents = (signal, horizon = 20, limit = 100) =>
+  api.get('/active-etf/backtest/events', { params: { signal, horizon, limit } }).then((r) => r.data)
 export const runScreen = (payload) => api.post('/screen', payload).then((r) => r.data)
 export const screenBreakout = (params = {}) =>
   api.get('/screen/pattern-breakout', { params }).then((r) => r.data)

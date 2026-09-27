@@ -192,6 +192,57 @@ def stock(stock_id: str, days: int = Query(120, ge=20, le=500)):
             "series": series, "events": events}
 
 
+_SIGNAL_ORDER = ["basket", "buy2", "buy1", "new", "sell2", "sell1", "exit"]
+COST = 0.006                  # 來回成本（手續費＋證交稅）：超額要大過它才有實用價值
+
+
+def _verdict(r):
+    """判讀：往預期方向超過成本、|t|≥2、六成以上月份同方向 → effective；明顯反方向 → reverse；其餘 none。"""
+    x = r["avg_excess_mkt"] if r["signal"] == "basket" else r["avg_excess_basket"]
+    if x is None or r["t_stat"] is None:
+        return "none"
+    sign = r["sign"] or 1
+    dx, dt = sign * float(x), sign * float(r["t_stat"])
+    ok = r["months_ok"] / r["months"] if r["months"] else 0
+    if dx >= COST and dt >= 2 and ok >= 0.6:
+        return "effective"
+    if dx <= -COST and dt <= -2:
+        return "reverse"
+    return "none"
+
+
+@router.get("/backtest")
+def backtest():
+    """訊號回測彙總（backtest_etf_flow.py 每週產生）：跟著主動 ETF 進出買賣，T+1 開盤進場後 5／10／20 日的超額。
+    hit／months_ok 已依預期方向調整（賣出訊號算「輸給持股籃」的比例）；verdict＝判讀。"""
+    # 還沒跑過回測時表不存在：先查，不用 try/except（db.query 出錯不會 rollback，連線會帶著失敗的交易回池）
+    if not db.query("SELECT to_regclass('public.etf_signal_backtest') AS t")[0]["t"]:
+        return {"computed_at": None, "cost": COST, "rows": []}
+    rows = db.query("SELECT * FROM etf_signal_backtest")
+    for r in rows:
+        sign = r["sign"] or 1
+        win = float(r["win_excess_basket"]) if r["win_excess_basket"] is not None else None
+        r["hit"] = None if win is None else (win if sign > 0 else 1 - win)
+        r["months_ok"] = (r["month_pos"] if sign > 0 else (r["months"] or 0) - (r["month_pos"] or 0)) \
+            if r["months"] is not None else None
+        r["verdict"] = _verdict(r)
+    rows.sort(key=lambda r: (_SIGNAL_ORDER.index(r["signal"]) if r["signal"] in _SIGNAL_ORDER else 99, r["horizon"]))
+    return {"computed_at": max((r["computed_at"] for r in rows), default=None), "cost": COST, "rows": rows}
+
+
+@router.get("/backtest/events")
+def backtest_events(signal: str, horizon: int = Query(20, ge=1, le=60), limit: int = Query(100, ge=1, le=500)):
+    """某訊號的逐筆事件（新到舊）：T＝訊號持股日，報酬與超額取持有 horizon 日（還沒滿期的為 null）。"""
+    key = str(horizon)
+    return db.query(
+        "SELECT e.stock_id, s.name, s.industry, e.trade_date, e.n_issuers, e.inflow, e.impact, e.gap_ex, "
+        "       (e.rets ->> %(k)s)::numeric AS ret, (e.excess_mkt ->> %(k)s)::numeric AS excess_mkt, "
+        "       (e.excess_basket ->> %(k)s)::numeric AS excess_basket "
+        "FROM etf_signal_event e LEFT JOIN stock s USING (stock_id) "
+        "WHERE e.signal = %(sig)s ORDER BY e.trade_date DESC, e.stock_id LIMIT %(n)s",
+        {"k": key, "sig": signal, "n": limit})
+
+
 @router.get("/today")
 def today(top: int = Query(5, ge=1, le=10)):
     """首頁卡片：最新持股日的共識買進／賣出前幾名，以及各 ETF 是否已更新到該日。"""

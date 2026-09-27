@@ -3,7 +3,8 @@
 --
 -- 資料流：
 --   fetch_active_etf.py  各投信官網每日公告的持股 → etf_snapshot（每檔每日一筆表頭）＋ etf_holding（明細）
---   build_etf_flow.py    相鄰兩個持股日相減、扣掉申購贖回 → etf_flow（每檔 ETF × 個股 × 日）
+--   build_etf_flow.py    相鄰兩個持股日相減、扣掉全面等比例增減 → etf_flow（每檔 ETF × 個股 × 日）
+--   backtest_etf_flow.py 跟著進出訊號買賣的歷史回測 → etf_signal_backtest（彙總）＋ etf_signal_event（逐筆）
 --
 -- 重跑方式（全部 IF NOT EXISTS，可安全重複執行）：
 --   psql -U postgres -d twstock -f schema_etf_holding.sql
@@ -83,3 +84,43 @@ CREATE TABLE IF NOT EXISTS etf_flow (
 );
 CREATE INDEX IF NOT EXISTS idx_etf_flow_date  ON etf_flow (trade_date);
 CREATE INDEX IF NOT EXISTS idx_etf_flow_stock ON etf_flow (stock_id, trade_date);
+
+-- 訊號回測（backtest_etf_flow.py 每週產生，整批覆蓋）：跟著主動 ETF 進出買賣，有沒有超額報酬
+--   進出場：T+1 開盤買進、持有到 T+h 收盤（還原價、未扣成本）
+--   基準：大盤（母體等權）與持股籃（當天所有主動 ETF 持股等權）；signal='basket' 是持股籃本身 vs 大盤
+CREATE TABLE IF NOT EXISTS etf_signal_backtest (
+    signal               VARCHAR(12) NOT NULL,   -- buy2 / buy1 / new / sell2 / sell1 / exit / basket
+    horizon              INT NOT NULL,           -- 持有交易日數
+    name                 TEXT,                   -- 共識買進…
+    note                 TEXT,                   -- 訊號定義
+    sign                 SMALLINT,               -- 預期方向：+1 應贏基準／-1 應輸基準
+    n                    INT,                    -- 事件數（basket＝不重疊樣本數）
+    avg_ret              NUMERIC,
+    avg_excess_mkt       NUMERIC,                -- 相對大盤
+    avg_excess_basket    NUMERIC,                -- 相對持股籃（扣掉「本來就持有強勢股」的效果）
+    median_excess_basket NUMERIC,
+    win_excess_basket    NUMERIC,                -- 贏持股籃的比例（basket＝贏大盤的比例）
+    t_stat               NUMERIC,                -- 事件視為獨立算的 t 值，事件重疊會高估
+    months               INT,                    -- 有事件的月份數
+    month_pos            INT,                    -- 其中月平均超額為正的月份數
+    gap_ex               NUMERIC,                -- T 收盤 → T+1 開盤的跳空（相對大盤）
+    date_from            DATE,
+    date_to              DATE,
+    computed_at          TIMESTAMP,
+    PRIMARY KEY (signal, horizon)
+);
+
+CREATE TABLE IF NOT EXISTS etf_signal_event (
+    signal        VARCHAR(12) NOT NULL,
+    stock_id      VARCHAR(20) NOT NULL,
+    trade_date    DATE NOT NULL,                 -- 訊號持股日 T（T+1 開盤進場）
+    n_issuers     INT,                           -- 買進（或賣出）的投信家數
+    inflow        BOOLEAN,                       -- 買方 ETF 當天單位數增加 > 1%（申購期）
+    impact        NUMERIC,                       -- 主動金額 ÷ 20 日均成交額
+    gap_ex        NUMERIC,
+    rets          JSONB,                         -- {持有日數: 報酬}
+    excess_mkt    JSONB,
+    excess_basket JSONB,
+    PRIMARY KEY (signal, stock_id, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_etf_signal_event_date ON etf_signal_event (signal, trade_date DESC);

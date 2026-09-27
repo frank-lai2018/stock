@@ -74,6 +74,12 @@ onMounted(async () => {
           <el-option v-for="n in [1, 2, 3]" :key="n" :label="`近5日 ≥${n} 家投信`" :value="n" />
         </el-select>
       </el-form-item>
+      <!-- 回測：主動 ETF 持股籃本身贏大盤最明顯（比跟著每日加碼有效）；見「主動ETF」頁的訊號回測 -->
+      <el-form-item label="主動ETF持有">
+        <el-select v-model="filters.aetf_held_min" style="width: 160px" clearable placeholder="不限">
+          <el-option v-for="n in [1, 2, 3]" :key="n" :label="`目前 ≥${n} 家投信持有`" :value="n" />
+        </el-select>
+      </el-form-item>
       <el-form-item label="近3月報酬≥">
         <el-input-number v-model="filters.ret_3m_min" :step="0.05" :precision="2" controls-position="right" />
         <span style="margin-left:6px;color:#999">0.1=10%</span>

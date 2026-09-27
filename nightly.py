@@ -33,6 +33,8 @@ r"""nightly.py — 排程大腦：每晚無腦執行這一支，由它依「今�
   etfhold    每晚固定跑 fetch_active_etf.py（主動式 ETF 每日持股 → 算進出 etf_flow；統一／群益／復華官網，
                冪等、自動補近 10 個交易日的缺口）。各家傍晚到晚上才陸續公布，run_nightly.bat 在整套跑完後
                會再補抓一次：python nightly.py --only etfhold --skip-refresh（晚上 9 點後執行）。說明見 主動ETF追蹤設計.md。
+  etfbacktest 每週第一次執行時跑 backtest_etf_flow.py（主動 ETF 進出訊號回測 → etf_signal_backtest；約 15 秒，
+               狀態檔防重）。不限週日：平日才執行 nightly 也會每週更新一次。
   tpexchain  每月第一個晚上跑 fetch_tpex_chain.py（櫃買產業價值鏈 → 族群 L2；約 1 分鐘，狀態檔防重）。
   theme      每晚固定跑 build_theme_daily.py（族群熱度 → theme_daily；約 10 秒，log 會印當天族群排行）。
                排在 tpexchain 之後，當月新成分當晚就生效。說明見 族群分類設計.md。
@@ -65,6 +67,7 @@ FUND_OPEN = os.path.join(HERE, "update_fundamentals_opendata.py")   # 財報走 
 HOLDERDIST = os.path.join(HERE, "update_holderdist.py")
 ETFNAV = os.path.join(HERE, "fetch_etf_nav.py")
 ACTIVEETF = os.path.join(HERE, "fetch_active_etf.py")         # 主動式 ETF 持股 → etf_flow 進出
+ETFBACKTEST = os.path.join(HERE, "backtest_etf_flow.py")      # 主動式 ETF 進出訊號回測
 TPEXCHAIN = os.path.join(HERE, "fetch_tpex_chain.py")          # 櫃買產業價值鏈 → 族群 L2
 THEME = os.path.join(HERE, "build_theme_daily.py")             # 族群熱度 → theme_daily
 BACKTEST_DIR = os.path.join(HERE, "stockselect", "backend")   # 回測腳本在後端（需 import app）
@@ -93,7 +96,7 @@ def save_state(state):
 #   capreduction / dividend 各 1 資料集 ≈ 2,300 次 ≈ 4~5hr（兩者同日跑則共用額度，會接著排隊）
 # （季報原本 3 資料集 ≈ 6,900 次 ≈ 23hr，已改走 TWSE/櫃買 opendata，見 update_fundamentals_opendata.py）
 JOBS = ["daily", "holderdist", "revenue", "quarterly", "dividend",
-        "capreduction", "etfnav", "etfhold", "tpexchain", "theme", "renko", "backtest"]   # --only / --skip 可指定的工作名
+        "capreduction", "etfnav", "etfhold", "etfbacktest", "tpexchain", "theme", "renko", "backtest"]   # --only / --skip 可指定的工作名
 
 HEAVY_DAY = {"capreduction": 6, "dividend": 6}   # 6=週日（季報已改走 opendata，不再是重工作）
 HEAVY_NAME = {"capreduction": "減資", "dividend": "股利"}
@@ -222,6 +225,18 @@ def plan_jobs(d, state, only, skip=()):
     run = only in (None, "etfhold")
     jobs.append(("etfhold", "每晚固定（主動 ETF 持股＋進出；自動補近 10 日缺口）", run, {}))
 
+    # etfbacktest：主動 ETF 進出訊號回測（約 15 秒）。每週第一次執行時跑，狀態檔防重；不綁週日，
+    # 平日才跑 nightly 的人也會每週更新。排在 etfhold 之後，才用得到當天新抓的進出。
+    done_eb = state.get("etfbacktest")
+    if only == "etfbacktest":
+        run, why = True, "強制 --only etfbacktest"
+    elif only is None:
+        run = done_eb != wl
+        why = f"本週 {wl} 尚未跑主動 ETF 回測" if run else f"本週 {wl} 已跑過主動 ETF 回測（狀態檔）"
+    else:
+        run, why = False, "本次 --only 指定其他工作"
+    jobs.append(("etfbacktest", why, run, {"label": wl}))
+
     # tpexchain：櫃買產業價值鏈（族群 L2）每月一次；平台更新不頻繁，也對網站友善。狀態檔防重。
     ml = f"{d:%Y-%m}"
     done_t = state.get("tpexchain")
@@ -306,6 +321,8 @@ def build_cmd(job, d, dsn, extra):
         return [sys.executable, ETFNAV, "--dsn", dsn]
     if job == "etfhold":
         return [sys.executable, ACTIVEETF, "--dsn", dsn]
+    if job == "etfbacktest":
+        return [sys.executable, ETFBACKTEST, "--dsn", dsn]
     if job == "tpexchain":
         return [sys.executable, TPEXCHAIN, "--dsn", dsn]
     if job == "theme":
@@ -391,7 +408,7 @@ def main():
             print(f"    例外：{msg}")
         ok = rc == 0
         results.append((job, ok))
-        if ok and job in ("quarterly", "dividend", "capreduction", "backtest", "tpexchain"):   # 成功才記狀態，避免跨夜重跑
+        if ok and job in ("quarterly", "dividend", "capreduction", "backtest", "tpexchain", "etfbacktest"):   # 成功才記狀態，避免跨夜重跑
             state[job] = extra["label"]
             state.setdefault("last_run", {})[job] = f"{args.date} {datetime.now():%H:%M:%S}"
             save_state(state)

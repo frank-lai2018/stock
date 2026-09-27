@@ -1,12 +1,13 @@
 <script setup>
 // 主動ETF動向：各投信官網每日公告的持股，相鄰兩天相減、扣掉全面等比例的增減（申購贖回、全面調整水位）
-// 上：跨投信共識買進／賣出　中：各 ETF 概況　下：單檔明細（曝險走勢、當日異動、持股）
-// 資料由 fetch_active_etf.py 每晚抓（nightly 的 etfhold 工作）；說明見 主動ETF追蹤設計.md
+// 上：跨投信共識買進／賣出＋訊號回測（跟著買有沒有用）　中：各 ETF 概況　下：單檔明細（曝險走勢、當日異動、持股）
+// 資料由 fetch_active_etf.py 每晚抓（nightly 的 etfhold 工作）、回測由 backtest_etf_flow.py 每週跑；說明見 主動ETF追蹤設計.md
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
-import { getActiveEtfOverview, getActiveEtfConsensus, getActiveEtfFund } from '../api'
+import { getActiveEtfOverview, getActiveEtfConsensus, getActiveEtfFund, getActiveEtfBacktest,
+  getActiveEtfBacktestEvents } from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -58,8 +59,41 @@ function sideEtfs(row, acts) {
   return [...seen.values()]
 }
 
+// ---- 訊號回測（backtest_etf_flow.py；判讀規則在後端 routers/active_etf.py 的 _verdict）----
+const bt = ref(null)
+const btH = ref(20)
+const btSig = ref(null)
+const btEvents = ref([])
+const btLoading = ref(false)
+const spct = (v, d = 2) => (v == null ? '—' : (Number(v) >= 0 ? '+' : '') + (Number(v) * 100).toFixed(d) + '%')
+const btRows = computed(() => (bt.value?.rows || []).filter((r) => r.horizon === btH.value))
+const btRange = computed(() => {
+  const rs = btRows.value
+  if (!rs.length) return ''
+  const lo = rs.map((r) => r.date_from).filter(Boolean).sort()[0]
+  const hi = rs.map((r) => r.date_to).filter(Boolean).sort().slice(-1)[0]
+  return `訊號日 ${lo} ~ ${hi}`
+})
+function verdict(r) {
+  if (r.verdict === 'effective') return r.sign < 0 ? { label: '有效（避開）', type: 'success' } : { label: '有效', type: 'danger' }
+  if (r.verdict === 'reverse') return { label: '反向', type: 'warning' }
+  return { label: '不顯著', type: 'info' }
+}
+async function loadBacktest() {
+  try { bt.value = await getActiveEtfBacktest() } catch (e) { /* 還沒跑過回測 → 不顯示 */ }
+}
+async function openSignal(sig) {
+  btSig.value = sig
+  if (sig === 'basket') { btEvents.value = []; return }
+  btLoading.value = true
+  try { btEvents.value = await getActiveEtfBacktestEvents(sig, btH.value, 100) } finally { btLoading.value = false }
+}
+function onBtH() { if (btSig.value) openSignal(btSig.value) }
+function btRowClass({ row }) { return row.signal === btSig.value ? 'current-row-etf' : '' }
+
 async function load() {
   loading.value = true
+  loadBacktest()                                  // 獨立載入：回測表不存在也不影響其他區塊
   try {
     ov.value = await getActiveEtfOverview()
     date.value = ov.value.as_of
@@ -210,8 +244,95 @@ onBeforeUnmount(() => {
       <div style="color: #999; font-size: 12px; margin-top: 8px">
         主動金額＝扣掉「全面等比例增減」後的調整（申購贖回或全面調整持股水位不算）；實際買賣＝股數變化 × 收盤價，是市場上真實的買賣壓力。
         共識以投信家數計，同一家投信的兩檔 ETF 只算一家。占成交額＝實際買賣 ÷ 期間成交金額；持股占股本＝目前涵蓋的主動 ETF 合計持股 ÷ 發行股數。
-        持股資料收盤後才公布，最早只能隔天開盤反應。
+        持股資料收盤後才公布，最早只能隔天開盤反應。跟著買有沒有用，看下方「訊號回測」。
       </div>
+    </el-card>
+
+    <el-card v-if="bt && bt.rows.length" shadow="never" style="margin-top: 16px">
+      <template #header>
+        <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 12px">
+          <b>訊號回測</b>
+          <el-radio-group v-model="btH" size="small" @change="onBtH">
+            <el-radio-button :value="5">持有 5 日</el-radio-button>
+            <el-radio-button :value="10">10 日</el-radio-button>
+            <el-radio-button :value="20">20 日</el-radio-button>
+          </el-radio-group>
+          <span style="color: #999; font-size: 12px">
+            跟著主動 ETF 進出買賣有沒有超額｜{{ btRange }}｜每週更新（{{ String(bt.computed_at || '').slice(0, 10) }}）｜點列看逐筆事件
+          </span>
+        </div>
+      </template>
+      <el-table :data="btRows" size="small" stripe style="cursor: pointer" :row-class-name="btRowClass"
+                @row-click="(r) => openSignal(r.signal)">
+        <el-table-column label="訊號" min-width="220">
+          <template #default="{ row }">
+            <b>{{ row.name }}</b><span style="color: #999; font-size: 12px; margin-left: 6px">{{ row.note }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="判讀" width="104">
+          <template #default="{ row }">
+            <el-tag :type="verdict(row).type" size="small" effect="plain">{{ verdict(row).label }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="n" label="樣本" width="62" align="right" />
+        <el-table-column label="超額（持股籃）" width="112" align="right">
+          <template #default="{ row }">
+            <span v-if="row.signal !== 'basket'" :style="{ color: up(row.avg_excess_basket) }">{{ spct(row.avg_excess_basket) }}</span>
+            <span v-else style="color: #ccc">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="超額（大盤）" width="100" align="right">
+          <template #default="{ row }"><span :style="{ color: up(row.avg_excess_mkt) }">{{ spct(row.avg_excess_mkt) }}</span></template>
+        </el-table-column>
+        <el-table-column label="中位數" width="80" align="right">
+          <template #default="{ row }">{{ spct(row.median_excess_basket) }}</template>
+        </el-table-column>
+        <el-table-column label="命中率" width="68" align="right">
+          <template #default="{ row }">{{ pct(row.hit, 0) }}</template>
+        </el-table-column>
+        <el-table-column label="t 值" width="60" align="right">
+          <template #default="{ row }">{{ row.t_stat == null ? '—' : (Number(row.t_stat) > 0 ? '+' : '') + Number(row.t_stat).toFixed(1) }}</template>
+        </el-table-column>
+        <el-table-column label="月份同向" width="80" align="center">
+          <template #default="{ row }">{{ row.months_ok }}/{{ row.months }}</template>
+        </el-table-column>
+        <el-table-column label="隔日開盤跳空" width="100" align="right">
+          <template #default="{ row }">{{ spct(row.gap_ex) }}</template>
+        </el-table-column>
+      </el-table>
+      <div style="color: #999; font-size: 12px; margin-top: 8px; line-height: 1.7">
+        T+1 開盤進場（持股資料收盤後才公布）、還原價、未扣成本。超額（持股籃）＝減掉當天所有主動 ETF 持股的平均，
+        排除「主動 ETF 本來就挑強勢股」的效果；「持股籃本身」那列是持股籃跟大盤比。
+        判讀：往預期方向超過 {{ pct(bt.cost, 1) }}（來回成本）、|t| ≥ 2、六成以上月份同方向才標「有效」；明顯往反方向標「反向」。
+        命中率、月份同向已依方向調整（賣出訊號算「之後輸給持股籃」的比例）。
+        t 值把每個事件當獨立樣本，但事件在時間上會重疊，實際顯著性比表上低；歷史從 2025-05 開始，多半是科技股多頭，結果有時期依賴。
+      </div>
+      <template v-if="btSig && btSig !== 'basket'">
+        <div style="font-weight: 600; margin: 12px 0 6px">
+          {{ btRows.find((r) => r.signal === btSig)?.name }}：最近 100 筆事件（持有 {{ btH }} 日，還沒滿期的顯示 —）
+        </div>
+        <el-table :data="btEvents" v-loading="btLoading" size="small" stripe max-height="360" style="cursor: pointer"
+                  @row-click="(r) => go(r.stock_id)">
+          <el-table-column label="股票" min-width="130" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.stock_id }} {{ row.name }}</template>
+          </el-table-column>
+          <el-table-column prop="industry" label="產業" width="100" show-overflow-tooltip />
+          <el-table-column prop="trade_date" label="訊號日" width="100" />
+          <el-table-column prop="n_issuers" label="家數" width="56" align="center" />
+          <el-table-column label="申購期" width="64" align="center">
+            <template #default="{ row }">{{ row.inflow ? '是' : '' }}</template>
+          </el-table-column>
+          <el-table-column label="報酬" width="84" align="right">
+            <template #default="{ row }"><span :style="{ color: up(row.ret) }">{{ spct(row.ret, 1) }}</span></template>
+          </el-table-column>
+          <el-table-column label="超額（持股籃）" width="112" align="right">
+            <template #default="{ row }"><span :style="{ color: up(row.excess_basket) }">{{ spct(row.excess_basket, 1) }}</span></template>
+          </el-table-column>
+          <el-table-column label="隔日開盤跳空" width="100" align="right">
+            <template #default="{ row }">{{ spct(row.gap_ex, 1) }}</template>
+          </el-table-column>
+        </el-table>
+      </template>
     </el-card>
 
     <el-card shadow="never" style="margin-top: 16px">
