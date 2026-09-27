@@ -95,18 +95,19 @@ function btRowClass({ row }) { return row.signal === btSig.value ? 'current-row-
 const bk = ref(null)
 const bkEl = ref(null)
 let bkChart = null
+const BK_MAIN = 'basket3_m'           // 主策略（8 家投信後改成 ≥3 家；見 backtest_etf_basket.py）
 const BK_STYLE = {
-  basket2_m: { color: '#EA4C4C', width: 2.5 }, '00981A': { color: '#303133', width: 2.5 },
-  '0050': { color: '#909399', width: 1.5, type: 'dashed' }, basket2_vw: { color: '#e6a23c', width: 1.2 },
-  basket2_w: { color: '#f89898', width: 1.2, type: 'dotted' }, basket3_m: { color: '#9b59b6', width: 1.2 },
-  basket1_m: { color: '#409eff', width: 1.2 },
+  basket3_m: { color: '#EA4C4C', width: 2.5 }, '00981A': { color: '#303133', width: 2.5 },
+  '0050': { color: '#909399', width: 1.5, type: 'dashed' }, basket3_vw: { color: '#e6a23c', width: 1.2 },
+  basket3_w: { color: '#f89898', width: 1.2, type: 'dotted' }, basket4_m: { color: '#9b59b6', width: 1.2 },
+  basket2_m: { color: '#67c23a', width: 1.2 }, basket1_m: { color: '#409eff', width: 1.2 },
 }
 const bkHeadline = computed(() => {
   const rs = bk.value?.rows || []
-  const s = rs.find((r) => r.strategy === 'basket2_m')
+  const s = rs.find((r) => r.strategy === BK_MAIN)
   const e = rs.find((r) => r.strategy === '00981A')
   if (!s || !e) return ''
-  return `≥2 家・等權・月換股：總報酬 ${spct(s.total_ret, 0)}，同期 00981A ${spct(e.total_ret, 0)}；` +
+  return `${s.name.replace('持股籃 ', '')}：總報酬 ${spct(s.total_ret, 0)}，同期 00981A ${spct(e.total_ret, 0)}；` +
     `${s.months} 個月裡贏 ${s.months_beat} 個月，每月超額加總 ${spct(s.excess_sum, 1)}，拿掉最好兩個月 ${spct(s.excess_ex_top2, 1)}`
 })
 async function loadBasket() {
@@ -400,7 +401,7 @@ onBeforeUnmount(() => {
       <el-table :data="bk.rows" size="small" stripe style="margin-top: 8px">
         <el-table-column label="策略" min-width="200">
           <template #default="{ row }">
-            <b v-if="row.strategy === 'basket2_m' || row.strategy === '00981A'">{{ row.name }}</b><span v-else>{{ row.name }}</span>
+            <b v-if="row.strategy === BK_MAIN || row.strategy === '00981A'">{{ row.name }}</b><span v-else>{{ row.name }}</span>
           </template>
         </el-table-column>
         <el-table-column label="期間" width="180">

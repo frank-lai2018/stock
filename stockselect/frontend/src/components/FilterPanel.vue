@@ -66,18 +66,18 @@ onMounted(async () => {
       <!-- 主動式 ETF：近 5 個持股日有 N 家投信主動新建倉／加碼（或出清／減碼），已扣申購贖回；見 主動ETF追蹤設計.md -->
       <el-form-item label="主動ETF加碼">
         <el-select v-model="filters.aetf_buy_5d_min" style="width: 160px" clearable placeholder="不限">
-          <el-option v-for="n in [1, 2, 3]" :key="n" :label="`近5日 ≥${n} 家投信`" :value="n" />
+          <el-option v-for="n in [1, 2, 3, 4, 5]" :key="n" :label="`近5日 ≥${n} 家投信`" :value="n" />
         </el-select>
       </el-form-item>
       <el-form-item label="主動ETF減碼">
         <el-select v-model="filters.aetf_sell_5d_min" style="width: 160px" clearable placeholder="不限">
-          <el-option v-for="n in [1, 2, 3]" :key="n" :label="`近5日 ≥${n} 家投信`" :value="n" />
+          <el-option v-for="n in [1, 2, 3, 4, 5]" :key="n" :label="`近5日 ≥${n} 家投信`" :value="n" />
         </el-select>
       </el-form-item>
-      <!-- 回測：主動 ETF 持股籃本身贏大盤最明顯（比跟著每日加碼有效）；見「主動ETF」頁的訊號回測 -->
+      <!-- 回測：持有的投信越多越好（8 家投信時 ≥3 家、每月換股贏 00981A）；見「主動ETF」頁的持股籃策略 -->
       <el-form-item label="主動ETF持有">
         <el-select v-model="filters.aetf_held_min" style="width: 160px" clearable placeholder="不限">
-          <el-option v-for="n in [1, 2, 3]" :key="n" :label="`目前 ≥${n} 家投信持有`" :value="n" />
+          <el-option v-for="n in [1, 2, 3, 4, 5]" :key="n" :label="`目前 ≥${n} 家投信持有`" :value="n" />
         </el-select>
       </el-form-item>
       <el-form-item label="近3月報酬≥">

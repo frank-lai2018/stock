@@ -15,6 +15,14 @@ router = APIRouter(prefix="/api/active-etf", tags=["active-etf"])
 BUY = ("new", "add")          # 主動買進（共識計數用）
 SELL = ("exit", "cut")        # 主動賣出
 _LATEST = "(SELECT etf_id, max(as_of) AS as_of FROM etf_snapshot GROUP BY etf_id)"
+# 真部位（非佔位股）：跟 build_etf_flow.is_dust 相反——權重 ≥ 0.05%，或權重 ≥ 0.01% 且不只 1 張
+_REAL = "(h.weight >= 0.05 OR (h.weight >= 0.01 AND h.shares > 1000))"
+
+
+def _is_real(shares, weight):
+    """同 _REAL，給已經查出來的列用。"""
+    w = float(weight) if weight is not None else None
+    return w is not None and (w >= 0.05 or (w >= 0.01 and float(shares or 0) > 1000))
 
 
 def _flow_dates(n, until=None):
@@ -73,8 +81,8 @@ def consensus(date: Date | None = None, days: int = Query(1, ge=1, le=20),
         "WITH f AS (SELECT f.*, e.issuer FROM etf_flow f JOIN etf_fund e USING (etf_id) "
         "           WHERE f.trade_date = ANY(%(ds)s) AND f.action <> 'corp'), "
         "pick AS (SELECT stock_id FROM f WHERE action = ANY(%(acts)s) GROUP BY stock_id), "
-        "held AS (SELECT h.code AS stock_id, sum(h.shares) FILTER (WHERE h.weight >= 0.01) AS held_shares, "
-        "                count(*) FILTER (WHERE h.weight >= 0.01) AS n_hold "
+        f"held AS (SELECT h.code AS stock_id, sum(h.shares) FILTER (WHERE {_REAL}) AS held_shares, "
+        f"                count(*) FILTER (WHERE {_REAL}) AS n_hold "
         f"         FROM etf_holding h JOIN {_LATEST} m USING (etf_id, as_of) "
         "         WHERE h.kind = 'stock' AND h.code IN (SELECT stock_id FROM pick) GROUP BY h.code), "
         "sh AS (SELECT p.stock_id, x.shares_issued FROM pick p "          # 每檔只取最新一筆（走 PK 索引，免掃歷史）
@@ -138,7 +146,7 @@ def fund(etf_id: str, date: Date | None = None):
         "WHERE f.etf_id = %(id)s AND f.trade_date = %(d)s ORDER BY abs(f.active_amount) DESC NULLS LAST", params)
     holdings = db.query(
         "SELECT h.code AS stock_id, COALESCE(s.name, h.name) AS name, s.industry, h.shares, h.weight, "
-        "       (h.weight < 0.01) AS dust, f.action, f.d_shares, f.active_shares "
+        f"       (NOT {_REAL}) AS dust, f.action, f.d_shares, f.active_shares "
         "FROM etf_holding h LEFT JOIN stock s ON s.stock_id = h.code "
         "LEFT JOIN etf_flow f ON f.etf_id = h.etf_id AND f.trade_date = h.as_of AND f.stock_id = h.code "
         "WHERE h.etf_id = %(id)s AND h.as_of = %(d)s AND h.kind = 'stock' "
@@ -163,16 +171,16 @@ def stock(stock_id: str, days: int = Query(120, ge=20, le=500)):
         f"FROM etf_fund e JOIN {_LATEST} m USING (etf_id) "
         "LEFT JOIN etf_holding h ON h.etf_id = e.etf_id AND h.as_of = m.as_of AND h.kind = 'stock' AND h.code = %(sid)s "
         "WHERE e.adapter IS NOT NULL ORDER BY h.weight DESC NULLS LAST", {"sid": sid})
-    holders = [h for h in holders if (h["weight"] is not None and float(h["weight"]) >= 0.01) or h["last_move"]]
-    total = sum(float(h["shares"] or 0) for h in holders if h["weight"] is not None and float(h["weight"]) >= 0.01)
+    holders = [h for h in holders if _is_real(h["shares"], h["weight"]) or h["last_move"]]
+    total = sum(float(h["shares"] or 0) for h in holders if _is_real(h["shares"], h["weight"]))
     issued = db.query("SELECT shares_issued FROM shareholding WHERE stock_id = %(sid)s AND shares_issued > 0 "
                       "ORDER BY trade_date DESC LIMIT 1", {"sid": sid})
     ds = [r["as_of"] for r in db.query("SELECT DISTINCT as_of FROM etf_snapshot ORDER BY as_of DESC LIMIT %(n)s",
                                        {"n": days})]
     series = []
     if ds and holders:
-        pts = db.query("SELECT etf_id, as_of, CASE WHEN weight < 0.01 THEN 0 ELSE shares END AS shares "
-                       "FROM etf_holding WHERE code = %(sid)s AND kind = 'stock' AND as_of >= %(d0)s "
+        pts = db.query(f"SELECT etf_id, as_of, CASE WHEN {_REAL} THEN shares ELSE 0 END AS shares "
+                       "FROM etf_holding h WHERE code = %(sid)s AND kind = 'stock' AND as_of >= %(d0)s "
                        "AND etf_id = ANY(%(ids)s) ORDER BY as_of", {"sid": sid, "d0": min(ds),
                                                                      "ids": [h["etf_id"] for h in holders]})
         by = {}
@@ -243,7 +251,7 @@ def backtest_events(signal: str, horizon: int = Query(20, ge=1, le=60), limit: i
         {"k": key, "sig": signal, "n": limit})
 
 
-_BASKET_ORDER = ["basket2_m", "basket2_vw", "basket2_w", "basket3_m", "basket1_m", "00981A", "0050"]
+_BASKET_ORDER = ["basket3_m", "basket3_vw", "basket3_w", "basket4_m", "basket2_m", "basket1_m", "00981A", "0050"]
 
 
 @router.get("/basket")

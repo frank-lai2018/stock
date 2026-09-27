@@ -1,11 +1,26 @@
 r"""fetch_active_etf.py — 抓主動式 ETF 每日持股（各投信官網公告）→ etf_snapshot／etf_holding，接著算進出 → etf_flow。
 
-來源（2026-09 實測；三家都能指定日期，可回補上市以來的歷史）：
+來源（各投信官網；2026-09 實測，都能指定日期，可回補上市以來的歷史）：
   uni      統一 ezmoney 申購買回清單 Excel：/ETF/Transaction/PCFExcelNPOI?fundCode=49YTW&date=115/09/29&specificDate=true
            date 是「清單日」（民國年），檔內持股是前一交易日收盤；最新的清單日取 PCF 頁面的預設值。
   capital  群益 CFWeb JSON：POST /CFWeb/api/etf/buyback {"fundId":399,"date":"2026-09-29"}；不帶 date＝最新。
            pcf.date1＝清單日、pcf.date2＝持股日。
   fh       復華 Excel：/api/assetsExcel/ETF23/YYYYMMDD，日期就是持股日；非交易日或還沒公布回「查無資料」。
+  ── 第二階段（2026-09-28）──
+  nomura   野村 JSON：POST www.nomurafunds.com.tw/API/ETFAPI/api/Fund/GetFundTradeInfo
+           {"Type":1,"Keyword":"","FundNo":"00980A","Date":"2026/09/29"}：Date＝清單日，CNavDt＝持股日；
+           最新清單日取 Fund/GetFundTradeInfoDate 的 LatestDate。沒資料回 Entries=null。
+  ctbc     中信 JSON：先 POST www.ctbcinvestments.com.tw/API/home/AuthToken 拿 token，再 POST etf/ETFHoldingWeight
+           {"FID":"E0038","StartDate":"2026-09-24"}（投資組合）：StartDate＝持股日，但伺服器回「≤ 該日的最近一天」，
+           所以要核對「資料日期」。
+  cathay   國泰 Excel：GET cwapi.cathaysite.com.tw/api/ETF/DownloadETFWeightExcel?FundCode=EA&SearchDate=2026-09-24，
+           日期＝持股日；沒資料回空白內容。要完整 Chrome UA（Akamai 擋 python-requests）。
+  fubon    富邦 HTML：GET websys.fsit.com.tw/FubonETF/Trade/Assets.aspx?stkId=00405A&ddate=2026/09/24&lan=TW，
+           ddate＝持股日；伺服器回「≤ ddate 的最近一天」，要核對「資料日期」。robots.txt 只開放 /FubonETF。
+  kgi      凱基 HTML 片段：POST www.kgifund.com.tw/Fund/RedemptionVC（fundID=J024&queryDate=2026/09/29）：
+           queryDate＝清單日，括號裡的 (2026/09/24) 是持股日；沒資料回 HTTP 500（不重試）；日期格式不對會默默回最新一份。
+  野村、中信、凱基的憑證鏈在 Python 3.13 的嚴格檢查下會失敗（TWCA 根憑證缺 Subject Key Identifier），
+  改用 Windows 系統的憑證驗證（truststore）；驗證沒有放寬，瀏覽器、curl 走的也是這套。
 各家約傍晚到晚上陸續公布。run_nightly.bat（晚上 9 點後執行）在 nightly 跑完後會再補抓一次（見 主動ETF追蹤設計.md）。
 
 防呆：
@@ -16,7 +31,7 @@ r"""fetch_active_etf.py — 抓主動式 ETF 每日持股（各投信官網公�
 
 用法：
   python fetch_active_etf.py                         # 每晚：抓最新＋補近 10 個交易日的缺口 → 算進出
-  python fetch_active_etf.py --backfill              # 回補上市以來全部歷史（約 1,100 個請求，三家並行約 10～15 分鐘）
+  python fetch_active_etf.py --backfill              # 回補上市以來全部歷史（約 2,300 個請求，各家並行約 30 分鐘；群益最慢）
   python fetch_active_etf.py --backfill --since 2026-09-01 --etf 00981A
   python fetch_active_etf.py --dry-run --etf 00991A  # 只抓最新、解析、印摘要，不寫 DB
   python fetch_active_etf.py --no-flow               # 只抓持股，不算進出
@@ -48,6 +63,19 @@ CAP_API = "https://www.capitalfund.com.tw/CFWeb/api/etf/buyback"
 CAP_PAGE = "https://www.capitalfund.com.tw/etf/product/detail/{code}/portfolio"
 FH_XLSX = "https://www.fhtrust.com.tw/api/assetsExcel/{code}/{ymd}"
 FH_PAGE = "https://www.fhtrust.com.tw/ETF/etf_detail/{code}"
+NOMURA_HOST = "https://www.nomurafunds.com.tw"
+NOMURA_API = NOMURA_HOST + "/API/ETFAPI/api/"
+NOMURA_PAGE = NOMURA_HOST + "/ETFWEB/product-description?fundNo={code}"
+CTBC_SITE = "https://www.ctbcinvestments.com"
+CTBC_API = "https://www.ctbcinvestments.com.tw/API/"
+CTBC_BOOT = "www.ctbcinvestments.com"           # 網頁啟動時拿 token 用的固定字串
+CTBC_PAGE = CTBC_SITE + "/Etf/{etf}/Combination"
+CATHAY_API = "https://cwapi.cathaysite.com.tw/api/"
+CATHAY_PAGE = "https://www.cathaysite.com.tw/ETF/detail/E{code}"
+FUBON_ASSETS = "https://websys.fsit.com.tw/FubonETF/Trade/Assets.aspx"
+FUBON_PAGE = "https://websys.fsit.com.tw/FubonETF/Trade/Pcf.aspx?stkId={code}&lan=TW"
+KGI_VC = "https://www.kgifund.com.tw/Fund/RedemptionVC"
+KGI_PAGE = "https://www.kgifund.com.tw/Fund/RedemptionList"
 
 Fund = namedtuple("Fund", "etf_id issuer adapter code name")
 _print_lock = threading.Lock()
@@ -102,7 +130,9 @@ def _xlsx_rows(content):
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     try:
-        return [["" if c is None else str(c).strip() for c in r] for r in wb.worksheets[0].iter_rows(values_only=True)]
+        ws = wb.worksheets[0]
+        ws.reset_dimensions()           # 國泰、凱基的檔宣告範圍只有 A1，唯讀模式不重算就只讀得到第一格
+        return [["" if c is None else str(c).strip() for c in r] for r in ws.iter_rows(values_only=True)]
     finally:
         wb.close()
 
@@ -123,18 +153,20 @@ FUT_RE = re.compile(r"[0-9A-Z]{2,6}")
 
 
 def _parse_tables(rows):
-    """在工作表裡找「股票」（表頭含 代號＋股數）與「期貨」（表頭含 代號＋口數）明細表。
-    欄位用表頭文字定位，不寫死欄號；表頭之後遇到不像代號的列即結束該表。"""
+    """在工作表（或 HTML 表格轉成的列）裡找「股票」（表頭含 代號/代碼＋股數）與「期貨」（代號/代碼＋口數）明細表。
+    欄位用表頭文字定位，不寫死欄號；表頭之後遇到不像代號的列即結束該表。選擇權表（有 履約價／買賣權）不收。"""
     stocks, futures, cur = [], [], None
     for r in rows:
         idx = {v: i for i, v in enumerate(r) if v}
         names = " ".join(idx)
-        if "代號" in names and ("股數" in names or "口數" in names):
-            if "口數" in names:
-                cur = ("futures", _col(idx, "代號"), _col(idx, "名稱"), _col(idx, "口數"),
+        if ("代號" in names or "代碼" in names) and ("股數" in names or "口數" in names):
+            if "履約價" in names or "買賣權" in names:
+                cur = None                                # 選擇權（國泰、中信賣買權）：不是持股
+            elif "口數" in names:
+                cur = ("futures", _col(idx, "代號", "代碼"), _col(idx, "名稱"), _col(idx, "口數"),
                        _col(idx, "權重"), _col(idx, "年月", "月份"))
             else:
-                cur = ("stock", _col(idx, "代號"), _col(idx, "名稱"), _col(idx, "股數"),
+                cur = ("stock", _col(idx, "代號", "代碼"), _col(idx, "名稱"), _col(idx, "股數"),
                        _col(idx, "權重"), _col(idx, "金額", "市值"))
             continue
         if not cur:
@@ -232,22 +264,198 @@ def parse_capital(obj):
     return _valid(snap)
 
 
+def _html_rows(content):
+    """HTML → (表格列, 文字行)。表格列跟 Excel 的列一樣交給 _parse_tables；文字行用來找「標籤 → 下一個元素的值」。"""
+    from html.parser import HTMLParser
+
+    class _P(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.rows, self.lines, self.row, self.cell, self.skip = [], [], None, None, 0
+
+        def handle_starttag(self, tag, attrs):
+            if tag in ("script", "style"):
+                self.skip += 1
+            elif tag == "tr":
+                self.row = []
+            elif tag in ("td", "th") and self.row is not None:
+                self.cell = []
+
+        def handle_endtag(self, tag):
+            if tag in ("script", "style"):
+                self.skip = max(0, self.skip - 1)
+            elif tag in ("td", "th") and self.cell is not None:
+                self.row.append(" ".join("".join(self.cell).split()))
+                self.cell = None
+            elif tag == "tr" and self.row is not None:
+                self.rows.append(self.row)
+                self.row = None
+
+        def handle_data(self, data):
+            if self.skip:
+                return
+            if self.cell is not None:
+                self.cell.append(data)
+            t = " ".join(data.split())
+            if t:
+                self.lines.append(t)
+
+    p = _P()
+    p.feed(content.decode("utf-8", "replace") if isinstance(content, bytes) else content)
+    p.close()
+    return p.rows, p.lines
+
+
+def _after(lines, key):
+    """第一個含 key 的文字行的下一行（富邦、凱基的標籤和值是相鄰的兩個元素）。"""
+    for i, t in enumerate(lines[:-1]):
+        if key in t:
+            return lines[i + 1]
+    return None
+
+
+def parse_nomura(obj):
+    """野村 GetFundTradeInfo：Entries.CPcfdate 清單日、CNavDt 持股日、CAnceTotalIssues 單位數、CAnceIssuesDiff 與前日差異、
+    CAnceTotalAv 淨資產、CAnceNav 每單位淨值；Stocks（CStockCode、CQuantity 股數、CWeightsPct）、Futures（CContractYm）。"""
+    e = (obj or {}).get("Entries") or {}
+    if (obj or {}).get("StatusCode") != 0 or not e:
+        return None                                       # 非交易日、還沒公布：Entries=null
+    snap = {"list_date": _ad(e.get("CPcfdate")), "as_of": _ad(e.get("CNavDt")),
+            "units": _num(e.get("CAnceTotalIssues")), "units_chg": _num(e.get("CAnceIssuesDiff")),
+            "nav_total": _num(e.get("CAnceTotalAv")), "nav_unit": _num(e.get("CAnceNav"))}
+    stocks = []
+    for x in (e.get("Stocks") or []) + (e.get("Etfs") or []):
+        code = next((v for k, v in x.items() if k.endswith("Code") and v), None)
+        name = next((v for k, v in x.items() if k.endswith("Name") and v), "")
+        if code and _num(x.get("CQuantity")) is not None:
+            stocks.append((str(code).strip().upper(), str(name).strip(), _num(x.get("CQuantity")),
+                           _num(x.get("CWeightsPct")), None))
+    snap["stocks"] = stocks
+    snap["futures"] = [(str(f["CFuturesCode"]).strip() + re.sub(r"\D", "", str(f.get("CContractYm") or "")),
+                        f"{(f.get('CFuturesName') or '').strip()} {f.get('CContractYm') or ''}".strip(),
+                        _num(f.get("CQuantity")), _num(f.get("CWeightsPct")))
+                       for f in e.get("Futures") or [] if f.get("CFuturesCode") and _num(f.get("CQuantity")) is not None]
+    return _valid(snap)
+
+
+def parse_ctbc(obj):
+    """中信 etf/ETFHoldingWeight：Data.FundAssets[0] 的 資料日期／基金淨資產／基金在外流通單位數／基金每單位淨值；
+    FundAssetsDetail 各區塊的 invtp_：STOCK 股票（qty_ 股數、weights_、amount_）、FUTURE 期貨（ym_ 契約年月）；
+    選擇權（00406A 賣台指買權）、現金、保證金略過。上市前只有淨值、沒有持股的日子回 None。"""
+    if (obj or {}).get("ResultCode") != 0:
+        return None
+    data = obj.get("Data") or {}
+    fa = (data.get("FundAssets") or [None])[0]
+    if not fa:
+        return None
+    snap = {"as_of": _ad(fa.get("資料日期")), "nav_total": _num(fa.get("基金淨資產")),
+            "units": _num(fa.get("基金在外流通單位數")), "nav_unit": _num(fa.get("基金每單位淨值"))}
+    stocks, futures = [], []
+    for sec in data.get("FundAssetsDetail") or []:
+        for r in sec.get("Data") or []:
+            kind, code, qty = (r.get("invtp_") or "").upper(), (r.get("code_") or "").strip().upper(), _num(r.get("qty_"))
+            if not code or qty is None:
+                continue
+            name = (r.get("name_") or "").strip()
+            if kind == "STOCK":
+                stocks.append((code, name, qty, _num(r.get("weights_")), _num(r.get("amount_"))))
+            elif kind == "FUTURE":
+                ym = (r.get("ym_") or "").strip()
+                futures.append((code + ym, f"{name} {ym}".strip(), qty, _num(r.get("weights_"))))
+    snap["stocks"], snap["futures"] = stocks, futures
+    return _valid(snap)
+
+
+def parse_cathay(content):
+    """國泰持股權重 Excel：標題 '2026/09/24基金持股權重'；基金淨資產價值／基金在外流通單位數／基金每單位淨值 的值在同一列；
+    股票表頭 股票代號／股票名稱／股數／持股權重（沒有市值），期貨 期貨代號／口數／契約年月；選擇權不收。兩字的名稱中間有空白。"""
+    rows = _xlsx_rows(content)
+    snap = {}
+    for r in rows:
+        cells = [c for c in r if c]
+        if not cells:
+            continue
+        c0, v = cells[0], (cells[1] if len(cells) > 1 else None)
+        m = re.search(r"(\d{4}/\d{1,2}/\d{1,2})\s*基金持股權重", c0)
+        if m and "as_of" not in snap:
+            snap["as_of"] = _ad(m.group(1))
+        elif c0.startswith("基金淨資產價值"):
+            snap["nav_total"] = _num(v)
+        elif c0.startswith("基金在外流通單位數"):
+            snap["units"] = _num(v)
+        elif c0.startswith("基金每單位淨值"):
+            snap["nav_unit"] = _num(v)
+    stocks, snap["futures"] = _parse_tables(rows)
+    snap["stocks"] = [(c, re.sub(r"\s+", "", n or ""), q, w, a) for c, n, q, w, a in stocks]
+    return _valid(snap)
+
+
+def parse_fubon(content):
+    """富邦 Trade/Assets.aspx：'資料日期：2026/09/24'；基金淨資產(新台幣)／基金在外流通單位數(單位)／基金每單位淨值(新台幣)
+    的值在下一個元素；股票表頭 股票代碼／股票名稱／股數／金額／權重(%)，期貨 期貨代碼／口數。沒資料時寫「尚未有資料！」。"""
+    rows, lines = _html_rows(content)
+    m = re.search(r"資料日期[：:]\s*(\d{4}/\d{1,2}/\d{1,2})", "\n".join(lines))
+    snap = {"as_of": _ad(m.group(1)) if m else None, "nav_total": _num(_after(lines, "基金淨資產(新台幣)")),
+            "units": _num(_after(lines, "基金在外流通單位數")), "nav_unit": _num(_after(lines, "基金每單位淨值"))}
+    snap["stocks"], snap["futures"] = _parse_tables(rows)
+    return _valid(snap)
+
+
+def parse_kgi(content):
+    """凱基 RedemptionVC 片段：<input id="DataDate" value="清單日">；'(2026/09/24)每受益權單位淨資產價值(元)' 括號裡是持股日；
+    基金淨資產價值／已發行受益權單位總數／與前日已發行單位差異數 的值在下一個元素；股票表頭 股票代號／股數／權重(%)（沒有市值）。"""
+    raw = content.decode("utf-8", "replace") if isinstance(content, bytes) else content
+    rows, lines = _html_rows(raw)
+    m = re.search(r'id="DataDate"[^>]*value="([^"]*)"', raw)
+    snap = {"list_date": _ad(m.group(1)) if m else None, "nav_total": _num(_after(lines, "基金淨資產價值")),
+            "units": _num(_after(lines, "已發行受益權單位總數")), "units_chg": _num(_after(lines, "與前日已發行單位差異數"))}
+    for i, t in enumerate(lines[:-1]):
+        if "每受益權單位淨資產價值" in t:
+            snap["as_of"], snap["nav_unit"] = _ad(t), _num(lines[i + 1])
+            break
+    snap["stocks"], snap["futures"] = _parse_tables(rows)
+    return _valid(snap)
+
+
+def _json(r):
+    try:
+        return r.json()
+    except ValueError:
+        return None
+
+
 # ---------- 抓取器 ----------
 
 class FetchError(Exception):
     pass
 
 
+class _SystemTrust(requests.adapters.HTTPAdapter):
+    """用 Windows 系統的憑證驗證（truststore）。Python 3.13 預設的嚴格檢查會擋掉 TWCA 根憑證（缺 Subject Key
+    Identifier），野村、中信、凱基官網因此連不上；瀏覽器、curl 走的是系統驗證所以沒問題。這裡沒有放寬任何檢查。"""
+
+    def init_poolmanager(self, *args, **kwargs):
+        import ssl
+        import truststore
+        kwargs["ssl_context"] = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        return super().init_poolmanager(*args, **kwargs)
+
+
 class Adapter:
     """每家投信一個實例（一個 session），同一家的請求依序送。"""
     pcf_dates = True        # True：請求日期是「清單日」，內容是前一交易日的持股；False：請求日期＝持股日
+    system_trust = False    # True：憑證用系統驗證（見 _SystemTrust）
+    min_delay = 0.0         # 這家至少間隔幾秒
 
     def __init__(self, delay):
-        self.delay = delay
+        self.delay = max(delay, self.min_delay)
         self.s = requests.Session()
         self.s.headers.update({"User-Agent": UA, "Accept-Language": "zh-TW,zh;q=0.9"})
+        if self.system_trust:
+            self.s.mount("https://", _SystemTrust())
 
-    def _req(self, method, url, **kw):
+    def _req(self, method, url, none_on=(), **kw):
+        """200 回 response；none_on 裡的狀態碼（凱基沒資料回 500）直接回 None、不重試；其他錯誤重試 3 次後丟 FetchError。"""
         last = None
         for attempt in range(3):
             time.sleep(self.delay)
@@ -255,6 +463,8 @@ class Adapter:
                 r = self.s.request(method, url, timeout=45, **kw)
                 if r.status_code == 200:
                     return r
+                if r.status_code in none_on:
+                    return None
                 last = f"HTTP {r.status_code}"
             except requests.RequestException as e:
                 last = str(e)[:100]
@@ -342,7 +552,127 @@ class Fh(Adapter):
         return None
 
 
-ADAPTERS = {"uni": Uni, "capital": Capital, "fh": Fh}
+class Nomura(Adapter):
+    system_trust = True
+    min_delay = 1.0
+
+    def _post(self, fund, path, body):
+        return self._req("POST", NOMURA_API + path, json=body,
+                         headers={"Referer": NOMURA_PAGE.format(code=fund.code), "Origin": NOMURA_HOST,
+                                  "Accept": "application/json, text/plain, */*"})
+
+    def fetch(self, fund, d):
+        body = {"Type": 1, "Keyword": "", "FundNo": fund.code, "Date": f"{d:%Y/%m/%d}"}
+        r = self._post(fund, "Fund/GetFundTradeInfo", body)
+        snap = parse_nomura(_json(r))
+        return (snap, r.content, "json", f"{NOMURA_API}Fund/GetFundTradeInfo {body}") if snap else None
+
+    def fetch_latest(self, fund):
+        body = {"Type": 1, "Keyword": "", "FundNo": fund.code, "Date": f"{date.today():%Y/%m/%d}"}
+        latest = _ad(((_json(self._post(fund, "Fund/GetFundTradeInfoDate", body)) or {}).get("Entries") or {})
+                     .get("LatestDate"))
+        return self.fetch(fund, latest) if latest else None
+
+
+class Ctbc(Adapter):
+    pcf_dates = False
+    system_trust = True
+    min_delay = 1.0
+
+    def __init__(self, delay):
+        super().__init__(delay)
+        self._token = None
+
+    def _call(self, path, body, referer):
+        """POST API/<path>?token=…，body 也要帶 token；token 過期就重拿一次。錯誤是 HTTP 200 + ResultCode≠0。"""
+        headers = {"Referer": referer, "Origin": CTBC_SITE, "Accept": "application/json, text/plain, */*"}
+        for _ in range(2):
+            if not self._token:
+                r = self._req("POST", CTBC_API + "home/AuthToken", params={"token": CTBC_BOOT},
+                              json={"token": CTBC_BOOT}, headers=headers)
+                self._token = ((_json(r) or {}).get("Data") or {}).get("token") or CTBC_BOOT
+            r = self._req("POST", CTBC_API + path, params={"token": self._token},
+                          json=dict(body, token=self._token), headers=headers)
+            obj = _json(r) or {}
+            if obj.get("ResultCode") == 0:
+                return r, obj
+            if "Token" in str(obj.get("ResultMsg")):
+                self._token = None
+                continue
+            raise FetchError(f"中信 {path}：{str(obj.get('ResultMsg'))[:80]}")
+        raise FetchError("中信 token 連續兩次無效")
+
+    def fetch(self, fund, d, strict=True):
+        body = {"FID": fund.code, "StartDate": d.isoformat()}
+        r, obj = self._call("etf/ETFHoldingWeight", body, CTBC_PAGE.format(etf=fund.etf_id))
+        snap = parse_ctbc(obj)
+        if not snap or (strict and snap["as_of"] != d):  # 伺服器回「≤ 指定日的最近一天」
+            return None
+        return (snap, r.content, "json", f"{CTBC_API}etf/ETFHoldingWeight {body}")
+
+    def fetch_latest(self, fund):
+        return self.fetch(fund, date.today(), strict=False)
+
+
+class Cathay(Adapter):
+    pcf_dates = False
+    min_delay = 1.0
+
+    def fetch(self, fund, d):
+        url = f"{CATHAY_API}ETF/DownloadETFWeightExcel?FundCode={fund.code}&SearchDate={d.isoformat()}"
+        r = self._req("GET", url, headers={"Referer": CATHAY_PAGE.format(code=fund.code)})
+        if not r.content.startswith(b"PK"):              # 非交易日、還沒公布：空白內容
+            return None
+        snap = parse_cathay(r.content)
+        return (snap, r.content, "xlsx", url) if snap and snap["as_of"] == d else None
+
+    def fetch_latest(self, fund):
+        r = self._req("GET", CATHAY_API + "ETF/GetETFAssets", params={"FundCode": fund.code, "status": "1"},
+                      headers={"Referer": CATHAY_PAGE.format(code=fund.code), "Accept": "application/json, text/plain, */*"})
+        d = _ad(((_json(r) or {}).get("result") or {}).get("preDate"))   # 最新持股日
+        return self.fetch(fund, d) if d else None
+
+
+class Fubon(Adapter):
+    pcf_dates = False
+    min_delay = 1.0
+
+    def fetch(self, fund, d):
+        params = {"stkId": fund.code, "lan": "TW"}
+        if d:
+            params["ddate"] = f"{d:%Y/%m/%d}"
+        r = self._req("GET", FUBON_ASSETS, params=params, headers={"Referer": FUBON_PAGE.format(code=fund.code)})
+        snap = parse_fubon(r.content)
+        if not snap or (d and snap["as_of"] != d):       # 伺服器回「≤ ddate 的最近一天」
+            return None
+        return (snap, r.content, "html", r.url)
+
+    def fetch_latest(self, fund):
+        return self.fetch(fund, None)
+
+
+class Kgi(Adapter):
+    system_trust = True
+    min_delay = 1.0
+
+    def fetch(self, fund, d):
+        body = {"fundID": fund.code, "queryDate": f"{d:%Y/%m/%d}" if d else ""}
+        r = self._req("POST", KGI_VC, data=body, none_on=(500,),
+                      headers={"Referer": KGI_PAGE, "Origin": "https://www.kgifund.com.tw",
+                               "X-Requested-With": "XMLHttpRequest"})
+        if r is None:                                     # 非交易日、還沒公布：HTTP 500
+            return None
+        snap = parse_kgi(r.content)
+        if not snap or (d and snap.get("list_date") != d):   # 日期格式不對時會默默回最新一份
+            return None
+        return (snap, r.content, "html", f"{KGI_VC} {body}")
+
+    def fetch_latest(self, fund):
+        return self.fetch(fund, None)
+
+
+ADAPTERS = {"uni": Uni, "capital": Capital, "fh": Fh,
+            "nomura": Nomura, "ctbc": Ctbc, "cathay": Cathay, "fubon": Fubon, "kgi": Kgi}
 
 
 # ---------- 入庫 ----------

@@ -1,15 +1,18 @@
 r"""backtest_etf_basket.py — 持股籃策略回測：持有「被 N 家投信的主動 ETF 同時持有」的股票、定期換股，
 跟直接買 00981A、0050 比。說明見 主動ETF追蹤設計.md。
 
-為什麼做：backtest_etf_flow.py 的結果是「跟著每日進出買」沒有超額，但「持股籃本身」每 20 日贏大盤約 3.8%。
+為什麼做：backtest_etf_flow.py 的結果是「跟著每日進出買」幾乎沒有超額，但「持股籃本身」每 20 日贏大盤約 2.7%
+（8 家投信；只有 3 家時約 3.8%）。
 這裡檢查這個效應能不能變成可執行的策略：扣掉成本與換手之後，還贏不贏直接買主動 ETF？
 
 策略（換股日用前一交易日收盤後公布的持股選股，換股日開盤成交，只交易差額）：
   basket1_m   ≥1 家投信持有（整個持股籃）、等權、每月換股
   basket2_m   ≥2 家投信持有、等權、每月換股
-  basket3_m   ≥3 家投信持有、等權、每月換股（00991A 上市後才有 3 家，2026-01 起）
-  basket2_w   ≥2 家投信持有、等權、每週換股（看換手成本）
-  basket2_vw  ≥2 家投信持有、依主動 ETF 合計持股市值加權、每月換股
+  basket3_m   ≥3 家投信持有、等權、每月換股（主策略：8 家投信時約 33 檔，跟只有 3 家時的 ≥2 家差不多大）
+  basket4_m   ≥4 家投信持有、等權、每月換股（00991A 上市後才有 4 家，2025-12 起）
+  basket3_w   ≥3 家投信持有、等權、每週換股（看換手成本）
+  basket3_vw  ≥3 家投信持有、依主動 ETF 合計持股市值加權、每月換股
+  2026-09-28 從 3 家投信擴到 8 家後，≥2 家的門檻變寬（30 → 56 檔），主策略改成 ≥3 家。
 基準（買進持有）：00981A 主動統一台股增長、0050 元大台灣50
 成本：股票買進 0.1425%、賣出 0.1425%＋證交稅 0.3%；ETF 賣出證交稅 0.1%。券商手續費有折扣的話成本更低。
 價格：還原價，並修正還原價斷點（見 backtest_etf_flow.sanitize；0050 2025-06-18 一拆四就是這種斷點）。
@@ -35,12 +38,13 @@ SELL_COST_STOCK = 0.001425 + 0.003
 SELL_COST_ETF = 0.001425 + 0.001
 DAYS_PER_YEAR = 245
 BENCHMARKS = {"00981A": "00981A 主動統一台股增長（買進持有）", "0050": "0050 元大台灣50（買進持有）"}
-STRATEGIES = {   # key: (名稱, 最少投信家數, 換股頻率, 加權)
+STRATEGIES = {   # key: (名稱, 最少投信家數, 換股頻率, 加權)；前端以 basket3_m 為主策略
     "basket1_m": ("持股籃 ≥1 家・月換", 1, "M", "eq"),
     "basket2_m": ("持股籃 ≥2 家・月換", 2, "M", "eq"),
     "basket3_m": ("持股籃 ≥3 家・月換", 3, "M", "eq"),
-    "basket2_w": ("持股籃 ≥2 家・週換", 2, "W", "eq"),
-    "basket2_vw": ("持股籃 ≥2 家・市值加權・月換", 2, "M", "vw"),
+    "basket4_m": ("持股籃 ≥4 家・月換", 4, "M", "eq"),
+    "basket3_w": ("持股籃 ≥3 家・週換", 3, "W", "eq"),
+    "basket3_vw": ("持股籃 ≥3 家・市值加權・月換", 3, "M", "vw"),
 }
 
 
@@ -51,7 +55,7 @@ def load_holdings(cur):
     cur.execute("SELECT h.etf_id, e.issuer, h.as_of, h.code, h.weight * s.nav_total / 100 "
                 "FROM etf_holding h JOIN etf_fund e USING (etf_id) "
                 "JOIN etf_snapshot s ON s.etf_id = h.etf_id AND s.as_of = h.as_of "
-                "WHERE h.kind = 'stock' AND h.weight >= 0.01")
+                "WHERE h.kind = 'stock' AND (h.weight >= 0.05 OR (h.weight >= 0.01 AND h.shares > 1000))")
     out = {}
     for eid, issuer, d, code, val in cur.fetchall():
         out.setdefault(eid, (issuer, defaultdict(dict)))[1][d][code] = float(val or 0)
@@ -172,13 +176,15 @@ def compute(cur, O=None, C=None):
     EO, EC = load_etf_prices(cur, BENCHMARKS)
     dates = [d for d in C.index if d in EC.index]
     first = {}                                                     # 每個投信家數門檻最早可用的持股日
-    for n in (1, 2, 3):
+    for n in sorted({v[1] for v in STRATEGIES.values()} | {2}):
         for d in sorted({d for _, (_, by) in holdings.items() for d in by}):
             if len(select(holdings, d, n, "eq")) > 0:
                 first[n] = d
                 break
     curves, summary = {}, []
-    base_start = min(d for d in dates if d > first.get(2, dates[0]))
+    # 起點要在基準 00981A 上市之後（野村 00980A 比它早上市，≥2 家從 2025-05-22 就成立，那時還沒有基準可比）
+    bench0 = EO["00981A"].first_valid_index() if "00981A" in EO.columns else None
+    base_start = min(d for d in dates if d > max(first.get(2, dates[0]), bench0 or dates[0]))
     for key, (name, n_iss, freq, wt) in STRATEGIES.items():
         if n_iss not in first:
             continue

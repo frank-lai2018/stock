@@ -21,8 +21,17 @@ r"""fetch_corp_actions.py — 抓上市／上櫃官方的「除權息、減資�
   其他：  r = 恢復買賣參考價 / 停止買賣前收盤價
   官方除權息表「不含除息併案辦理退還股款減資或分割減資」，那些在減資表，兩表不會重複計算。
 
+持有人股數倍數 share_ratio（事件後÷事件前；build_etf_flow.py 用來換算主動 ETF 的持股；純現金股利＝1）：
+  除權      1＋無償配股率。上櫃表直接有「每仟股無償配股」；上市表沒有，逐筆查詳細資料 exRight/TWT49UDetail
+            （例：緯穎 115/09/02 每千股配 1,982.8 股 → ×2.9828，不是剛好 ×3）。現金增資要自己認購，不算。
+  減資      每千股換發股數÷1000。上櫃表的「詳細資料」欄就有；上市逐筆查 reducation/TWTAVUDetail。
+  面額變更  換股率（上櫃詳細資料欄）；上市用 前收÷參考價 對齊簡單分數（國巨 10→2.5 元 ×4）。
+  ETF 分割  前收÷參考價 對齊簡單分數（0050 一拆四 ×4、00663L ×7、反分割 ×1/6）。
+  上市要逐筆查的只補 DETAIL_SINCE（2025-01-01，主動 ETF 上市前）以後的事件，平常每天只有幾筆；更早的留空。
+
 輸出（--out，預設 H:\data\CorpActions）：
-  corp_actions.csv  全部事件：stock_id,date,kind(div/capred/par/split),market,name,prev_close,ref_price,value,ratio,note,source
+  corp_actions.csv  全部事件：stock_id,date,kind(div/capred/par/split),market,name,prev_close,ref_price,value,ratio,
+                    share_ratio,note,source
                     每抓一段就「整段取代」該來源那段日期的資料（官方更正、取消也會反映）
   coverage.json     各來源已完整抓到的日期區間；build_adjusted_price 據此判斷「官方表範圍內只信官方，
                     FinMind 股利只補官方還沒抓到的最近幾天」
@@ -52,10 +61,18 @@ UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
 TWSE_URL = "https://www.twse.com.tw/rwd/zh/{path}"
 TPEX_URL = "https://www.tpex.org.tw/www/zh-tw/{path}"
 CSV_NAME, COV_NAME = "corp_actions.csv", "coverage.json"
-FIELDS = ["stock_id", "date", "kind", "market", "name", "prev_close", "ref_price", "value", "ratio", "note", "source"]
+FIELDS = ["stock_id", "date", "kind", "market", "name", "prev_close", "ref_price", "value", "ratio", "share_ratio",
+          "note", "source"]
 CODE_RE = re.compile(r"^\d{4,6}[A-Z]?$")
 KIND_NAME = {"div": "除權息", "capred": "減資", "par": "面額變更", "split": "ETF分割"}
 RECHECK_DAYS = 10            # 每日模式往回重抓幾天（官方偶爾更正、補登）
+DETAIL_SINCE = date(2025, 1, 1)   # 上市配股／減資的換股率要逐筆查詳細資料：只補這天以後的
+DETAIL_MAX = 400             # 每次最多查幾筆詳細資料（第一次補約 270 筆；平常每天幾筆）
+# 上市逐筆詳細資料：來源 → (路徑, 日期參數名, 欄名關鍵字, 換算成 share_ratio)
+DETAIL_API = {
+    "TWT49U": ("exRight/TWT49UDetail", "T1", "無償配股", lambda v: 1 + v / 1000),       # 每千股無償配股
+    "TWTAUU": ("reducation/TWTAVUDetail", "FILE_DATE", "換發新股", lambda v: v / 1000),   # 每壹仟股換發新股票
+}
 
 # 來源：(代號, 市場, kind, 路徑, 最早可查日, 回補時每次查幾年)
 SOURCES = [
@@ -140,6 +157,25 @@ def num(s):
         return None
 
 
+def first_num(s):
+    """'1,982.8 股'、'950.00000000&nbsp股' → 1982.8、950.0；沒有數字回 None。"""
+    m = re.search(r"-?\d[\d,]*(?:\.\d+)?", str(s))
+    return float(m.group(0).replace(",", "")) if m else None
+
+
+def snap_ratio(x):
+    """換股率對齊簡單分數（4、7、2.5、1/6…）：參考價有四捨五入，前收÷參考價不會剛好是整數；差 1% 以上就原樣回傳。"""
+    from fractions import Fraction
+    f = Fraction(x).limit_denominator(4) if x >= 1 else 1 / Fraction(1 / x).limit_denominator(4)
+    return float(f) if f and abs(float(f) / x - 1) < 0.01 else x
+
+
+def html_num(det, label):
+    """櫃買「詳細資料」欄是一小段 HTML：<th>每壹仟股換發新股票:</th><td>550.00000000&nbsp股</td>。"""
+    m = re.search(re.escape(label) + r"[:：]?\s*</th>\s*<td>\s*([-\d.,]+)", det or "")
+    return first_num(m.group(1)) if m else None
+
+
 def _col(fields, *keys, exclude=()):
     for i, f in enumerate(fields):
         if any(k in f for k in keys) and not any(x in f for x in exclude):
@@ -154,6 +190,8 @@ def parse(src, market, kind, fields, data):
     i_val = _col(fields, "權值+息值")
     i_exd = _col(fields, "減除股利參考價")
     i_note = _col(fields, "權/息", "減資原因", "分割(反分割)")
+    i_stk = _col(fields, "無償配股")                   # 只有上櫃除權息表有：每仟股無償配股
+    i_det = _col(fields, "詳細資料")                   # 上市：查詳細資料的參數；上櫃：一小段 HTML
     if data and (i_prev is None or i_ref is None or (kind == "div" and (i_val is None or i_exd is None))):
         raise RuntimeError(f"{src} 欄位對不上（官網改版？）：{fields}")
     out = {}
@@ -184,14 +222,53 @@ def parse(src, market, kind, fields, data):
             continue
         if kind == "split" and not note:
             note = "分割" if ratio < 1 else "反分割"
+        det = str(r[i_det]).strip() if i_det is not None else ""
+        if kind == "div":
+            if i_stk is not None:
+                share = 1 + (first_num(r[i_stk]) or 0) / 1000
+            else:
+                share = None if "權" in note else 1.0     # 上市：純除息＝1；有配股的要查詳細資料
+        elif kind == "capred":
+            v = html_num(det, "每壹仟股換發新股票")
+            share = v / 1000 if v else None               # 上市查詳細資料
+        else:                                             # 面額變更、ETF 分割
+            share = html_num(det, "換股率") or (snap_ratio(prev / ref) if ref else None)
         row = {"stock_id": code, "date": d.isoformat(), "kind": kind, "market": market,
                "name": str(r[2]).strip()[:40], "prev_close": prev, "ref_price": ref,
-               "value": val, "ratio": round(ratio, 10), "note": note[:40], "source": src}
+               "value": val, "ratio": round(ratio, 10), "share_ratio": round(share, 10) if share else None,
+               "note": note[:40], "source": src}
+        if share is None and src in DETAIL_API and det:
+            row["_detail"] = det                          # '6669,20260902'、'2371  ,20250611'（不寫進檔案）
         key = (code, row["date"])
         if key in out and abs(out[key]["ratio"] - row["ratio"]) > 1e-9:
             print(f"  ⚠️ {src} {code} {d} 同日兩筆比例不同（{out[key]['ratio']:.6f} / {row['ratio']:.6f}），取後者")
         out[key] = row
     return list(out.values())
+
+
+def fill_details(sess, rows, limit=DETAIL_MAX):
+    """上市有配股的除權息、減資：逐筆查詳細資料補 share_ratio（DETAIL_SINCE 以後、還沒有的）。回傳 (補到, 沒補到)。
+    查不到的留空，下次再試（build_etf_flow 會先退回 FinMind 股利或價格比例）。"""
+    todo = [r for r in rows if r.get("share_ratio") is None and r.get("_detail")
+            and r["date"] >= DETAIL_SINCE.isoformat()]
+    done = 0
+    for r in todo[:limit]:
+        path, date_key, label, conv = DETAIL_API[r["source"]]
+        parts = [x.strip() for x in r["_detail"].split(",")]
+        try:
+            j = _json(sess, "GET", TWSE_URL.format(path=path),
+                      params={"STK_NO": parts[0], date_key: parts[1], "response": "json"})
+            fields, data = j.get("fields") or [], j.get("data") or []
+            i = _col(fields, label)
+            v = first_num(data[0][i]) if data and i is not None else None
+        except Exception as ex:                           # 單筆失敗不影響其他筆
+            print(f"  ✗ {r['source']} {r['stock_id']} {r['date']} 詳細資料失敗：{str(ex)[:80]}")
+            v = None
+        if v is not None:
+            r["share_ratio"] = round(conv(v), 10)
+            done += 1
+        time.sleep(3.0)                                   # 證交所請求太密會暫時封鎖
+    return done, len(todo) - done
 
 
 # ---------- 存檔 ----------
@@ -245,9 +322,10 @@ def write_db(dsn, fetched):
             cur.execute("DELETE FROM corp_action WHERE source = %s AND action_date BETWEEN %s AND %s", (src, s, e))
             if rows:
                 execute_values(cur, "INSERT INTO corp_action (stock_id, action_date, kind, source, market, name, "
-                               "prev_close, ref_price, value, ratio, note) VALUES %s",
+                               "prev_close, ref_price, value, ratio, share_ratio, note) VALUES %s",
                                [(r["stock_id"], r["date"], r["kind"], r["source"], r["market"], r["name"],
-                                 r["prev_close"], r["ref_price"], r["value"], r["ratio"], r["note"] or None)
+                                 r["prev_close"], r["ref_price"], r["value"], r["ratio"], r.get("share_ratio"),
+                                 r["note"] or None)
                                 for r in rows], page_size=1000)
                 n += len(rows)
         conn.commit()
@@ -313,6 +391,14 @@ def run(out=r"H:\data\CorpActions", dsn="", backfill=False, start=None, end=None
 
     path = os.path.join(out, CSV_NAME)
     rows = load_csv(path)
+    known = {(r["source"], r["stock_id"], r["date"]): float(r["share_ratio"]) for r in rows if r.get("share_ratio")}
+    new_rows = [r for _, rs in fetched for r in rs]
+    for r in new_rows:                                  # 重抓的段落：之前查過的詳細資料沿用
+        if r.get("share_ratio") is None and (r["source"], r["stock_id"], r["date"]) in known:
+            r["share_ratio"] = known[(r["source"], r["stock_id"], r["date"])]
+    got, left = fill_details(sess, new_rows)
+    if got or left:
+        print(f"  上市配股／減資詳細資料：補到 {got} 筆" + (f"，還有 {left} 筆沒補到（下次再試）" if left else ""))
     for (src, s, e), new in fetched:                    # 整段取代：先移除舊的，再放新的
         s_iso, e_iso = s.isoformat(), e.isoformat()
         rows = [r for r in rows if not (r["source"] == src and s_iso <= r["date"] <= e_iso)]
@@ -329,7 +415,8 @@ def run(out=r"H:\data\CorpActions", dsn="", backfill=False, start=None, end=None
     for r in sorted((r for _, rs in fetched for r in rs if r["kind"] != "div" and r["date"] >= recent),
                     key=lambda r: r["date"]):
         print(f"    {r['date']} {r['stock_id']} {r['name']} {KIND_NAME[r['kind']]}{('（' + r['note'] + '）') if r['note'] else ''}"
-              f" 前收 {r['prev_close']:g} → 參考價 {r['ref_price']:g}（×{float(r['ratio']):.4f}）")
+              f" 前收 {r['prev_close']:g} → 參考價 {r['ref_price']:g}（×{float(r['ratio']):.4f}"
+              + (f"，股數 ×{r['share_ratio']:g}" if r.get("share_ratio") else "") + "）")
     return n, failed
 
 

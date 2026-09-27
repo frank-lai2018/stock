@@ -66,7 +66,7 @@ python rag_news.py --stock 2330 --q "台積電最近的基本面與法人動向�
 | `batch_fundamentals.py` | 批次抓 **FinMind 個股資料集**（10 種，見步驟 2）| FinMind，**需 token** |
 | `fetch_fundamentals.py` | 單檔 FinMind 資料集下載器（`--datasets` 選）| FinMind，**需 token** |
 | `fetch_index.py` | 大盤指數（TAIEX 加權報酬指數）| FinMind，**需 token** |
-| `fetch_corp_actions.py` | 上市櫃官方**除權息／減資／面額變更／ETF 分割**參考價（全市場、按日期區間，每天 9 個請求）→ `CorpActions\corp_actions.csv` + `corp_action` 表；還原價的主要來源 | TWSE/TPEx，免認證 |
+| `fetch_corp_actions.py` | 上市櫃官方**除權息／減資／面額變更／ETF 分割**參考價（全市場、按日期區間，每天 9 個請求）→ `CorpActions\corp_actions.csv` + `corp_action` 表；還原價的主要來源。另存持有人股數倍數 `share_ratio`（配股、減資、分割），主動 ETF 換算持股用；上市的配股／減資逐筆查詳細資料（2025 年起） | TWSE/TPEx，免認證 |
 | `build_adjusted_price.py` | 用原始日K + 官方事件（FinMind 股利／減資只當後備）算**還原股價**（純本機運算）| 無（讀本機 CSV）|
 | `update_prices.py` | **更新指定交易日**全市場股價，併入各股月檔（2 個請求）| TWSE/TPEx，免認證 |
 | `update_month_prices.py` | **檢查/補齊指定月份**月檔，殘缺就整月重抓覆蓋 | TWSE/TPEx，免認證 |
@@ -182,7 +182,7 @@ python fetch_index.py --start 2010-01-01        # → H:\data\Index\TAIEX.csv
 ### 步驟 3：算還原股價（免 token）
 先抓上市櫃官方的除權息／減資／面額變更／ETF 分割參考價，再用步驟 1 的原始日K 算還原價（技術面/回測必用）：
 ```bash
-python fetch_corp_actions.py --backfill                           # 第一次：官方表從最早可查日抓到今天（約 40 個請求、2 分鐘）
+python fetch_corp_actions.py --backfill                           # 第一次：官方表從最早可查日抓到今天（約 30 個區間請求＋270 筆上市詳細資料，約 16 分鐘）
 python build_adjusted_price.py 2330                              # 單檔
 python build_adjusted_price.py                                    # 掃 H:\data 下全部個股
 ```

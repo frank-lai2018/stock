@@ -13,8 +13,11 @@ CREATE TABLE IF NOT EXISTS corp_action (
     ref_price   NUMERIC(14,4),             -- 除權息參考價／恢復買賣參考價
     value       NUMERIC(14,6),             -- 除權息：權值＋息值（＝前收盤 − 參考價，6 位小數精確值）
     ratio       NUMERIC(16,10) NOT NULL,   -- 還原比例 r：除權息 (前收−權值息值)/前收，其他 參考價/前收
+    share_ratio NUMERIC(16,10),            -- 持有人股數倍數（事件後÷事件前）：配股 1＋無償配股率、減資 換發股數/1000、
+                                           --   面額變更／分割 換股率；純現金股利＝1；上市 2025 年以前的配股／減資留空
     note        VARCHAR(40),               -- 權/息、減資原因、分割/反分割
     fetched_at  TIMESTAMP      NOT NULL DEFAULT now(),
     PRIMARY KEY (stock_id, action_date, kind, source)
 );
+ALTER TABLE corp_action ADD COLUMN IF NOT EXISTS share_ratio NUMERIC(16,10);   -- 2026-09-28 加欄
 CREATE INDEX IF NOT EXISTS idx_corp_action_date ON corp_action (action_date);

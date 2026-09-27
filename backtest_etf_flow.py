@@ -167,9 +167,12 @@ def load_events(cur):
     return agg
 
 
+REAL_POS = "(weight >= 0.05 OR (weight >= 0.01 AND shares > 1000))"   # 非佔位股（同 build_etf_flow.is_dust 的反面）
+
+
 def load_basket(cur):
     """每個持股日：被任一涵蓋 ETF 持有（非佔位股）的股票集合。"""
-    cur.execute("SELECT as_of, code FROM etf_holding WHERE kind = 'stock' AND weight >= 0.01")
+    cur.execute(f"SELECT as_of, code FROM etf_holding WHERE kind = 'stock' AND {REAL_POS}")
     b = defaultdict(set)
     for d, code in cur.fetchall():
         b[d].add(code)
