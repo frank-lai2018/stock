@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getPriceActionDecisions } from '../api'
+import { getBreakoutPatterns, getPriceActionDecisions } from '../api'
 import WatchlistAddButton from '../components/WatchlistAddButton.vue'
 
 const loading = ref(false)
@@ -12,6 +12,14 @@ const secType = ref('stock')
 const minAmt = ref(20000000)
 const lookback = ref(5)
 const expiry = ref(5)
+const chartPattern = ref('any')
+const patternRecent = ref(10)
+const bottomPatterns = ref([])
+const continuationPatterns = ref([])
+const epsMin = ref(null)
+const revenueMonthStreak = ref(0)
+const revenueQuarterStreak = ref(0)
+const grossMarginQuarterStreak = ref(0)
 const minScore = ref(0)
 const conclusion = ref('')
 const signalState = ref('')
@@ -55,6 +63,12 @@ async function load() {
       min_amt: minAmt.value,
       lookback: lookback.value,
       expiry: expiry.value,
+      chart_pattern: chartPattern.value,
+      pattern_recent: patternRecent.value,
+      eps_min: epsMin.value == null || epsMin.value === '' ? undefined : epsMin.value,
+      revenue_month_streak: revenueMonthStreak.value,
+      revenue_quarter_streak: revenueQuarterStreak.value,
+      gross_margin_quarter_streak: grossMarginQuarterStreak.value,
       limit: 300,
     })
     items.value = data.items || []
@@ -71,7 +85,19 @@ function toggleConclusion(key) {
   conclusion.value = conclusion.value === key ? '' : key
 }
 
-onMounted(load)
+onMounted(async () => {
+  try {
+    const [bottom, continuation] = await Promise.all([
+      getBreakoutPatterns('bottom'), getBreakoutPatterns('continuation'),
+    ])
+    bottomPatterns.value = bottom || []
+    continuationPatterns.value = continuation || []
+  } catch (e) {
+    ElMessage.warning('波段型態清單讀取失敗，仍可使用裸 K 掃描')
+    chartPattern.value = ''
+  }
+  await load()
+})
 
 const num = (v, digits = 1) => v == null ? '—' : Number(v).toFixed(digits)
 const pct = (v) => v == null ? '—' : `${Number(v).toFixed(1)}%`
@@ -86,8 +112,8 @@ const directionName = (v) => v === 'bull' ? '多方' : v === 'bear' ? '空方' :
     <el-card shadow="never" class="toolbar">
       <div class="toolbar-row">
         <div>
-          <h2>裸 K 型態決策</h2>
-          <div class="subtitle">從結構、位置、K 棒品質、確認與風險五層判斷；訊號形成不等於立即買進。</div>
+          <h2>型態＋裸 K 決策</h2>
+          <div class="subtitle">先找波段型態，再用裸 K 的結構、位置、確認與風險做第二層篩選。</div>
         </div>
         <div class="filters">
           <el-select v-model="secType" style="width: 112px" @change="load">
@@ -111,6 +137,39 @@ const directionName = (v) => v === 'bull' ? '多方' : v === 'bear' ? '空方' :
           </el-select>
           <el-button type="primary" :loading="loading" @click="load">重新掃描</el-button>
         </div>
+      </div>
+      <div class="server-filters">
+        <span class="filter-label">波段型態</span>
+        <el-select v-model="chartPattern" style="width: 185px">
+          <el-option label="不限（只看裸 K）" value="" />
+          <el-option label="任何多方型態" value="any" />
+          <el-option-group label="底部反轉">
+            <el-option v-for="item in bottomPatterns" :key="item.key" :label="item.name" :value="item.key" />
+          </el-option-group>
+          <el-option-group label="整理突破">
+            <el-option v-for="item in continuationPatterns" :key="item.key" :label="item.name" :value="item.key" />
+          </el-option-group>
+        </el-select>
+        <el-select v-model="patternRecent" style="width: 145px">
+          <el-option label="近 3 日突破" :value="3" />
+          <el-option label="近 10 日突破" :value="10" />
+          <el-option label="近 20 日突破" :value="20" />
+        </el-select>
+        <span class="filter-label">單季 EPS ≥</span>
+        <el-input-number v-model="epsMin" :step="0.5" :precision="2" controls-position="right" style="width: 125px" />
+        <el-select v-model="revenueMonthStreak" style="width: 165px">
+          <el-option label="月營收不限" :value="0" />
+          <el-option v-for="n in [1, 2, 3, 6]" :key="n" :label="`月營收連增 ${n} 月`" :value="n" />
+        </el-select>
+        <el-select v-model="revenueQuarterStreak" style="width: 165px">
+          <el-option label="季營收不限" :value="0" />
+          <el-option v-for="n in [1, 2, 3, 4]" :key="n" :label="`季營收連增 ${n} 季`" :value="n" />
+        </el-select>
+        <el-select v-model="grossMarginQuarterStreak" style="width: 175px">
+          <el-option label="毛利率季增不限" :value="0" />
+          <el-option v-for="n in [1, 2, 3, 4]" :key="n" :label="`毛利率連增 ${n} 季`" :value="n" />
+        </el-select>
+        <el-button type="primary" :loading="loading" @click="load">套用條件</el-button>
       </div>
       <div class="client-filters">
         <el-select v-model="conclusion" clearable placeholder="全部結論" style="width: 130px">
@@ -147,11 +206,11 @@ const directionName = (v) => v === 'bull' ? '多方' : v === 'bear' ? '空方' :
     </div>
 
     <el-alert type="info" :closable="false" show-icon class="notice">
-      <template #title>決策分數只使用還原後 OHLC；均額只用來排除流動性太低的標的，不參與評分</template>
-      「等待突破」須等後續 K 棒穿越訊號高／低點；若先碰訊號反側，會直接判定失效，避免偷看未來資料。
+      <template #title>波段型態、基本面是過濾層；裸 K 分數仍只使用還原後 OHLC</template>
+      月營收可檢查連續月增，季營收與毛利率可檢查連續季增；財報沒有逐月毛利率資料，因此不做失真的月毛利條件。
     </el-alert>
 
-    <el-table :data="shown" v-loading="loading" stripe border height="calc(100vh - 360px)" row-key="stock_id">
+    <el-table :data="shown" v-loading="loading" stripe border height="calc(100vh - 425px)" row-key="stock_id">
       <el-table-column type="index" label="#" width="48" fixed />
       <el-table-column label="決策" width="112" fixed>
         <template #default="{ row }">
@@ -173,6 +232,16 @@ const directionName = (v) => v === 'bull' ? '多方' : v === 'bear' ? '空方' :
           <el-tag :type="stateOf(row).type" size="small" effect="plain">{{ stateOf(row).label }}</el-tag>
           <span class="small muted"> {{ row.decision.signal_date }}（{{ row.decision.age }} 根前）</span>
           <div v-if="row.decision.trigger_date" class="small">觸發日 {{ row.decision.trigger_date }}</div>
+        </template>
+      </el-table-column>
+      <el-table-column label="波段型態" width="155">
+        <template #default="{ row }">
+          <template v-if="row.chart_pattern_name">
+            <el-tag type="danger" effect="plain">{{ row.chart_pattern_name }}</el-tag>
+            <div class="small muted chart-meta">突破日 {{ row.chart_breakout?.breakout_date || '—' }}</div>
+            <div class="small muted">頸線 {{ num(row.chart_breakout?.neckline, 2) }}</div>
+          </template>
+          <span v-else class="muted">未限制</span>
         </template>
       </el-table-column>
       <el-table-column label="結構與位置" min-width="190">
@@ -203,6 +272,15 @@ const directionName = (v) => v === 'bull' ? '多方' : v === 'bear' ? '空方' :
           <div class="small muted">{{ row.decision.target_source }}・現價 {{ num(row.decision.current, 2) }}</div>
         </template>
       </el-table-column>
+      <el-table-column label="成長過濾" width="185">
+        <template #default="{ row }">
+          <div>單季 EPS <b>{{ num(row.eps, 2) }}</b></div>
+          <div>月營收連增 <b>{{ row.fundamental_trend?.revenue_month_streak ?? 0 }}</b> 月</div>
+          <div>季營收連增 <b>{{ row.fundamental_trend?.revenue_quarter_streak ?? 0 }}</b> 季</div>
+          <div>毛利率 {{ pct(row.gross_margin) }}・連增 <b>{{ row.fundamental_trend?.gross_margin_quarter_streak ?? 0 }}</b> 季</div>
+          <div class="small muted">營收月 {{ row.fundamental_trend?.revenue_month || '—' }}</div>
+        </template>
+      </el-table-column>
       <el-table-column label="檢查結果" min-width="280">
         <template #default="{ row }">
           <div v-if="!row.decision.blockers.length" class="pass">可依觸發條件執行</div>
@@ -217,7 +295,7 @@ const directionName = (v) => v === 'bull' ? '多方' : v === 'bear' ? '空方' :
         <template #default="{ row }"><WatchlistAddButton :row="row" /></template>
       </el-table-column>
       <template #empty>
-        <el-empty description="目前條件沒有裸 K 候選" />
+        <el-empty description="目前型態、裸 K 與成長條件沒有交集候選" />
       </template>
     </el-table>
     <div class="method">{{ method }}｜目前顯示 {{ shown.length }}／{{ items.length }} 檔</div>
@@ -231,8 +309,10 @@ const directionName = (v) => v === 'bull' ? '多方' : v === 'bear' ? '空方' :
 h2 { margin: 0 0 4px; font-size: 22px; }
 .subtitle, .muted { color: #909399; }
 .small { font-size: 12px; }
-.filters, .client-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.filters, .server-filters, .client-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.server-filters { margin-top: 12px; padding-top: 12px; border-top: 1px solid #ebeef5; }
 .client-filters { margin-top: 12px; padding-top: 12px; border-top: 1px solid #ebeef5; }
+.filter-label { color: #606266; font-size: 13px; }
 .summary-grid { display: grid; grid-template-columns: repeat(5, minmax(135px, 1fr)); gap: 10px; margin-bottom: 10px; }
 .summary { cursor: pointer; }
 .summary :deep(.el-card__body) { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 16px; }
@@ -250,6 +330,7 @@ h2 { margin: 0 0 4px; font-size: 22px; }
 .signal-title.bull { color: #f56c6c; }
 .signal-title.bear { color: #529b2e; }
 .location-tags { display: flex; gap: 4px; flex-wrap: wrap; margin: 4px 0; }
+.chart-meta { margin-top: 5px; }
 .parts { display: flex; gap: 4px; flex-wrap: wrap; }
 .parts span { background: #f2f6fc; border-radius: 4px; padding: 3px 6px; font-size: 12px; }
 .danger, .blocker { color: #f56c6c; }

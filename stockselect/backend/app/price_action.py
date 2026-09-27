@@ -33,6 +33,16 @@ def _date(value):
     return value.isoformat() if hasattr(value, "isoformat") else str(value)
 
 
+def growth_streak(values):
+    """計算由最新往回、連續高於前一期的次數；None 會中斷。"""
+    streak = 0
+    for current, previous in zip(values, values[1:]):
+        if current is None or previous is None or _f(current) <= _f(previous):
+            break
+        streak += 1
+    return streak
+
+
 def _measure(bar):
     o, h, l, c = (_f(bar[k]) for k in ("open", "high", "low", "close"))
     span = max(h - l, 0.0)

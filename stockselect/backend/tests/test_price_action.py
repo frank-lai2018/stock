@@ -10,6 +10,11 @@ def bar(i, o, h, l, c):
 
 
 class PriceActionTest(unittest.TestCase):
+    def test_growth_streak_stops_at_first_non_growth_period(self):
+        self.assertEqual(price_action.growth_streak([130, 120, 100, 105, 90]), 2)
+        self.assertEqual(price_action.growth_streak([130, None, 100]), 0)
+        self.assertEqual(price_action.growth_streak([100]), 0)
+
     def test_inside_bar_and_nr7(self):
         bars = [bar(i, 100, 105 + i * .1, 95 - i * .1, 101) for i in range(6)]
         bars.append(bar(6, 100, 102, 98, 101))

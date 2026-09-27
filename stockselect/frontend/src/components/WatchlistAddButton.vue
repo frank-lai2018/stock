@@ -33,6 +33,9 @@ function snapshotOf(r) {
     pattern: r.pattern || r.decision?.pattern || null,
     pattern_name: r.pattern_name || r.decision?.pattern_name || null,
     price_action_decision: r.decision || null,
+    chart_pattern: r.chart_pattern || null,
+    chart_pattern_name: r.chart_pattern_name || null,
+    fundamental_trend: r.fundamental_trend || null,
   }
 }
 
