@@ -13,7 +13,8 @@ r"""load_to_db.py — 讀 H:\data 的 CSV，正規化 + 算 available_date → �
   python load_to_db.py --dsn "postgresql://postgres:pwd@localhost:5432/twstock"
   python load_to_db.py --codes 2330,5483             # 只灌指定幾檔（測試）
   python load_to_db.py --tables stock,price,revenue  # 只灌指定表
-  python load_to_db.py --since 2026-07-11            # 增量：只 upsert 日期>=該日的資料列（每日同步用）
+  python load_to_db.py --since 2026-07-11            # 增量：只 upsert 日期>=該日的資料列（每日同步用）；
+                                                     # price_daily 還原因子有變（新除權息／減資／分割）的股票自動整段重灌
 
 資料來源假設：
   股價 → <root>\<股號>\<股號>_adj.csv（需先跑 build_adjusted_price.py 產生還原價）
@@ -271,6 +272,30 @@ TABLES = {
 }
 
 
+def price_fingerprints(cur, since, codes=None):
+    """DB 各股 since 之前的列數與還原因子加總 {股號: (列數, 加總)}：用來偵測還原因子是否變了。"""
+    sql = "SELECT stock_id, count(*), coalesce(sum(adj_factor), 0) FROM price_daily WHERE trade_date < %s"
+    args = [since]
+    if codes:
+        sql += " AND stock_id = ANY(%s)"
+        args.append(list(codes))
+    cur.execute(sql + " GROUP BY stock_id", args)
+    return {sid: (n, float(s)) for sid, n, s in cur.fetchall()}
+
+
+def factor_changed(rows, fp, since):
+    """price_daily 增量入庫時，CSV 在 since 之前的列數／還原因子加總跟 DB 不同 → 要整段重灌。
+    後復權每遇到新的除權息／減資／分割，事件日之前「全部」的還原價都會變，只 upsert 新日期的列會讓
+    DB 舊列停在舊因子、事件日斷一截（115/06 下旬起 778 次除權息就這樣沒還原）。DB 缺歷史列也會觸發。
+    adj_factor 是 NUMERIC(16,10)，每列捨入誤差 < 1e-10，真的有事件時差距至少 1e-4 量級。"""
+    old = [r[13] for r in rows if r[1] < since]
+    if not old:
+        return False
+    n, s = len(old), sum(f or 0.0 for f in old)
+    dn, ds = fp or (0, 0.0)
+    return n != dn or abs(s - ds) > 1e-6 + n * 1e-10
+
+
 def upsert(cur, table, rows):
     from psycopg2.extras import execute_values
     cols, pk = TABLES[table]
@@ -327,11 +352,11 @@ def main():
         conn = psycopg2.connect(args.dsn); cur = conn.cursor()
 
     totals = {}
-    def sink(table, rows):
+    def sink(table, rows, full=False):
         if table not in want or not rows:
             return
         rows = [r for r in rows if r[0]]                 # 去掉空代碼
-        if args.since and table != "stock":              # 增量：時序表只留日期(第2欄)>=since；維度表 stock 不限
+        if args.since and table != "stock" and not full: # 增量：時序表只留日期(第2欄)>=since；維度表 stock 不限
             rows = [r for r in rows if r[1] and str(r[1]) >= args.since]
         if not rows:                                     # 過濾後可能為空 → 略過（免 upsert 空集 / 樣本索引越界）
             return
@@ -361,13 +386,21 @@ def main():
         if args.codes_file:
             with open(args.codes_file, encoding="utf-8") as f:
                 codes += [c for c in f.read().replace(",", " ").split() if c]
-        codes = sorted(dict.fromkeys(codes)) or sorted(market)   # 去重；未指定→全市場
+        picked = sorted(dict.fromkeys(codes))
+        codes = picked or sorted(market)                 # 去重；未指定→全市場
         froot = os.path.join(args.root, "Fundamentals")
+        fps, refull = None, []                           # 增量灌股價：先取 DB 還原因子指紋，因子變了的整段重灌
+        if "price_daily" in want and args.since and not args.dry_run:
+            fps = price_fingerprints(cur, args.since, picked)
         for i, code in enumerate(codes, 1):
             sdir = os.path.join(args.root, code)
             fdir = os.path.join(froot, code)
             if "price_daily" in want:
-                sink("price_daily", load_prices(sdir, code, market.get(code)))
+                rows = load_prices(sdir, code, market.get(code))
+                full = fps is not None and factor_changed(rows, fps.get(code), args.since)
+                if full:
+                    refull.append(code)
+                sink("price_daily", rows, full=full)
             if "monthly_revenue" in want:
                 sink("monthly_revenue", load_revenue(fdir, code))
             if {"financial_statement", "fundamentals_quarterly"} & want:
@@ -393,6 +426,9 @@ def main():
     if not args.dry_run:
         conn.commit(); cur.close(); conn.close()
 
+    if want & PERSTOCK and "price_daily" in want and args.since and not args.dry_run:
+        print(f"  還原因子有變（除權息／減資／分割）或 DB 缺歷史 → 整段重灌 {len(refull)} 檔"
+              + (f"：{'、'.join(refull[:20])}{' …' if len(refull) > 20 else ''}" if refull else ""))
     print("\n=== 完成" + ("（dry-run，未寫入）" if args.dry_run else "") + " ===")
     for t in TABLES:
         if t in totals:

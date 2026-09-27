@@ -66,11 +66,12 @@ python rag_news.py --stock 2330 --q "台積電最近的基本面與法人動向�
 | `batch_fundamentals.py` | 批次抓 **FinMind 個股資料集**（10 種，見步驟 2）| FinMind，**需 token** |
 | `fetch_fundamentals.py` | 單檔 FinMind 資料集下載器（`--datasets` 選）| FinMind，**需 token** |
 | `fetch_index.py` | 大盤指數（TAIEX 加權報酬指數）| FinMind，**需 token** |
-| `build_adjusted_price.py` | 用原始日K + 股利算**還原股價**（純本機運算）| 無（讀本機 CSV）|
+| `fetch_corp_actions.py` | 上市櫃官方**除權息／減資／面額變更／ETF 分割**參考價（全市場、按日期區間，每天 9 個請求）→ `CorpActions\corp_actions.csv` + `corp_action` 表；還原價的主要來源 | TWSE/TPEx，免認證 |
+| `build_adjusted_price.py` | 用原始日K + 官方事件（FinMind 股利／減資只當後備）算**還原股價**（純本機運算）| 無（讀本機 CSV）|
 | `update_prices.py` | **更新指定交易日**全市場股價，併入各股月檔（2 個請求）| TWSE/TPEx，免認證 |
 | `update_month_prices.py` | **檢查/補齊指定月份**月檔，殘缺就整月重抓覆蓋 | TWSE/TPEx，免認證 |
-| `load_to_db.py` | 讀 CSV **入庫 PostgreSQL**（正規化 + 算 available_date + upsert；支援 `--since` 增量）| 本機 CSV → DB |
-| `daily_update.py` | **每日一鍵**（5 步）：update_prices → build_adjusted_price → load_to_db --since → update_chips → fetch_price_index | 綜合（收盤後跑）|
+| `load_to_db.py` | 讀 CSV **入庫 PostgreSQL**（正規化 + 算 available_date + upsert；支援 `--since` 增量，還原因子有變的股票自動整段重灌）| 本機 CSV → DB |
+| `daily_update.py` | **每日一鍵**（6 步）：update_prices → fetch_corp_actions → build_adjusted_price → load_to_db --since → update_chips → fetch_price_index | 綜合（收盤後跑）|
 | `update_chips.py` | **by-date 全市場**法人/融資/PER/**外資持股** 直接入庫 + 存原始快照（取代 FinMind 逐檔）| TWSE/TPEx，免認證 |
 | `update_revenue.py` | **by-date 全市場**月營收 → `monthly_revenue`（官方 OpenAPI，正確營收月）| TWSE/TPEx OpenAPI，免認證 |
 | `fetch_price_index.py` | **by-month**大盤(價格)/櫃買指數 → `market_index`（TWSE FMTQIK + TPEx tradingIndex）| TWSE/TPEx，免認證 |
@@ -178,14 +179,18 @@ python batch_fundamentals.py --xlsx 台股股票代碼NEW.xlsx --delay 7 --refre
 python fetch_index.py --start 2010-01-01        # → H:\data\Index\TAIEX.csv
 ```
 
-### 步驟 3：算還原股價（純本機，免 token）
-用步驟 1 的原始日K + 步驟 2 的 `dividend.csv` **與 `capreduction.csv`**，算出還原價（除權息＋減資都連續，技術面/回測必用）。
+### 步驟 3：算還原股價（免 token）
+先抓上市櫃官方的除權息／減資／面額變更／ETF 分割參考價，再用步驟 1 的原始日K 算還原價（技術面/回測必用）：
 ```bash
+python fetch_corp_actions.py --backfill                           # 第一次：官方表從最早可查日抓到今天（約 40 個請求、2 分鐘）
 python build_adjusted_price.py 2330                              # 單檔
 python build_adjusted_price.py                                    # 掃 H:\data 下全部個股
 ```
 - 產出 `<股號>_adj.csv`，含 `adj_open/high/low/close` 與 `cumfactor`；最新一天=原始價，往前調整。
-- **除權息**（dividend）+ **減資**（capreduction）都會還原；沒有事件的股票則 `adj=原始`（因子=1）。
+- 事件來源以**官方表**為主（`H:\data\CorpActions\`：上市除權息 92/05 起、上櫃 96/12 起；減資上市 100 年、上櫃 102 年起；
+  面額變更、ETF 分割／反分割），含季配息、ETF 配息、大比例配股、現增除權；步驟 2 的 FinMind `dividend.csv`／`capreduction.csv`
+  只補官方表涵蓋範圍之外的日子（官方表範圍內一律只信官方，避免重複、也擋掉 FinMind 的錯誤資料）。
+- 沒有事件的股票 `adj=原始`（因子=1）。成交量沒有還原（分割／配股前後的量能不可直接比）。
 
 ### 步驟 4：每日更新（收盤後跑，最省）
 歷史抓完後，每天只要更新當天即可——用「當日全市場」端點，**2 個請求**更新整個市場：
@@ -223,26 +228,31 @@ python load_to_db.py --dsn "..." --tables price_daily,monthly_revenue   # 只灌
 python load_to_db.py --dsn "..." --since 2026-07-11
 ```
 - 時序表依各自日期欄過濾（`price_daily`/`inst_trades`… 用 `trade_date`、`monthly_revenue` 用 `revenue_month`、財報用 `period_date`、`dividend` 用 `announce_date`）；維度表 `stock` 不受限、永遠全載（外鍵母表）。
+- **`price_daily` 例外**：還原價是後復權，遇到新的除權息／減資／分割，事件日之前的還原價**全部**會變。`--since` 會先比對
+  DB 與 CSV 在 since 之前的「列數＋還原因子加總」，不一致的股票整段重灌（沒有這道，舊列會停在舊因子，事件日斷一截——
+  115/06 下旬到 09/27 的除權息就是這樣沒還原）。
 - 仍會**讀完**所有 CSV，只是少 upsert：`--since` 省的是 DB 寫入不是讀檔；要更快可再加 `--codes` / `--tables` 縮範圍。
 
 **每日一條龍**（收盤後）：上面步驟已包成一支 **`daily_update.py`**，跑一行即可：
 ```bash
 python daily_update.py --dsn "postgresql://frank:pwd@localhost:5432/twstock"  # 股價+籌碼全更新
 python daily_update.py --date 2026-07-11 --dsn "..."   # 指定交易日
-python daily_update.py --date 2026-07-11 --dry-run     # 步驟 1、2 照做；入庫只驗證不寫 DB
+python daily_update.py --date 2026-07-11 --dry-run     # 步驟 1~3 照做；入庫只驗證不寫 DB
 python daily_update.py --skip-load                     # 只更新 CSV（不寫 DB；籌碼仍存快照）
+python daily_update.py --skip-corp --dsn "..."         # 略過官方除權息/減資/分割（用上次抓到的＋FinMind 後備）
 python daily_update.py --skip-chips --dsn "..."        # 略過法人/融資/PER/外資
 python daily_update.py --skip-index --dsn "..."        # 略過大盤/櫃買指數
 python daily_update.py --only 2330 5483 --dsn "..."    # 只跑幾檔股價（測試/補單檔）
 ```
 它依序做（順序不可顛倒）：
 1. `update_prices.run` 抓當天全市場股價 → 併入各股月檔，**回傳當天有更新的股號**；
-2. 只對「有更新的股」重算 `_adj.csv`（含最新日，效率比全掃高）；
-3. `load_to_db --since <日>` 只把當天股價 upsert 進 DB（預設只灌 `price_daily`）；
-4. `update_chips --date <日>` by-date 抓全市場**法人/融資/PER/外資持股** 直接入庫 + 存原始快照；
-5. `fetch_price_index --start <當月>` 抓**大盤(價格)/櫃買指數**併入 CSV → 入庫 `market_index`（TWSE/TPEx）。
-> ⚠️ 為什麼 1→2→3 不可顛倒：跳過第 2 步，`load_to_db` 讀不到當天的還原價，`price_daily` 就缺這一天。非交易日第 1 步回空 → 自動跳過後續。
-> 連線：設環境變數 `DATABASE_URL` 或帶 `--dsn`（`--dry-run` / `--skip-load` 不需要；此時 step 4/5 只存快照/CSV 不寫 DB）。
+2. `fetch_corp_actions.run` 抓官方**除權息／減資／面額變更／ETF 分割**（從上次抓到的日期往回 10 天到今天，9 個請求；失敗不中斷，當天改用 FinMind 後備、下次自動補）；
+3. 只對「有更新的股」重算 `_adj.csv`（含最新日，效率比全掃高）；
+4. `load_to_db --since <日>` 把當天股價 upsert 進 DB（預設只灌 `price_daily`）；**還原因子有變的股票自動整段重灌**；
+5. `update_chips --date <日>` by-date 抓全市場**法人/融資/PER/外資持股** 直接入庫 + 存原始快照；
+6. `fetch_price_index --start <當月>` 抓**大盤(價格)/櫃買指數**併入 CSV → 入庫 `market_index`（TWSE/TPEx）。
+> ⚠️ 為什麼 1→2→3→4 不可顛倒：跳過第 3 步，`load_to_db` 讀不到當天的還原價，`price_daily` 就缺這一天；第 2 步要在第 3 步前，當天的除權息才用官方數字還原。非交易日第 1 步回空 → 自動跳過後續。
+> 連線：設環境變數 `DATABASE_URL` 或帶 `--dsn`（`--dry-run` / `--skip-load` 不需要；此時 step 5/6 只存快照/CSV 不寫 DB）。
 > 💡 **平常不用手動跑 daily_update**——它已包在 `nightly.py`（見步驟 7），每晚一條就好；`daily_update --date` 只在補歷史斷洞時用。
 
 ### 步驟 6：籌碼 / 估值 / 營收 / 財報的定期更新
@@ -268,13 +278,14 @@ python update_revenue.py --dsn "..." --dry-run  # 只印月份與筆數
 - 各公司申報時間不一，單次通常涵蓋 ~1750 檔，晚申報者隔幾天重跑即補齊（upsert 可重複）。
 
 **③ 財報 / EPS / 股利 / 減資（每季 / 每年 / 偶發）— `update_fundamentals.py`**
-低頻資料沿用 FinMind 逐檔（成本可接受）；串「fetch → load」一鍵，**內建 550/hr 限流可一行跑到底**：
+低頻資料沿用 FinMind 逐檔（成本可接受）；串「fetch → load」一鍵，**內建 550/hr 限流可一行跑到底**。
+`--start` 之前的舊列會保留、只換掉新抓的區間（以前是整檔覆蓋：股利旺季跑完 1,511 檔 `dividend.csv` 只剩今年、季報 CSV 只剩近 6 季；DB 表是 upsert 不刪，歷史還在）：
 ```bash
 # 季報季（2/5/8/11 月中）補最新季財報/EPS
 python update_fundamentals.py --preset quarterly --start 2025-06-30 --dsn "..."
 # 股利旺季（5~8 月）
 python update_fundamentals.py --preset dividend --start 2026-01-01 --dsn "..."
-# 減資（偶發；還原價會用到）
+# 減資（偶發；還原價已改用官方減資表，這裡只當後備＋更新 capital_reduction 表）
 python update_fundamentals.py --preset capreduction --start 2010-01-01 --dsn "..."
 python update_fundamentals.py --preset quarterly --codes 2330,2317 --start 2025-06-30 --dsn "..."  # 先測幾檔
 python update_fundamentals.py --preset capreduction --codes-file remaining.txt --start 2010-01-01 --dsn "..."  # 用清單續跑
@@ -327,7 +338,7 @@ python nightly.py --dsn "postgresql://帳號:密碼@localhost:5432/twstock" #每
 | revenue（月營收）| 每月 11~20 號 | 便宜，窗口內每晚跑以補晚申報 |
 | quarterly（財報/EPS）| 4月(年報)、5/16、8/15、11/15 起 | 狀態檔記「本季已跑」，跨夜不重跑 |
 | dividend（股利，重工作 ~3-4hr）| 5~8 月**只在週六/日**每週一次 | 狀態檔記「本週已跑」；平日一律略過 |
-| capreduction（減資，還原價用）| 綁季報窗口，但**避開股利旺季 5~8 月** → 實際只在 **4 月、11 月**各跑一次 | 狀態檔記「本季已跑」，跨夜不重跑；5/8 月窗口讓給 dividend，避免兩支 ~4.5hr 重工作同晚（會拖到 ~9hr）。臨時要補：`python nightly.py --only capreduction` |
+| capreduction（減資；還原價只當後備，主要用官方表）| 綁季報窗口，但**避開股利旺季 5~8 月** → 實際只在 **4 月、11 月**各跑一次 | 狀態檔記「本季已跑」，跨夜不重跑；5/8 月窗口讓給 dividend，避免兩支 ~4.5hr 重工作同晚（會拖到 ~9hr）。臨時要補：`python nightly.py --only capreduction` |
 | etfnav（ETF 淨值/折溢價/規模）| 每晚固定（mis.twse 單一請求，便宜）| — |
 | refresh | 以上跑完後刷新 `mv_stock_snapshot`（選股器同步最新）| `--skip-refresh` 可略過 |
 

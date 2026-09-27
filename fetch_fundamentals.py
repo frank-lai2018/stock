@@ -26,7 +26,7 @@ Token：FinMind 免費註冊拿 token（https://finmindtrade.com）。免 token 
   python fetch_fundamentals.py 2330                                   # 抓全部資料集
   python fetch_fundamentals.py 2330 --datasets institutional,per,balance
   python fetch_fundamentals.py 2330 2317 --start 2015-01-01 --token xxxxx
-  python fetch_fundamentals.py 2330 --refresh                         # 重抓覆蓋已存在的
+  python fetch_fundamentals.py 2330 --refresh --start 2026-01-01      # 重抓 2026 起（之前的舊列保留，不整檔覆蓋）
 """
 import argparse
 import collections
@@ -235,8 +235,26 @@ DATASETS = {
 }
 
 
+def merge_existing(path, new, start):
+    """--refresh 只重抓 start 之後：保留舊檔 start 之前的列，再接上新抓的，不要整檔覆蓋。
+    （踩過的雷：股利旺季每週 --refresh --start 今年1/1，1,511 檔 dividend.csv 只剩今年；季報也只剩近 6 季。
+     DB 表是 upsert 不刪，歷史還在，但 CSV 沒了。）"""
+    try:
+        old = pd.read_csv(path, dtype=str)
+    except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
+        return new
+    if "date" not in old.columns or "date" not in new.columns:
+        return new
+    keep = old[old["date"].astype(str).str[:10] < str(start)[:10]]
+    if keep.empty:
+        return new
+    out = pd.concat([keep, new], ignore_index=True, sort=False)
+    return out.iloc[out["date"].astype(str).argsort(kind="stable")].reset_index(drop=True)
+
+
 def download_one(code, keys, start, end, out_root, token, delay, refresh=False):
-    """抓指定股票的多個資料集；每個資料集存一個 CSV，已存在(非 refresh)則跳過。"""
+    """抓指定股票的多個資料集；每個資料集存一個 CSV，已存在(非 refresh)則跳過。
+    refresh：重抓 start~end 並與舊檔合併（start 之前的舊列保留）。"""
     folder = os.path.join(out_root, code)
     os.makedirs(folder, exist_ok=True)
     for key in keys:
@@ -249,8 +267,12 @@ def download_one(code, keys, start, end, out_root, token, delay, refresh=False):
         if transform is not None:
             df = transform(df)
         if df is not None and not df.empty:
+            n_new = len(df)
+            if refresh and os.path.exists(path):
+                df = merge_existing(path, df, start)
             df.to_csv(path, index=False, encoding="utf-8-sig")
-            print(f"  [存]   {code} {desc} {len(df)} 列 → {code}_{key}.csv")
+            print(f"  [存]   {code} {desc} {n_new} 列" + (f"（合併舊檔共 {len(df)} 列）" if len(df) != n_new else "")
+                  + f" → {code}_{key}.csv")
         else:
             print(f"  [無]   {code} {desc} 無資料")
         time.sleep(delay)                               # 只有真的打了 API 才等
@@ -283,7 +305,7 @@ def main():
     ap.add_argument("--delay", type=float, default=2.0, help="每請求間隔秒數（預設 2）")
     ap.add_argument("--max-per-hour", type=int, default=int(os.environ.get("FINMIND_MAX_PER_HOUR") or 550),
                     help="每小時請求上限（滑動視窗、跨行程共用；預設讀環境變數 FINMIND_MAX_PER_HOUR 或 550，0=不限）")
-    ap.add_argument("--refresh", action="store_true", help="重抓覆蓋已存在的 CSV")
+    ap.add_argument("--refresh", action="store_true", help="重抓已存在的 CSV（只換掉 --start 之後的列，之前的舊列保留）")
     args = ap.parse_args()
 
     global MAX_PER_HOUR

@@ -5,19 +5,27 @@ r"""build_adjusted_price.py — 用原始日K + 股利，算「還原股價」�
 
 輸入：
    原始日K：<price-root>\<股號>\<股號>_YYYYMM.csv （TWSE=Big5 / TPEx=UTF-8，自動判別）
-   股利：  <div-root>\<股號>\<股號>_dividend.csv     （fetch_fundamentals 的 dividend）
-   減資：  <div-root>\<股號>\<股號>_capreduction.csv （fetch_fundamentals 的 capreduction，選用）
+   官方事件：<corp-root>\corp_actions.csv ＋ coverage.json（fetch_corp_actions.py；上市櫃官方除權息／減資／
+            面額變更／ETF 分割參考價）← 主要來源
+   股利：  <div-root>\<股號>\<股號>_dividend.csv     （fetch_fundamentals 的 dividend；只補官方表還沒抓到的最近幾天）
+   減資：  <div-root>\<股號>\<股號>_capreduction.csv （fetch_fundamentals 的 capreduction；只補官方表沒有的）
 輸出：
    <price-root>\<股號>\<股號>_adj.csv
    欄位：date, open/high/low/close(原始), volume, amount(成交金額), adj_open/high/low/close(還原), cumfactor(還原因子)
    注意：volume/amount 保留原始市場單位（上市=股/元、上櫃=張/千元），入庫時由 load_to_db 統一 ×1000 正規化成 股/元。
+        分割／配股後的成交量也維持原始股數，沒有還原（量能指標跨分割日會跳）。
 
 還原方法（後復權，最新一天=原始價，往前調整使序列連續）：
-   除權息：參考價 = (前收 - 現金股利) / (1 + 股票股利/10)；r = 參考價/前收
-   減資：  r = 恢復買賣參考價 / 停止買賣前收盤價（官方數字，直接用）
-   除權息/減資日「之前」的所有價格乘上其後所有 r 的累積。
-   現金股利 = CashEarningsDistribution + CashStatutorySurplus（元/股）
-   股票股利 = StockEarningsDistribution + StockStatutorySurplus（元/股，÷10=配股率）
+   事件日「之前」的所有價格乘上其後所有 r 的累積。r 的來源依序：
+   1) 官方事件（fetch_corp_actions.py）：除權息 r = (前收 − 權值息值)/前收；減資、面額變更、ETF 分割／反分割
+      r = 恢復買賣參考價 / 停止買賣前收盤價。含 ETF 配息、季配息、現金增資除權、大比例配股（例：緯穎 115/09/02）。
+   2) FinMind 股利：只用在官方除權息表窗口之外（96/12 以前、或官方當天還沒抓到的最近幾天）；窗口內一律只信官方，
+      避免同一事件算兩次。參考價 = (前收 - 現金股利) / (1 + 股票股利/10)；r = 參考價/前收
+      現金股利 = CashEarningsDistribution + CashStatutorySurplus（元/股）
+      股票股利 = StockEarningsDistribution + StockStatutorySurplus（元/股，÷10=配股率）
+   3) FinMind 減資：同樣只用在官方減資表窗口之外（102 年以前；上市 100 年起、上櫃 102 年起才有官方表），
+      而且前後 10 天內沒有同一檔的官方事件。窗口內不用 FinMind：它有日期落在週六、當時根本沒停牌的錯誤資料。
+   沒跑過 fetch_corp_actions.py（沒有 coverage.json）→ 行為同舊版，只用 FinMind。
 
 需求：pip install pandas
 用法：
@@ -29,12 +37,18 @@ import argparse
 import csv
 import glob
 import io
+import json
 import os
 import re
+from datetime import date
 
 import pandas as pd
 
 DATE_ROW = re.compile(r"^\s*\d{2,3}/\d{1,2}/\d{1,2}\s*$")   # 民國日期（去引號後）
+CORP_DIR = "CorpActions"                                    # 預設 <price-root>\CorpActions（fetch_corp_actions.py 輸出）
+DIV_SOURCES = ("TWT49U", "exDailyQ")                        # 上市、上櫃除權除息計算結果表
+CAP_SOURCES = ("TWTAUU", "revivt")                          # 上市、上櫃減資恢復買賣參考價
+_CORP = {}                                                  # 官方事件快取：每個行程只讀一次
 
 
 def to_num(x):
@@ -135,6 +149,37 @@ def load_capreduction(path):
     return ev
 
 
+def load_corp(corp_root):
+    """官方事件 → ({股號: [(日期, kind, r)]}, {"div"/"capred": (起, 迄)})。
+    窗口＝上市、上櫃兩張官方表「都已完整抓到」的日期範圍（起取較晚、迄取較早）；窗口內 FinMind 一律不用，
+    才不會同一事件算兩次，也擋掉 FinMind 自己的錯誤資料（例：減資日落在週六、當時根本沒停牌）。
+    沒跑過 fetch_corp_actions.py → ({}, {})，行為同舊版只用 FinMind。"""
+    if corp_root in _CORP:
+        return _CORP[corp_root]
+    ev, win = {}, {}
+    try:
+        with open(os.path.join(corp_root, "coverage.json"), encoding="utf-8") as f:
+            cov = json.load(f)
+        for kind, srcs in (("div", DIV_SOURCES), ("capred", CAP_SOURCES)):
+            if all(s in cov for s in srcs):
+                win[kind] = (max(cov[s][0] for s in srcs), min(cov[s][1] for s in srcs))
+        with open(os.path.join(corp_root, "corp_actions.csv"), encoding="utf-8-sig", newline="") as f:
+            for r in csv.DictReader(f):
+                ev.setdefault(r["stock_id"], []).append((r["date"], r["kind"], float(r["ratio"])))
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+        ev, win = {}, {}
+    _CORP[corp_root] = (ev, win)
+    return ev, win
+
+
+def _near(ex_date, dates, days=10):
+    try:
+        d = date.fromisoformat(ex_date)
+        return any(abs((d - date.fromisoformat(o)).days) <= days for o in dates)
+    except ValueError:
+        return False
+
+
 def _apply(df, ex_date, r):
     """把因子 r 乘到「除權息/減資日當列（無則其後第一個交易日）」。"""
     if not r > 0:
@@ -144,11 +189,22 @@ def _apply(df, ex_date, r):
         df.loc[tgt[0], "ratio"] *= r
 
 
-def adjust(df, div_events, capred_events):
-    """後復權：合併除權息 + 減資，算每日 cumfactor 與還原 OHLC。"""
+def _in(win, ex_date):
+    return bool(win) and win[0] <= ex_date <= win[1]
+
+
+def adjust(df, div_events, capred_events, official=(), windows=None):
+    """後復權：官方事件為主，FinMind 股利／減資只補官方窗口之外的日子，算每日 cumfactor 與還原 OHLC。
+    official：[(日期, kind, r)]；windows：{"div"/"capred": (起, 迄)}（皆來自 load_corp）。
+    窗口外（官方表開始之前、或官方當天還沒抓到）的 FinMind 事件，前後 10 天內官方已有同類事件也不重複算。"""
     df = df.copy()
     df["ratio"] = 1.0
+    windows = windows or {}
+    off_div = [d for d, kind, _ in official if kind == "div"]
+    off_other = [d for d, kind, _ in official if kind != "div"]
     for ex_date, (cash, stock) in sorted(div_events.items()):
+        if _in(windows.get("div"), ex_date) or _near(ex_date, off_div):
+            continue
         prev = df[df["date"] < ex_date]
         if prev.empty:                                 # 除權息日早於價格資料 → 略過
             continue
@@ -157,6 +213,9 @@ def adjust(df, div_events, capred_events):
             continue
         _apply(df, ex_date, (prev_close - cash) / (prev_close * (1.0 + stock / 10.0)))
     for ex_date, r in sorted(capred_events.items()):   # 減資：官方 參考價/前收
+        if not (_in(windows.get("capred"), ex_date) or _near(ex_date, off_other)):
+            _apply(df, ex_date, r)
+    for ex_date, _kind, r in official:                 # 官方除權息／減資／面額變更／ETF 分割
         _apply(df, ex_date, r)
     rev = df["ratio"][::-1].cumprod()[::-1]            # 由後往前的累積乘積（含當列）
     df["cumfactor"] = rev.shift(-1).fillna(1.0)        # 排除當列 → =其後所有 r 之積
@@ -170,14 +229,14 @@ def find_stock_codes(price_root):
     codes = []
     for name in sorted(os.listdir(price_root)):
         folder = os.path.join(price_root, name)
-        if not os.path.isdir(folder) or name in ("Fundamentals", "Index"):
+        if not os.path.isdir(folder) or name in ("Fundamentals", "Index", CORP_DIR):
             continue
         if glob.glob(os.path.join(folder, f"{name}_*.csv")):
             codes.append(name)
     return codes
 
 
-def build_one(code, price_root, div_root):
+def build_one(code, price_root, div_root, corp_root=None):
     folder = os.path.join(price_root, code)
     prices = load_prices(folder, code)
     if prices.empty:
@@ -186,12 +245,15 @@ def build_one(code, price_root, div_root):
     dfolder = os.path.join(div_root, code)
     div = load_dividends(os.path.join(dfolder, f"{code}_dividend.csv"))
     capred = load_capreduction(os.path.join(dfolder, f"{code}_capreduction.csv"))
-    out = adjust(prices, div, capred)
+    ev, win = load_corp(corp_root or os.path.join(price_root, CORP_DIR))
+    official = ev.get(code, [])
+    out = adjust(prices, div, capred, official, win)
     cols = ["date", "open", "high", "low", "close", "volume", "amount",
             "adj_open", "adj_high", "adj_low", "adj_close", "cumfactor"]
     path = os.path.join(folder, f"{code}_adj.csv")
     out[cols].to_csv(path, index=False, encoding="utf-8-sig")
-    print(f"  [存] {code} {len(out)} 列、除權息 {len(div)}、減資 {len(capred)} → {code}_adj.csv")
+    print(f"  [存] {code} {len(out)} 列、官方事件 {len(official)}、FinMind 股利 {len(div)}、減資 {len(capred)}"
+          f" → {code}_adj.csv")
 
 
 def main():
@@ -200,6 +262,7 @@ def main():
     ap.add_argument("--codes-file", default="", help="從檔案讀代碼（每行一個，可含逗號/空白），與位置參數合併")
     ap.add_argument("--price-root", default=r"H:\data", help=r"原始日K根目錄（預設 H:\data）")
     ap.add_argument("--div-root", default=r"H:\data\Fundamentals", help=r"股利根目錄（預設 H:\data\Fundamentals）")
+    ap.add_argument("--corp-root", default="", help=r"官方事件資料夾（fetch_corp_actions.py 輸出；預設 <price-root>\CorpActions）")
     args = ap.parse_args()
 
     codes = list(args.stocks)
@@ -209,9 +272,12 @@ def main():
     codes = sorted(dict.fromkeys(codes)) or find_stock_codes(args.price_root)
     if not codes:
         raise SystemExit(f"在 {args.price_root} 找不到任何個股資料夾。")
-    print(f"還原：{len(codes)} 檔｜日K {args.price_root}｜股利 {args.div_root}")
+    corp_root = args.corp_root or os.path.join(args.price_root, CORP_DIR)
+    ev, win = load_corp(corp_root)
+    print(f"還原：{len(codes)} 檔｜日K {args.price_root}｜股利 {args.div_root}｜官方事件 "
+          + (f"{sum(map(len, ev.values())):,} 筆（窗口 {win}）" if ev else "無（只用 FinMind）"))
     for c in codes:
-        build_one(c, args.price_root, args.div_root)
+        build_one(c, args.price_root, args.div_root, corp_root)
     print("完成。")
 
 

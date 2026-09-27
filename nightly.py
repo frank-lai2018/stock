@@ -13,13 +13,15 @@ r"""nightly.py — 排程大腦：每晚無腦執行這一支，由它依「今�
   或每條指令帶 --dsn "$env:DATABASE_URL"
 
 它管理的工作與排程規則：
-  daily      每晚都跑 daily_update.py（股價+法人+融資+PER）；非交易日腳本自己會跳過。
+  daily      每晚都跑 daily_update.py（股價+官方除權息/減資/分割+還原價+法人+融資+PER）；非交易日腳本自己會跳過。
+               還原價以上市櫃官方表為主（fetch_corp_actions.py，每晚 9 個請求），還原因子有變的股票自動整段重灌。
   holderdist 每晚檢查 update_holderdist.py（集保股權分散；TDCC 週資料，idempotent 自動抓最新週 + 存快照）。
   revenue    每月 11~20 號跑 update_revenue.py（月營收；cheap，順便補晚申報者）。
   quarterly  每晚跑 update_fundamentals_opendata.py（TWSE/櫃買 opendata 當期財報，全市場
                約 10 個請求、幾分鐘）。各家申報時間不一，每晚重跑才會陸續補齊。
   dividend   股利旺季 5~8 月「週日」每週跑一次 update_fundamentals.py --preset dividend（重工作）。
-  capreduction 減資（還原價會用到）：綁季報窗口的「週日」跑，狀態檔防重（本季一次）。且**避開股利
+               更新 dividend 表（個股頁股利政策等）；還原價已改用官方除權息表，這裡只當官方還沒抓到時的後備。
+  capreduction 減資（dividend 同理，還原價只拿它當後備）：綁季報窗口的「週日」跑，狀態檔防重（本季一次）。且**避開股利
                旺季**（5~8 月週日都被 dividend 佔用）→ 實際只在 4 月（Q4 窗口）與 11 月（Q3 窗口）
                各跑一次，一年兩次。要臨時補：python nightly.py --only capreduction
 

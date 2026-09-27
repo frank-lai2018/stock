@@ -7,6 +7,7 @@
 --   3) RAG 向量表：   裝好 pgvector 後再跑 schema_rag.sql
 --   4) 族群分類表：   psql -U postgres -d twstock -f schema_theme.sql（L2 產業鏈／L3 題材／每日熱度，見 族群分類設計.md）
 --   5) 主動 ETF 持股： psql -U postgres -d twstock -f schema_etf_holding.sql（每日持股與進出，見 主動ETF追蹤設計.md）
+--   6) 官方除權息／減資／分割：schema_corp_action.sql（fetch_corp_actions.py 每次執行會自己建，不必手動跑）
 --
 -- 全部 CREATE ... IF NOT EXISTS，可重複執行。
 
