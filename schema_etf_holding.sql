@@ -124,3 +124,38 @@ CREATE TABLE IF NOT EXISTS etf_signal_event (
     PRIMARY KEY (signal, stock_id, trade_date)
 );
 CREATE INDEX IF NOT EXISTS idx_etf_signal_event_date ON etf_signal_event (signal, trade_date DESC);
+
+-- 持股籃策略回測（backtest_etf_basket.py，跟 etfbacktest 一起每週跑，整批覆蓋）
+--   持有「被 N 家投信的主動 ETF 同時持有」的股票、定期換股，對照直接買 00981A、0050
+CREATE TABLE IF NOT EXISTS etf_basket_summary (
+    strategy     VARCHAR(16) PRIMARY KEY,   -- basket1_m / basket2_m / basket3_m / basket2_w / basket2_vw / 00981A / 0050
+    name         TEXT,
+    kind         VARCHAR(10),               -- strategy / benchmark
+    date_from    DATE,
+    date_to      DATE,
+    days         INT,
+    total_ret    NUMERIC,                   -- 總報酬（已扣交易成本，含最後賣出）
+    cagr         NUMERIC,                   -- 年化報酬
+    vol          NUMERIC,                   -- 年化波動
+    mdd          NUMERIC,                   -- 最大回檔
+    ret_vol      NUMERIC,                   -- 年化報酬 ÷ 年化波動
+    avg_n        NUMERIC,                   -- 平均持股檔數
+    rebalances   INT,                       -- 換股次數
+    avg_turnover NUMERIC,                   -- 每次換股賣掉的比例
+    cost_total   NUMERIC,                   -- 交易成本合計（占淨值）
+    bench_cagr   NUMERIC,                   -- 同一段期間 00981A 的年化（策略列才有）
+    months       INT,                       -- 可比較的月數
+    months_beat  INT,                       -- 月報酬贏 00981A 的月數
+    excess_sum   NUMERIC,                   -- 每月超額（對 00981A）加總
+    excess_ex_top2 NUMERIC,                 -- 拿掉最好兩個月後的每月超額加總（看超額是不是集中在少數月份）
+    computed_at  TIMESTAMP
+);
+ALTER TABLE etf_basket_summary ADD COLUMN IF NOT EXISTS excess_sum NUMERIC;       -- 既有資料庫升級
+ALTER TABLE etf_basket_summary ADD COLUMN IF NOT EXISTS excess_ex_top2 NUMERIC;
+
+CREATE TABLE IF NOT EXISTS etf_basket_curve (
+    strategy   VARCHAR(16) NOT NULL,
+    trade_date DATE NOT NULL,
+    nav        NUMERIC NOT NULL,            -- 起始＝1（已扣買進成本）
+    PRIMARY KEY (strategy, trade_date)
+);

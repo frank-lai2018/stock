@@ -243,6 +243,23 @@ def backtest_events(signal: str, horizon: int = Query(20, ge=1, le=60), limit: i
         {"k": key, "sig": signal, "n": limit})
 
 
+_BASKET_ORDER = ["basket2_m", "basket2_vw", "basket2_w", "basket3_m", "basket1_m", "00981A", "0050"]
+
+
+@router.get("/basket")
+def basket():
+    """持股籃策略回測（backtest_etf_basket.py，每週跟 etfbacktest 一起跑）：持有被 ≥N 家投信的主動 ETF
+    同時持有的股票、定期換股，跟直接買 00981A、0050 比（已扣交易成本）。回傳績效表與淨值曲線（起始＝1）。"""
+    if not db.query("SELECT to_regclass('public.etf_basket_summary') AS t")[0]["t"]:
+        return {"computed_at": None, "rows": [], "curves": {}}
+    rows = db.query("SELECT * FROM etf_basket_summary")
+    rows.sort(key=lambda r: _BASKET_ORDER.index(r["strategy"]) if r["strategy"] in _BASKET_ORDER else 99)
+    curves = {}
+    for p in db.query("SELECT strategy, trade_date, nav FROM etf_basket_curve ORDER BY strategy, trade_date"):
+        curves.setdefault(p["strategy"], []).append([p["trade_date"].isoformat(), float(p["nav"])])
+    return {"computed_at": max((r["computed_at"] for r in rows), default=None), "rows": rows, "curves": curves}
+
+
 @router.get("/today")
 def today(top: int = Query(5, ge=1, le=10)):
     """首頁卡片：最新持股日的共識買進／賣出前幾名，以及各 ETF 是否已更新到該日。"""

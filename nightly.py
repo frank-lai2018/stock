@@ -33,7 +33,7 @@ r"""nightly.py — 排程大腦：每晚無腦執行這一支，由它依「今�
   etfhold    每晚固定跑 fetch_active_etf.py（主動式 ETF 每日持股 → 算進出 etf_flow；統一／群益／復華官網，
                冪等、自動補近 10 個交易日的缺口）。各家傍晚到晚上才陸續公布，run_nightly.bat 在整套跑完後
                會再補抓一次：python nightly.py --only etfhold --skip-refresh（晚上 9 點後執行）。說明見 主動ETF追蹤設計.md。
-  etfbacktest 每週第一次執行時跑 backtest_etf_flow.py（主動 ETF 進出訊號回測 → etf_signal_backtest；約 15 秒，
+  etfbacktest 每週第一次執行時跑 backtest_etf_flow.py（主動 ETF 進出訊號回測＋持股籃策略回測；約 20 秒，
                狀態檔防重）。不限週日：平日才執行 nightly 也會每週更新一次。
   tpexchain  每月第一個晚上跑 fetch_tpex_chain.py（櫃買產業價值鏈 → 族群 L2；約 1 分鐘，狀態檔防重）。
   theme      每晚固定跑 build_theme_daily.py（族群熱度 → theme_daily；約 10 秒，log 會印當天族群排行）。
@@ -225,7 +225,7 @@ def plan_jobs(d, state, only, skip=()):
     run = only in (None, "etfhold")
     jobs.append(("etfhold", "每晚固定（主動 ETF 持股＋進出；自動補近 10 日缺口）", run, {}))
 
-    # etfbacktest：主動 ETF 進出訊號回測（約 15 秒）。每週第一次執行時跑，狀態檔防重；不綁週日，
+    # etfbacktest：主動 ETF 進出訊號回測＋持股籃策略（約 20 秒）。每週第一次執行時跑，狀態檔防重；不綁週日，
     # 平日才跑 nightly 的人也會每週更新。排在 etfhold 之後，才用得到當天新抓的進出。
     done_eb = state.get("etfbacktest")
     if only == "etfbacktest":

@@ -7,7 +7,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import { getActiveEtfOverview, getActiveEtfConsensus, getActiveEtfFund, getActiveEtfBacktest,
-  getActiveEtfBacktestEvents } from '../api'
+  getActiveEtfBacktestEvents, getActiveEtfBasket } from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -91,9 +91,59 @@ async function openSignal(sig) {
 function onBtH() { if (btSig.value) openSignal(btSig.value) }
 function btRowClass({ row }) { return row.signal === btSig.value ? 'current-row-etf' : '' }
 
+// ---- 持股籃策略（backtest_etf_basket.py）：持有被 ≥N 家投信同時持有的股票 vs 直接買 00981A ----
+const bk = ref(null)
+const bkEl = ref(null)
+let bkChart = null
+const BK_STYLE = {
+  basket2_m: { color: '#EA4C4C', width: 2.5 }, '00981A': { color: '#303133', width: 2.5 },
+  '0050': { color: '#909399', width: 1.5, type: 'dashed' }, basket2_vw: { color: '#e6a23c', width: 1.2 },
+  basket2_w: { color: '#f89898', width: 1.2, type: 'dotted' }, basket3_m: { color: '#9b59b6', width: 1.2 },
+  basket1_m: { color: '#409eff', width: 1.2 },
+}
+const bkHeadline = computed(() => {
+  const rs = bk.value?.rows || []
+  const s = rs.find((r) => r.strategy === 'basket2_m')
+  const e = rs.find((r) => r.strategy === '00981A')
+  if (!s || !e) return ''
+  return `≥2 家・等權・月換股：總報酬 ${spct(s.total_ret, 0)}，同期 00981A ${spct(e.total_ret, 0)}；` +
+    `${s.months} 個月裡贏 ${s.months_beat} 個月，每月超額加總 ${spct(s.excess_sum, 1)}，拿掉最好兩個月 ${spct(s.excess_ex_top2, 1)}`
+})
+async function loadBasket() {
+  try {
+    bk.value = await getActiveEtfBasket()
+    await nextTick()
+    renderBasket()
+  } catch (e) { /* 還沒跑過回測 → 不顯示 */ }
+}
+function renderBasket() {
+  if (!bkEl.value || !bk.value?.rows?.length) return
+  if (!bkChart) bkChart = echarts.init(bkEl.value)
+  const curves = bk.value.curves
+  const base = new Map((curves['00981A'] || []).map(([d, v]) => [d, v]))
+  const series = bk.value.rows.filter((r) => curves[r.strategy]).map((r) => {
+    let pts = curves[r.strategy]
+    const k = pts.length && pts[0][0] > (curves['00981A']?.[0]?.[0] || '') ? (base.get(pts[0][0]) || 1) : 1
+    if (k !== 1) pts = pts.map(([d, v]) => [d, v * k])          // 較晚開始的（≥3 家）對齊到 00981A 當天的位置
+    const st = BK_STYLE[r.strategy] || {}
+    return { name: r.name, type: 'line', showSymbol: false, data: pts,
+             lineStyle: { width: st.width || 1.2, type: st.type || 'solid' }, itemStyle: { color: st.color } }
+  })
+  bkChart.setOption({
+    grid: { left: 8, right: 16, top: 56, bottom: 24, containLabel: true },
+    legend: { top: 0, type: 'scroll' },
+    tooltip: { trigger: 'axis', valueFormatter: (v) => (v == null ? '—' : Number(v).toFixed(2)) },
+    xAxis: { type: 'time' },
+    yAxis: { type: 'log', name: '淨值（起始＝1，對數）', min: 'dataMin', splitLine: { lineStyle: { color: '#f0f0f0' } } },
+    series,
+  }, true)
+  bkChart.resize()
+}
+
 async function load() {
   loading.value = true
   loadBacktest()                                  // 獨立載入：回測表不存在也不影響其他區塊
+  loadBasket()
   try {
     ov.value = await getActiveEtfOverview()
     date.value = ov.value.as_of
@@ -171,7 +221,7 @@ function onDate() {
   if (fund.value && fund.value.dates.includes(date.value)) openFund(fund.value.etf_id, date.value)
 }
 function fundRowClass({ row }) { return fund.value && row.etf_id === fund.value.etf_id ? 'current-row-etf' : '' }
-function onResize() { if (chart) chart.resize() }
+function onResize() { if (chart) chart.resize(); if (bkChart) bkChart.resize() }
 function go(id) { router.push(`/stock/${id}`) }
 
 onMounted(async () => {
@@ -181,6 +231,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   if (chart) chart.dispose()
+  if (bkChart) bkChart.dispose()
 })
 </script>
 
@@ -333,6 +384,71 @@ onBeforeUnmount(() => {
           </el-table-column>
         </el-table>
       </template>
+    </el-card>
+
+    <el-card v-if="bk && bk.rows.length" shadow="never" style="margin-top: 16px">
+      <template #header>
+        <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 12px">
+          <b>持股籃策略</b>
+          <span style="color: #999; font-size: 12px">
+            持有「被 ≥N 家投信的主動 ETF 同時持有」的股票、定期換股，跟直接買 00981A 比（已扣交易成本）｜每週更新（{{ String(bk.computed_at || '').slice(0, 10) }}）
+          </span>
+        </div>
+      </template>
+      <div v-if="bkHeadline" style="margin-bottom: 8px">{{ bkHeadline }}</div>
+      <div ref="bkEl" style="width: 100%; height: 300px"></div>
+      <el-table :data="bk.rows" size="small" stripe style="margin-top: 8px">
+        <el-table-column label="策略" min-width="200">
+          <template #default="{ row }">
+            <b v-if="row.strategy === 'basket2_m' || row.strategy === '00981A'">{{ row.name }}</b><span v-else>{{ row.name }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="期間" width="180">
+          <template #default="{ row }">{{ row.date_from }} ~ {{ row.date_to }}</template>
+        </el-table-column>
+        <el-table-column label="總報酬" width="84" align="right">
+          <template #default="{ row }"><span :style="{ color: up(row.total_ret) }">{{ spct(row.total_ret, 1) }}</span></template>
+        </el-table-column>
+        <el-table-column label="年化" width="84" align="right">
+          <template #default="{ row }">{{ spct(row.cagr, 1) }}</template>
+        </el-table-column>
+        <el-table-column label="同期 00981A" width="96" align="right">
+          <template #default="{ row }">{{ row.bench_cagr == null ? '—' : spct(row.bench_cagr, 1) }}</template>
+        </el-table-column>
+        <el-table-column label="波動" width="70" align="right">
+          <template #default="{ row }">{{ pct(row.vol, 1) }}</template>
+        </el-table-column>
+        <el-table-column label="最大回檔" width="84" align="right">
+          <template #default="{ row }"><span style="color: #3F9E5A">{{ spct(row.mdd, 1) }}</span></template>
+        </el-table-column>
+        <el-table-column label="檔數" width="56" align="right">
+          <template #default="{ row }">{{ row.avg_n == null ? '—' : Math.round(row.avg_n) }}</template>
+        </el-table-column>
+        <el-table-column label="每次換手" width="76" align="right">
+          <template #default="{ row }">{{ row.avg_turnover == null ? '—' : pct(row.avg_turnover, 0) }}</template>
+        </el-table-column>
+        <el-table-column label="成本合計" width="76" align="right">
+          <template #default="{ row }">{{ pct(row.cost_total, 1) }}</template>
+        </el-table-column>
+        <el-table-column label="月贏 00981A" width="92" align="center">
+          <template #default="{ row }">{{ row.months_beat == null || row.strategy === '00981A' ? '—' : `${row.months_beat}/${row.months}` }}</template>
+        </el-table-column>
+        <el-table-column label="月超額加總／去掉最好 2 月" width="176" align="right">
+          <template #default="{ row }">
+            <template v-if="row.kind === 'strategy'">
+              <span :style="{ color: up(row.excess_sum) }">{{ spct(row.excess_sum, 1) }}</span>／<span :style="{ color: up(row.excess_ex_top2) }">{{ spct(row.excess_ex_top2, 1) }}</span>
+            </template>
+            <span v-else style="color: #ccc">—</span>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div style="color: #999; font-size: 12px; margin-top: 8px; line-height: 1.7">
+        換股日用前一交易日收盤後公布的持股選股、換股日開盤成交，只交易差額；股票買進 0.1425%、賣出 0.1425%＋證交稅 0.3%，
+        ETF 賣出證交稅 0.1%（券商手續費有折扣的話成本更低）。「月贏 00981A」沒有明顯過半、「去掉最好 2 月」接近 0 或為負，
+        代表超額集中在少數月份，不穩定。等權持有約 30 檔，每月換掉約四分之一；高價股（一張上百萬）要用零股才做得到等權。
+        還原價已補上 price_daily 漏掉的除權息與分割；ETF 的配息資料不在資料庫，00981A、0050 在 2026-06 之後的配息沒還原，報酬略微低估。
+        歷史只有 16 個月、多半是 AI／科技股多頭，換了行情不一定成立。
+      </div>
     </el-card>
 
     <el-card shadow="never" style="margin-top: 16px">

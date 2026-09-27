@@ -10,10 +10,13 @@ r"""build_etf_flow.py — 主動式 ETF 每日進出：相鄰兩個持股日相�
 佔位股（權重 < 0.01%，例如統一、復華在很多檔各留 1 張）一律當 0 股：從 1 張買到 5,000 張算「新建倉」。
 門檻：|主動調整| ≥ max(前日部位 1%, 共同比例應增減量的 30%, 1 張) 才算加碼／減碼；
       沒過門檻的歸為 flow（整張執行造成的零頭，或單純跟著全面等比例增減）。
-不是交易的股數變動標為 corp：
-  配股      除權後 75 天內，每單位股數剛好放大「1＋股票股利/10」倍（±0.3%）
-  減資      恢復買賣日落在兩個持股日之間
-  面額變更  股數變 2/4/5/10 倍（或反向），且股價同步反向變動
+公司行動（不是交易）：先把前日股數換算到本日的股本基礎，再算增減；只剩零頭的標為 corp。
+  分割／面額變更／減資  兩個持股日之間，原始收盤價單日變動超出漲跌幅（< 0.85 或 > 1.18 倍），且 ETF 股數
+                        大致反向變動 → 倍數用價格推回（對齊 1.5／2／2.5／3／4／5／10… 等常見倍數）。
+                        例：緯穎 2026-09-02 一拆三，股價 7,800 → 2,610、各 ETF 股數約 ×3；
+                        早期版本只認 2／4／5／10 倍，這天被誤判成 3 家投信共識加碼（00981A 一檔就 +112 億）。
+  配股                  除權日落在區間內 → ×（1＋股票股利/10）；KY 股晚入帳的，除權後 75 天內股數剛好放大該倍數也算。
+  減資（沒有價格斷點）  恢復買賣日落在區間內。
 
 用法：
   python build_etf_flow.py              # 每檔重算最近 15 個持股日 → etf_flow，印最新一日異動
@@ -35,7 +38,9 @@ MIN_SHARES = 1000         # …且至少 1 張
 RECENT = 15               # 平常重算最近幾個持股日
 
 ACTION_NAME = {"new": "新建倉", "exit": "出清", "add": "加碼", "cut": "減碼",
-               "add_rel": "相對加碼", "cut_rel": "相對減碼", "flow": "隨申贖", "corp": "除權/減資"}
+               "add_rel": "相對加碼", "cut_rel": "相對減碼", "flow": "隨申贖", "corp": "分割/配股/減資"}
+NICE = (1.5, 2, 2.5, 3, 4, 5, 8, 10, 20)          # 常見的分割／面額變更倍數
+BREAK_LO, BREAK_HI = 0.85, 1.18                    # 單日收盤價超出漲跌幅（±10%）→ 只可能是公司行動
 
 
 def clean_dsn(dsn):
@@ -74,18 +79,45 @@ def is_dust(shares, weight):
     return shares <= 1000
 
 
-def corp_action(sid, p, c, q, px_ratio, divs, caps):
-    """股數變動是不是公司行動（配股／減資／面額變更）造成的。q＝每單位股數的倍數（已扣申購贖回）。"""
-    for ex, ratio in divs.get(sid, ()):
+def price_breaks(closes):
+    """closes：{code: [(date, close)]}（依日期）。回傳 {code: [(date, g)]}：單日原始收盤價變動超出漲跌幅的日子。"""
+    out = defaultdict(list)
+    for code, xs in closes.items():
+        for (_, c0), (d1, c1) in zip(xs, xs[1:]):
+            if c0 and c1 and not BREAK_LO <= c1 / c0 <= BREAK_HI:
+                out[code].append((d1, c1 / c0))
+    return out
+
+
+def snap_factor(f):
+    """價格推回的倍數對齊到常見倍數（一拆三的 2.99 → 3）；對不上（例如減資）就原樣回傳。"""
+    for m in NICE:
+        for x in (m, 1 / m):
+            if abs(f / x - 1) <= 0.12:
+                return x
+    return f
+
+
+def corp_factor(code, p, c, q, breaks, divs):
+    """(p, c] 之間公司行動造成的股數倍數；沒有回 None。q＝本日股數 ÷ 前日股數（原始）。"""
+    g = 1.0
+    for d, x in breaks.get(code, ()):
+        if p < d <= c:
+            g *= x
+    if g != 1.0 and abs(q - 1) > 0.2 and abs(q * g - 1) < 0.25:      # 股數大致反向跟著價格變
+        return snap_factor(1 / g)
+    for ex, ratio in divs.get(code, ()):
+        if p < ex <= c and abs(q / ratio - 1) < 0.25:                 # 除權日入帳的配股
+            return ratio
+    return None
+
+
+def late_corp(code, p, c, q, divs, caps):
+    """沒有價格斷點、也不在除權日的公司行動：晚入帳的配股（KY 股）、沒造成跳空的減資。"""
+    for ex, ratio in divs.get(code, ()):
         if ex <= c and (c - ex).days <= 75 and abs(q - ratio) <= 0.003:
             return True
-    if any(p < rd <= c for rd in caps.get(sid, ())):
-        return True
-    if px_ratio:
-        for m in (2, 4, 5, 10, 1 / 2, 1 / 4, 1 / 5, 1 / 10):
-            if abs(q / m - 1) <= 0.02 and abs(px_ratio * m - 1) <= 0.3:
-                return True
-    return False
+    return any(p < rd <= c for rd in caps.get(code, ()))
 
 
 def classify(e0, e1, d, active, flow):
@@ -100,9 +132,9 @@ def classify(e0, e1, d, active, flow):
     return "flow"
 
 
-def compute_fund(etf_id, snaps, hold, close, divs, caps):
+def compute_fund(etf_id, snaps, hold, close, divs, caps, breaks):
     """snaps：[(as_of, units, nav_total)] 依日期排序；hold：{as_of: {code: (shares, weight, amount)}}。
-    回傳 (flow 列, snapshot 更新)。"""
+    回傳 (flow 列, snapshot 更新)。etf_flow 的 shares_prev／shares 存原始股數，d_shares 已扣公司行動（＝實際買賣）。"""
     rows, updates = [], []
     for (p, u0, _), (c, u1, nav1) in zip(snaps, snaps[1:]):
         h0, h1 = hold.get(p), hold.get(c)
@@ -110,29 +142,36 @@ def compute_fund(etf_id, snaps, hold, close, divs, caps):
             continue
         eff0 = {k: (0 if is_dust(s, w) else s) for k, (s, w, _) in h0.items()}
         eff1 = {k: (0 if is_dust(s, w) else s) for k, (s, w, _) in h1.items()}
+        fac = {}                                          # 公司行動倍數：前日股數 × fac＝本日股本基礎
+        for x, v in eff0.items():
+            if v > 0 and eff1.get(x, 0) > 0:
+                f = corp_factor(x, p, c, eff1[x] / v, breaks, divs)
+                if f:
+                    fac[x] = f
+        base0 = {x: v * fac.get(x, 1.0) for x, v in eff0.items()}
         k_units = float(u1) / float(u0) if u0 and u1 else None
-        k = common_factor([eff1[x] / eff0[x] for x in eff0 if eff0[x] > 0 and eff1.get(x, 0) > 0])
+        k = common_factor([eff1[x] / base0[x] for x in base0 if base0[x] > 0 and eff1.get(x, 0) > 0])
         updates.append((p, k, k_units, etf_id, c))
         for code in set(h0) | set(h1):
             s0, w0, _ = h0.get(code, (0, None, None))
             s1, w1, a1 = h1.get(code, (0, None, None))
-            e0, e1 = eff0.get(code, 0), eff1.get(code, 0)
-            if e0 == 0 and e1 == 0:
+            e0, e1 = base0.get(code, 0), eff1.get(code, 0)
+            if (e0 == 0 and e1 == 0) or s1 == s0:
                 continue
-            d = s1 - s0
-            if d == 0:
-                continue
+            d = s1 - s0 * fac.get(code, 1.0)              # 實際買賣股數（已扣分割、配股）
             flow = e0 * (k - 1)
             active = e1 - e0 * k
             px = close.get((code, c))
             if px is None and s1:                          # 缺價：用來源給的市值或權重回推
                 px = (a1 / s1) if a1 else (float(w1) / 100 * float(nav1) / s1 if w1 and nav1 else None)
             action = classify(e0, e1, d, active, flow)
-            if action not in ("new", "exit") and e0 > 0:
-                p0 = close.get((code, p))
-                if corp_action(code, p, c, e1 / (e0 * k), (px / p0) if px and p0 else None, divs, caps):
-                    action, active = "corp", 0.0
-            rows.append((etf_id, c, code, p, e0, e1, d, round(active, 1), px,
+            if code in fac and action == "flow":
+                action = "corp"                            # 只有公司行動、沒有實質買賣
+            elif action not in ("new", "exit") and code not in fac and e0 > 0                     and late_corp(code, p, c, e1 / (e0 * k), divs, caps):
+                action, active, d = "corp", 0.0, 0.0
+            if action == "corp":
+                active = 0.0
+            rows.append((etf_id, c, code, p, eff0.get(code, 0), e1, round(d), round(active, 1), px,
                          round(d * px) if px and action != "corp" else (0 if action == "corp" else None),
                          round(active * px) if px else None, w0, w1, action))
     return rows, updates
@@ -186,9 +225,16 @@ def _run(cur, etf_ids, full, report):
             hold[d][code] = (float(s), w, float(a) if a is not None else None)
             codes.add(code)
         cur.execute("SELECT stock_id, trade_date, close FROM price_daily "
-                    "WHERE stock_id = ANY(%s) AND trade_date = ANY(%s)", (list(codes), dates))
-        close = {(sid, d): float(px) for sid, d, px in cur.fetchall() if px}
-        rows, updates = compute_fund(eid, snaps, hold, close, divs, caps)
+                    "WHERE stock_id = ANY(%s) AND trade_date >= %s ORDER BY stock_id, trade_date",
+                    (list(codes), dates[0] - timedelta(days=40)))
+        closes = defaultdict(list)
+        for sid, d, px in cur.fetchall():
+            if px:
+                closes[sid].append((d, float(px)))
+        breaks = price_breaks(closes)                    # 分割／面額變更／減資造成的價格斷點
+        dset = set(dates)
+        close = {(sid, d): px for sid, xs in closes.items() for d, px in xs if d in dset}
+        rows, updates = compute_fund(eid, snaps, hold, close, divs, caps, breaks)
         all_rows += rows
         all_updates += updates
         if len(snaps) > 1:

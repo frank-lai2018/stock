@@ -19,8 +19,10 @@ r"""backtest_etf_flow.py — 主動式 ETF 進出訊號回測：跟著買（或�
 t 值是把每個事件當獨立樣本算的；事件在時間上會重疊（同一週很多檔），實際顯著性比表上低，要搭配「每月穩定度」看。
 
 用法：
-  python backtest_etf_flow.py                 # 計算 → 寫入 etf_signal_backtest／etf_signal_event → 印報表
+  python backtest_etf_flow.py                 # 計算 → 寫入 etf_signal_backtest／etf_signal_event → 印報表，
+                                              # 接著跑持股籃策略（backtest_etf_basket.py）
   python backtest_etf_flow.py --report-only   # 只印報表，不寫 DB
+  python backtest_etf_flow.py --skip-basket   # 只跑進出訊號
 前置：schema_etf_holding.sql、fetch_active_etf.py --backfill（要有歷史持股）。
 """
 import argparse
@@ -63,14 +65,83 @@ def clean_dsn(dsn):
 
 # ---------- 載入 ----------
 
+def _backward(F_events, index):
+    """F_events：(日期 × 股票) 的倍數表，事件日填倍數、其他填 1 → 回傳「該日之後所有事件倍數的乘積」。"""
+    return F_events.iloc[::-1].cumprod().iloc[::-1].shift(-1).fillna(1.0).reindex(index)
+
+
+def fix_dividends(O, C, raw, divs):
+    """補上 price_daily 還原價漏掉的除權息。原因：daily_update 每天重算整份還原價 CSV，但 load_to_db --since
+    只寫當天那一列，除權息日「之前」的舊還原價不會跟著更新（2026-06 下旬起的除權息幾乎全部沒還原）。
+    做法同 build_adjusted_price.py：r＝(前收 − 現金股利)／(1 ＋ 股票股利/10)／前收，除權息日之前的價格 × r。
+    已經還原過的（還原價/收盤價的比例在除權息日有跳）自動略過。回傳 (O, C, 補上的事件數)。"""
+    ratio = C / raw
+    f = pd.DataFrame(1.0, index=C.index, columns=C.columns)
+    dates = C.index
+    n = 0
+    for sid, ex, cash, stock in divs:
+        if sid not in C.columns:
+            continue
+        i = dates.searchsorted(ex)                                  # 除權息日（或之後第一個交易日）
+        if i <= 0 or i >= len(dates):
+            continue
+        prev = raw[sid].iloc[:i].last_valid_index()
+        if prev is None or pd.isna(raw.at[dates[i], sid]):
+            continue
+        rb, ro = ratio.at[prev, sid], ratio.at[dates[i], sid]
+        if pd.isna(rb) or pd.isna(ro) or abs(ro / rb - 1) > 1e-4:    # 已經還原過
+            continue
+        pc = raw.at[prev, sid]
+        r = (pc - cash) / (1 + stock / 10) / pc
+        if 0.3 < r < 1:
+            f.at[dates[i], sid] *= r
+            n += 1
+    F = _backward(f, C.index)
+    return O * F, C * F, n
+
+
+def sanitize(O, C, raw=None, divs=None):
+    """修正還原價：先補漏掉的除權息（fix_dividends，需要 raw 原始收盤與 divs 股利），再修價格斷點：
+    price_daily 的還原價沒處理分割／面額變更（例：國巨 2025-08-25 ×0.26、0050 2025-06-18 ×0.25、
+    緯穎 2026-09-02 ×0.33）。台股單日漲跌幅 ±10%，單日變動超出 0.85～1.18 倍一律當成沒還原到的公司行動：
+    把之前的價格等比例調整，讓那天的報酬＝0。價格 0 當缺值。回傳 (O, C, 修正數說明)。"""
+    O, C = O.where(O > 0), C.where(C > 0)
+    n_div = 0
+    if raw is not None and divs:
+        O, C, n_div = fix_dividends(O, C, raw.where(raw > 0), divs)
+    r = C / C.ffill().shift(1)                                     # 對前一個有價的交易日（跨停牌也算）
+    brk = (r < 0.85) | (r > 1.18)
+    F = _backward(r.where(brk, 1.0).fillna(1.0), C.index)
+    return O * F, C * F, f"除權息補還原 {n_div} 筆、價格斷點 {int(brk.sum().sum())} 處"
+
+
+def load_divs(cur):
+    """股利事件 [(股票, 除權息日, 現金股利, 股票股利)]；除息、除權不同天就拆成兩筆。"""
+    cur.execute("SELECT stock_id, ex_cash_date, ex_stock_date, COALESCE(cash_dividend, 0), COALESCE(stock_dividend, 0) "
+                "FROM dividend WHERE COALESCE(ex_cash_date, ex_stock_date) >= %s", (PRICE_START,))
+    out = []
+    for sid, exc, exs, cash, stock in cur.fetchall():
+        cash, stock = float(cash), float(stock)
+        if exc and exs and exc == exs:
+            out.append((sid, exc, cash, stock))
+            continue
+        if exc and cash > 0:
+            out.append((sid, exc, cash, 0.0))
+        if exs and stock > 0:
+            out.append((sid, exs, 0.0, stock))
+    return out
+
+
 def load_prices(cur):
-    """回傳還原開盤價 O、還原收盤價 C、成交金額 A（日期 × 股票；只含普通股）。"""
-    cur.execute("SELECT p.stock_id, p.trade_date, p.adj_open, p.adj_close, p.amount FROM price_daily p "
+    """回傳還原開盤價 O、還原收盤價 C、成交金額 A（日期 × 股票；只含普通股；已補漏掉的除權息並修正價格斷點）。"""
+    cur.execute("SELECT p.stock_id, p.trade_date, p.adj_open, p.adj_close, p.close, p.amount FROM price_daily p "
                 "JOIN stock s USING (stock_id) WHERE p.trade_date >= %s "
                 "AND COALESCE(s.security_type, 'stock') = 'stock'", (PRICE_START,))
-    px = pd.DataFrame(cur.fetchall(), columns=["sid", "d", "o", "c", "amt"])
-    wide = {k: px.pivot(index="d", columns="sid", values=k).astype(float) for k in ("o", "c", "amt")}
-    return wide["o"], wide["c"], wide["amt"]
+    px = pd.DataFrame(cur.fetchall(), columns=["sid", "d", "o", "c", "raw", "amt"])
+    wide = {k: px.pivot(index="d", columns="sid", values=k).astype(float) for k in ("o", "c", "raw", "amt")}
+    O, C, note = sanitize(wide["o"], wide["c"], wide["raw"], load_divs(cur))
+    print(f"還原價修正：{note}")
+    return O, C, wide["amt"]
 
 
 def load_events(cur):
@@ -303,6 +374,7 @@ def main():
     ap = argparse.ArgumentParser(description="主動式 ETF 進出訊號回測 → etf_signal_backtest／etf_signal_event")
     ap.add_argument("--dsn", default=os.environ.get("DATABASE_URL", ""), help="PostgreSQL 連線字串")
     ap.add_argument("--report-only", action="store_true", help="只印報表，不寫 DB")
+    ap.add_argument("--skip-basket", action="store_true", help="不接著跑持股籃策略回測（backtest_etf_basket.py）")
     args = ap.parse_args()
     args.dsn = clean_dsn(args.dsn)
     try:
@@ -324,6 +396,9 @@ def main():
             report(ev, daily)
             if not args.report_only:
                 save(cur, ev, daily)
+            if not args.skip_basket:                       # 持股籃策略：沿用已修正的股價，不必重載
+                import backtest_etf_basket
+                backtest_etf_basket.run(cur, O, C, write=not args.report_only)
     finally:
         conn.close()
 
