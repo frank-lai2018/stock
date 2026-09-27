@@ -4,7 +4,7 @@ import * as echarts from 'echarts'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getMarketOverview, getMarketIndex, getMovers, getSectors, getMoneyflow, getMarketMargin,
-         getDrawingAlerts, getThemeToday } from '../api'
+         getDrawingAlerts, getThemeToday, getActiveEtfToday } from '../api'
 
 const router = useRouter()
 async function loadAlerts() {
@@ -18,6 +18,12 @@ async function loadThemeToday() {
 }
 const pctf = (v) => (v == null ? '—' : (v >= 0 ? '+' : '') + (Number(v) * 100).toFixed(1) + '%')   // 小數 → %
 function openTheme(code, layer = 3) { router.push({ path: '/themes', query: { code, layer } }) }
+// 主動ETF動向（nightly 的 etfhold 工作產生；完整資料在 /active-etf）
+const aetfToday = ref(null)
+async function loadAetfToday() {
+  try { aetfToday.value = await getActiveEtfToday(5) } catch (e) { /* 主動 ETF 表未建或尚無資料 → 不顯示 */ }
+}
+const yi1 = (v) => (v == null ? '—' : (Number(v) > 0 ? '+' : '') + (Number(v) / 1e8).toFixed(1) + ' 億')
 const ov = ref(null)
 const moverType = ref('gainers')
 const movers = ref([])
@@ -84,6 +90,7 @@ function onResize() { if (chart) chart.resize() }
 
 onMounted(async () => {
   loadThemeToday()                        // 獨立載入：大盤其他區塊失敗也不影響族群卡片
+  loadAetfToday()
   try {
     ov.value = await getMarketOverview()
     await loadIndex()
@@ -269,6 +276,37 @@ function go(id) { router.push(`/stock/${id}`) }
             落後補漲＝20 日報酬低於族群中位數、但仍站上季線。
           </div>
         </div>
+      </div>
+    </el-card>
+
+    <!-- 主動ETF動向：各投信公告的持股相鄰兩天相減（已扣全面等比例增減），以投信家數算共識 -->
+    <el-card v-if="aetfToday && (aetfToday.buys.length || aetfToday.sells.length)" shadow="never" style="margin-top: 16px">
+      <template #header>
+        <div style="display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px">
+          <span style="font-weight: 600">主動ETF動向</span>
+          <span style="color: #999; font-size: 12px">
+            持股日 {{ aetfToday.as_of }}｜已更新 {{ aetfToday.updated.length }}/{{ aetfToday.n_funds }} 檔｜
+            涵蓋約 {{ Math.round((aetfToday.coverage.pct || 0) * 100) }}% 規模｜點股票看個股
+          </span>
+          <el-button link type="primary" size="small" style="margin-left: auto" @click="router.push('/active-etf')">看全部 →</el-button>
+        </div>
+      </template>
+      <div style="display: flex; flex-wrap: wrap; gap: 24px">
+        <div v-for="side in [{ title: '共識買進', color: '#EA4C4C', rows: aetfToday.buys, n: 'n_buy' },
+                             { title: '共識賣出', color: '#3F9E5A', rows: aetfToday.sells, n: 'n_sell' }]"
+             :key="side.title" style="flex: 1 1 320px">
+          <div :style="{ color: side.color, fontWeight: 600, marginBottom: '4px' }">{{ side.title }}</div>
+          <div v-for="r in side.rows" :key="r.stock_id" style="cursor: pointer; line-height: 1.9"
+               @click="router.push(`/stock/${r.stock_id}`)">
+            {{ r.stock_id }} {{ r.name }}
+            <span style="color: #888; font-size: 12px">{{ r[side.n] }} 家（{{ r.etfs.join('、') }}）</span>
+            <span :style="{ color: up(r.active_amount), marginLeft: '6px' }">{{ yi1(r.active_amount) }}</span>
+          </div>
+          <div v-if="!side.rows.length" style="color: #ccc">—</div>
+        </div>
+      </div>
+      <div style="color: #bbb; font-size: 12px; margin-top: 6px">
+        金額為主動調整（扣掉申購贖回等全面等比例增減）；持股資料收盤後才公布，最早隔天開盤反應。
       </div>
     </el-card>
 

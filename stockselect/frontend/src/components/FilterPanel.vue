@@ -63,6 +63,17 @@ onMounted(async () => {
           </el-option-group>
         </el-select>
       </el-form-item>
+      <!-- 主動式 ETF：近 5 個持股日有 N 家投信主動新建倉／加碼（或出清／減碼），已扣申購贖回；見 主動ETF追蹤設計.md -->
+      <el-form-item label="主動ETF加碼">
+        <el-select v-model="filters.aetf_buy_5d_min" style="width: 160px" clearable placeholder="不限">
+          <el-option v-for="n in [1, 2, 3]" :key="n" :label="`近5日 ≥${n} 家投信`" :value="n" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="主動ETF減碼">
+        <el-select v-model="filters.aetf_sell_5d_min" style="width: 160px" clearable placeholder="不限">
+          <el-option v-for="n in [1, 2, 3]" :key="n" :label="`近5日 ≥${n} 家投信`" :value="n" />
+        </el-select>
+      </el-form-item>
       <el-form-item label="近3月報酬≥">
         <el-input-number v-model="filters.ret_3m_min" :step="0.05" :precision="2" controls-position="right" />
         <span style="margin-left:6px;color:#999">0.1=10%</span>

@@ -25,6 +25,15 @@ export const getThemeMembers = (code) => api.get('/themes/members', { params: { 
 export const getThemeToday = (top = 10) => api.get('/themes/today', { params: { top } }).then((r) => r.data)
 export const getStockThemes = (stock_id) => api.get('/themes/of', { params: { stock_id } }).then((r) => r.data)
 export const getThemeOptions = () => api.get('/themes/options').then((r) => r.data)
+// 主動式 ETF 每日進出（已扣全面等比例增減；見 主動ETF追蹤設計.md）
+export const getActiveEtfOverview = () => api.get('/active-etf/overview').then((r) => r.data)
+export const getActiveEtfConsensus = ({ date, days = 1, side = 'buy', limit = 50 } = {}) =>
+  api.get('/active-etf/consensus', { params: { date, days, side, limit } }).then((r) => r.data)
+export const getActiveEtfFund = (etfId, date) =>
+  api.get(`/active-etf/fund/${etfId}`, { params: { date } }).then((r) => r.data)
+export const getActiveEtfStock = (stockId, days = 120) =>
+  api.get(`/active-etf/stock/${stockId}`, { params: { days } }).then((r) => r.data)
+export const getActiveEtfToday = (top = 5) => api.get('/active-etf/today', { params: { top } }).then((r) => r.data)
 export const runScreen = (payload) => api.post('/screen', payload).then((r) => r.data)
 export const screenBreakout = (params = {}) =>
   api.get('/screen/pattern-breakout', { params }).then((r) => r.data)

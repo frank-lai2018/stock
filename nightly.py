@@ -30,6 +30,9 @@ r"""nightly.py — 排程大腦：每晚無腦執行這一支，由它依「今�
         限流用量記在 finmind_rate_state.json，跨行程共用：同一晚先跑 dividend 再跑 capreduction
         不會各自重新計數，合計仍受 550/hr 約束。
   etfnav     每晚固定跑 fetch_etf_nav.py（ETF 淨值/折溢價/規模；mis.twse 單一請求，便宜）。
+  etfhold    每晚固定跑 fetch_active_etf.py（主動式 ETF 每日持股 → 算進出 etf_flow；統一／群益／復華官網，
+               冪等、自動補近 10 個交易日的缺口）。各家傍晚到晚上才陸續公布，run_nightly.bat 在整套跑完後
+               會再補抓一次：python nightly.py --only etfhold --skip-refresh（晚上 9 點後執行）。說明見 主動ETF追蹤設計.md。
   tpexchain  每月第一個晚上跑 fetch_tpex_chain.py（櫃買產業價值鏈 → 族群 L2；約 1 分鐘，狀態檔防重）。
   theme      每晚固定跑 build_theme_daily.py（族群熱度 → theme_daily；約 10 秒，log 會印當天族群排行）。
                排在 tpexchain 之後，當月新成分當晚就生效。說明見 族群分類設計.md。
@@ -61,6 +64,7 @@ FUND = os.path.join(HERE, "update_fundamentals.py")
 FUND_OPEN = os.path.join(HERE, "update_fundamentals_opendata.py")   # 財報走 TWSE/櫃買 opendata（便宜）
 HOLDERDIST = os.path.join(HERE, "update_holderdist.py")
 ETFNAV = os.path.join(HERE, "fetch_etf_nav.py")
+ACTIVEETF = os.path.join(HERE, "fetch_active_etf.py")         # 主動式 ETF 持股 → etf_flow 進出
 TPEXCHAIN = os.path.join(HERE, "fetch_tpex_chain.py")          # 櫃買產業價值鏈 → 族群 L2
 THEME = os.path.join(HERE, "build_theme_daily.py")             # 族群熱度 → theme_daily
 BACKTEST_DIR = os.path.join(HERE, "stockselect", "backend")   # 回測腳本在後端（需 import app）
@@ -89,7 +93,7 @@ def save_state(state):
 #   capreduction / dividend 各 1 資料集 ≈ 2,300 次 ≈ 4~5hr（兩者同日跑則共用額度，會接著排隊）
 # （季報原本 3 資料集 ≈ 6,900 次 ≈ 23hr，已改走 TWSE/櫃買 opendata，見 update_fundamentals_opendata.py）
 JOBS = ["daily", "holderdist", "revenue", "quarterly", "dividend",
-        "capreduction", "etfnav", "tpexchain", "theme", "renko", "backtest"]   # --only / --skip 可指定的工作名
+        "capreduction", "etfnav", "etfhold", "tpexchain", "theme", "renko", "backtest"]   # --only / --skip 可指定的工作名
 
 HEAVY_DAY = {"capreduction": 6, "dividend": 6}   # 6=週日（季報已改走 opendata，不再是重工作）
 HEAVY_NAME = {"capreduction": "減資", "dividend": "股利"}
@@ -213,6 +217,11 @@ def plan_jobs(d, state, only, skip=()):
     run = only in (None, "etfnav")
     jobs.append(("etfnav", "每晚固定（ETF 淨值/規模，單一請求）", run, {}))
 
+    # etfhold：主動式 ETF 每日持股（各投信官網）→ 算進出 etf_flow。冪等，每次自動補近 10 個交易日的缺口，
+    # 所以某晚還沒公布或失敗，下一次（run_nightly.bat 最後的補抓或隔晚）會自己補上。要排在 daily 之後（金額用當日收盤價）。
+    run = only in (None, "etfhold")
+    jobs.append(("etfhold", "每晚固定（主動 ETF 持股＋進出；自動補近 10 日缺口）", run, {}))
+
     # tpexchain：櫃買產業價值鏈（族群 L2）每月一次；平台更新不頻繁，也對網站友善。狀態檔防重。
     ml = f"{d:%Y-%m}"
     done_t = state.get("tpexchain")
@@ -295,6 +304,8 @@ def build_cmd(job, d, dsn, extra):
         return [sys.executable, FUND, "--preset", "capreduction", "--start", extra["start"], "--dsn", dsn]
     if job == "etfnav":
         return [sys.executable, ETFNAV, "--dsn", dsn]
+    if job == "etfhold":
+        return [sys.executable, ACTIVEETF, "--dsn", dsn]
     if job == "tpexchain":
         return [sys.executable, TPEXCHAIN, "--dsn", dsn]
     if job == "theme":

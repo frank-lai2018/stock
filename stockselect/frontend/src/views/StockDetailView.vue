@@ -2,7 +2,9 @@
 import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getStock, getFundamentals, getStockPatterns, getStockVpa, getDividends, getEtfInfo, getStockThemes } from '../api'
+import { getStock, getFundamentals, getStockPatterns, getStockVpa, getDividends, getEtfInfo, getStockThemes,
+  getActiveEtfStock } from '../api'
+import ActiveEtfPanel from '../components/ActiveEtfPanel.vue'
 import PriceChart from '../components/PriceChart.vue'
 import MarginPanel from '../components/MarginPanel.vue'
 import InstPanel from '../components/InstPanel.vue'
@@ -15,6 +17,7 @@ const vpa = ref([])
 const div = ref(null)
 const etf = ref(null)
 const themes = ref([])                   // 所屬族群（L3 市場題材在前，附熱度名次）
+const aetf = ref(null)                   // 主動式 ETF 持有（有持有才顯示）
 const dirColor = { bull: '#EA4C4C', bear: '#3F9E5A', neutral: '#909399' }
 const dirText = { bull: '偏多', bear: '偏空', neutral: '中性' }
 const PHASES = ['承接', '測試', '出貨']
@@ -48,6 +51,7 @@ onMounted(async () => {
     ElMessage.error('載入失敗：' + (e?.response?.data?.detail || e.message))
   }
   try { themes.value = await getStockThemes(route.params.id) } catch (e) { /* 族群表未建時不影響個股頁 */ }
+  try { aetf.value = await getActiveEtfStock(route.params.id) } catch (e) { /* 主動 ETF 表未建時不影響個股頁 */ }
 })
 
 function openTheme(t) { router.push({ path: '/themes', query: { code: t.code, layer: t.layer } }) }
@@ -82,7 +86,14 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateCols))
       <el-descriptions-item label="千張大戶%">{{ s.big1000_pct ?? '—' }}</el-descriptions-item>
     </el-descriptions>
 
-    <el-card v-if="etf && etf.latest" shadow="never" style="margin-top: 16px" header="ETF 淨值 / 折溢價 / 規模">
+    <el-card v-if="etf && etf.latest" shadow="never" style="margin-top: 16px">
+      <template #header>
+        ETF 淨值 / 折溢價 / 規模
+        <el-button v-if="/^00\d{3}A$/.test(String(route.params.id))" link type="primary" size="small"
+                   style="margin-left: 10px" @click="router.push({ path: '/active-etf', query: { etf: route.params.id } })">
+          看每日持股異動 →
+        </el-button>
+      </template>
       <el-descriptions :column="cols" border>
         <el-descriptions-item label="淨值">{{ etf.latest.nav ?? '—' }}</el-descriptions-item>
         <el-descriptions-item label="市價">{{ etf.latest.close ?? '—' }}</el-descriptions-item>
@@ -155,6 +166,10 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateCols))
 
     <el-card shadow="never" style="margin-top: 16px" header="三大法人買賣超">
       <InstPanel :stock-id="String(route.params.id)" />
+    </el-card>
+
+    <el-card v-if="aetf && aetf.holders.length" shadow="never" style="margin-top: 16px" header="主動式 ETF 持有">
+      <ActiveEtfPanel :data="aetf" />
     </el-card>
 
     <el-card shadow="never" style="margin-top: 16px" header="集保股權分散（大戶 vs 散戶）">

@@ -79,6 +79,16 @@ FILTERS = {
     "theme":             ("stock_id IN (SELECT st.stock_id FROM stock_theme st JOIN theme t USING (theme_id) "
                           "WHERE (t.code = %(theme)s OR t.parent_code = %(theme)s) AND t.is_active "
                           "AND st.valid_to IS NULL AND st.status IN ('confirmed', 'seed'))", _STR),
+    # 主動式 ETF（見 主動ETF追蹤設計.md）：近 5 個持股日有 N 家以上投信主動新建倉／加碼（或出清／減碼）。
+    # 直查 etf_flow，每晚抓完就生效、不必等 mv 刷新；以投信家數計（同投信兩檔 ETF 只算一家）
+    "aetf_buy_5d_min":   ("stock_id IN (SELECT f.stock_id FROM etf_flow f JOIN etf_fund e USING (etf_id) "
+                          "WHERE f.action IN ('new', 'add') AND f.trade_date >= (SELECT min(d) FROM "
+                          "(SELECT DISTINCT trade_date AS d FROM etf_flow ORDER BY d DESC LIMIT 5) w) "
+                          "GROUP BY f.stock_id HAVING count(DISTINCT e.issuer) >= %(aetf_buy_5d_min)s)", _NUM),
+    "aetf_sell_5d_min":  ("stock_id IN (SELECT f.stock_id FROM etf_flow f JOIN etf_fund e USING (etf_id) "
+                          "WHERE f.action IN ('exit', 'cut') AND f.trade_date >= (SELECT min(d) FROM "
+                          "(SELECT DISTINCT trade_date AS d FROM etf_flow ORDER BY d DESC LIMIT 5) w) "
+                          "GROUP BY f.stock_id HAVING count(DISTINCT e.issuer) >= %(aetf_sell_5d_min)s)", _NUM),
     "market":            ("market = %(market)s", _STR),
     "security_type":     ("security_type = %(security_type)s", _STR),   # stock / etf
     "in_universe":       ("in_universe = %(in_universe)s", _BOOL),

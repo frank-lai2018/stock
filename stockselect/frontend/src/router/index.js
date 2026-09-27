@@ -7,6 +7,7 @@ export default createRouter({
     { path: '/', name: 'home', component: HomeView },
     { path: '/screener', name: 'screener', component: () => import('../views/ScreenerView.vue') },
     { path: '/themes', name: 'themes', component: () => import('../views/ThemeView.vue') },
+    { path: '/active-etf', name: 'active-etf', component: () => import('../views/ActiveEtfView.vue') },
     { path: '/patterns', name: 'patterns', component: () => import('../views/PatternScreenerView.vue') },
     { path: '/breakout', name: 'breakout', component: () => import('../views/BreakoutView.vue') },
     { path: '/breakout-decision', name: 'breakout-decision', component: () => import('../views/BreakoutDecisionView.vue') },

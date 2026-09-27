@@ -1,0 +1,85 @@
+-- 台股選股系統 schema — 主動式 ETF 每日持股與進出（申購贖回已扣除）
+-- 設計說明見 主動ETF追蹤設計.md
+--
+-- 資料流：
+--   fetch_active_etf.py  各投信官網每日公告的持股 → etf_snapshot（每檔每日一筆表頭）＋ etf_holding（明細）
+--   build_etf_flow.py    相鄰兩個持股日相減、扣掉申購贖回 → etf_flow（每檔 ETF × 個股 × 日）
+--
+-- 重跑方式（全部 IF NOT EXISTS，可安全重複執行）：
+--   psql -U postgres -d twstock -f schema_etf_holding.sql
+-- 前置：schema.sql 已建好（stock、etf_daily 表）。
+
+-- ETF 與投信、官網基金代碼的對照（由 active_etf_defs.py 同步；adapter 為 NULL＝尚未支援抓取）
+CREATE TABLE IF NOT EXISTS etf_fund (
+    etf_id      VARCHAR(10) PRIMARY KEY,      -- 00981A
+    issuer      TEXT NOT NULL,                -- 統一
+    adapter     TEXT,                         -- uni / capital / fh（fetch_active_etf.py 的抓取器）；NULL＝還沒寫
+    fund_code   TEXT,                         -- 投信官網的基金代碼：49YTW / 399 / ETF23
+    name        TEXT,
+    is_active   BOOLEAN NOT NULL DEFAULT true,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 每檔 ETF 每個持股日一筆：規模、單位數、股票／期貨曝險
+--   as_of 是「持股日」（該日收盤）。申購買回清單標的是下一個交易日，例：9/29 清單＝9/24 收盤持股。
+CREATE TABLE IF NOT EXISTS etf_snapshot (
+    etf_id         VARCHAR(10) NOT NULL REFERENCES etf_fund(etf_id),
+    as_of          DATE NOT NULL,
+    list_date      DATE,                      -- 申購買回清單日（來源有給才存，僅供對照）
+    units          NUMERIC(20,0),             -- 已發行受益權單位數（同一份檔案，扣申購贖回用）
+    units_chg      NUMERIC(20,0),             -- 來源自己算的「與前日單位差異數」（對帳用）
+    nav_total      NUMERIC(20,2),             -- 基金淨資產（元）
+    nav_unit       NUMERIC(12,4),             -- 每單位淨值
+    stock_weight   NUMERIC(8,4),              -- 股票合計權重 %
+    futures_weight NUMERIC(8,4),              -- 期貨名目本金合計權重 %（股票＋期貨＝整體持股水位）
+    n_stocks       INT,                       -- 股票檔數（含佔位股）
+    source         TEXT,                      -- 抓取器與網址
+    raw_file       TEXT,                      -- 原始檔（H:\data\ETF_HOLD\...），解析規則改了可重跑
+    fetched_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- 以下由 build_etf_flow.py 回填
+    prev_as_of     DATE,                      -- 上一個持股日（中間漏抓時會跨多日）
+    flow_k         NUMERIC(12,8),             -- 持股共同比例 k（最多檔一起變動的比例；全面等比例賣 1.7% → 0.983）
+    flow_k_units   NUMERIC(12,8),             -- 單位數比例＝本日單位數 ÷ 前日單位數（對照用；經理人多半不會當天等比例買賣）
+    PRIMARY KEY (etf_id, as_of)
+);
+
+-- 持股明細（原樣保存，含佔位股：1 張、權重 0.00% 那種）
+CREATE TABLE IF NOT EXISTS etf_holding (
+    etf_id   VARCHAR(10) NOT NULL,
+    as_of    DATE NOT NULL,
+    kind     VARCHAR(8)  NOT NULL,            -- stock / futures
+    code     VARCHAR(20) NOT NULL,            -- 股票代號；期貨＝代號＋契約年月（TX202610）
+    name     TEXT,
+    shares   NUMERIC(20,0) NOT NULL,          -- 股數；期貨為口數
+    weight   NUMERIC(8,4),                    -- 權重 %
+    amount   NUMERIC(20,2),                   -- 市值（來源有給才存）
+    PRIMARY KEY (etf_id, as_of, kind, code),
+    FOREIGN KEY (etf_id, as_of) REFERENCES etf_snapshot (etf_id, as_of) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_etf_holding_code ON etf_holding (code, as_of) WHERE kind = 'stock';
+
+-- 每日進出（build_etf_flow.py 產生；只存股數有變動、或新建倉／出清的列）
+--   實際增減  d_shares      ＝ 本日股數 − 前日股數（市場上真實的買賣）
+--   主動調整  active_shares ＝ 本日股數 − 前日股數 × k（扣掉全面等比例的增減後，針對個股的判斷）
+--   action：new 新建倉 / exit 出清 / add 加碼 / cut 減碼
+--           add_rel 相對加碼（全面等比例賣時賣得比別檔少）/ cut_rel 相對減碼（全面等比例買時買得比別檔少）
+--           flow 只是跟著全面等比例增減（或整張執行的零頭）/ corp 配股、減資、面額變更（沒有交易）
+CREATE TABLE IF NOT EXISTS etf_flow (
+    etf_id        VARCHAR(10) NOT NULL,
+    trade_date    DATE NOT NULL,              -- 本期持股日
+    stock_id      VARCHAR(20) NOT NULL,
+    prev_date     DATE NOT NULL,              -- 比較的前一持股日
+    shares_prev   NUMERIC(20,0) NOT NULL,     -- 佔位股以 0 計
+    shares        NUMERIC(20,0) NOT NULL,
+    d_shares      NUMERIC(20,0) NOT NULL,
+    active_shares NUMERIC(20,1) NOT NULL,
+    close         NUMERIC(12,4),              -- 當日收盤（price_daily；缺價時用權重回推）
+    amount        NUMERIC(20,0),              -- d_shares × close
+    active_amount NUMERIC(20,0),              -- active_shares × close
+    weight_prev   NUMERIC(8,4),
+    weight        NUMERIC(8,4),
+    action        VARCHAR(8) NOT NULL,
+    PRIMARY KEY (etf_id, trade_date, stock_id)
+);
+CREATE INDEX IF NOT EXISTS idx_etf_flow_date  ON etf_flow (trade_date);
+CREATE INDEX IF NOT EXISTS idx_etf_flow_stock ON etf_flow (stock_id, trade_date);
