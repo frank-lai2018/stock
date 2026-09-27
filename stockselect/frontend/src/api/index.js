@@ -30,6 +30,8 @@ export const screenBreakout = (params = {}) =>
   api.get('/screen/pattern-breakout', { params }).then((r) => r.data)
 export const getBreakoutRanking = (params = {}) =>
   api.get('/screen/breakout-ranking', { params }).then((r) => r.data)
+export const getPriceActionDecisions = (params = {}) =>
+  api.get('/screen/price-action', { params }).then((r) => r.data)
 export const getBreakoutPatterns = (group = 'bottom') =>
   api.get('/screen/breakout-patterns', { params: { group } }).then((r) => r.data)
 export const getPatternBacktest = () => api.get('/screen/backtest').then((r) => r.data)

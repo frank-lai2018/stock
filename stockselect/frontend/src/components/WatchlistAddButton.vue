@@ -27,8 +27,13 @@ async function open() {
 }
 
 function snapshotOf(r) {
-  if (!r.breakout && !r.pattern) return null      // 選股器/手動加入無型態
-  return { breakout: r.breakout || null, pattern: r.pattern || null, pattern_name: r.pattern_name || null }
+  if (!r.breakout && !r.pattern && !r.decision) return null      // 選股器/手動加入無型態
+  return {
+    breakout: r.breakout || null,
+    pattern: r.pattern || r.decision?.pattern || null,
+    pattern_name: r.pattern_name || r.decision?.pattern_name || null,
+    price_action_decision: r.decision || null,
+  }
 }
 
 async function confirm() {

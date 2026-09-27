@@ -10,6 +10,7 @@ export default createRouter({
     { path: '/patterns', name: 'patterns', component: () => import('../views/PatternScreenerView.vue') },
     { path: '/breakout', name: 'breakout', component: () => import('../views/BreakoutView.vue') },
     { path: '/breakout-decision', name: 'breakout-decision', component: () => import('../views/BreakoutDecisionView.vue') },
+    { path: '/price-action', name: 'price-action', component: () => import('../views/PriceActionDecisionView.vue') },
     { path: '/toppattern', name: 'toppattern', component: () => import('../views/TopPatternView.vue') },
     { path: '/continuation', name: 'continuation', component: () => import('../views/ContinuationView.vue') },
     { path: '/near-breakout', name: 'near-breakout', component: () => import('../views/NearBreakoutView.vue') },
