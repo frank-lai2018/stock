@@ -13,6 +13,7 @@ let dataList = []            // 目前圖上的資料
 let priceLineId = null       // 點擊後的固定收盤水平線
 let levelIds = []            // 壓力/頸線 粗線
 let tradeIds = []            // 我的買賣點標記
+let tradeDrawRun = 0         // 非同步繪製版本；關閉/換股後讓舊請求失效
 let eventIds = []            // 除權息/財報 事件標記
 let drawIds = []             // 手繪圖形（趨勢線等）overlay id
 let pendingId = null         // 正在畫、還沒點完點的那一條
@@ -23,6 +24,7 @@ const levels = ref([])       // 壓力/頸線/支撐（供圖例）
 const LVCOLORS = { resistance: '#FF7A00', neckline: '#2E7DEE', support: '#8E44AD' }
 const UP = '#EA4C4C'         // 漲：紅（台股慣例）
 const DOWN = '#3F9E5A'       // 跌：綠
+const TRADE_OVERLAY_GROUP = 'auto_trade_markers'
 
 const period = ref('D')      // D / W / M
 const adj = ref(true)        // 還原
@@ -201,12 +203,23 @@ function barAt(ts) {
   for (const b of dataList) { if (b.timestamp <= ts) best = b; else break }
   return best
 }
+function clearTradeOverlays() {
+  if (!chart) return
+  // groupId 可移除同組所有標記；逐 id 再清一次，兼容舊版或先前未分組的 overlay。
+  try { chart.removeOverlay({ groupId: TRADE_OVERLAY_GROUP }) } catch (e) { /* ignore */ }
+  tradeIds.forEach(safeRemove)
+  tradeIds = []
+}
 async function drawTrades() {
   if (!chart) return
-  tradeIds.forEach(safeRemove); tradeIds = []
+  const run = ++tradeDrawRun
+  const stockId = props.stockId
+  clearTradeOverlays()
   if (!showTrades.value) return
   let ts
-  try { ts = await getStockTrades(props.stockId) } catch (e) { return }
+  try { ts = await getStockTrades(stockId) } catch (e) { return }
+  // 等資料期間若已關閉、換股或又觸發重畫，舊請求不可再把標記畫回來。
+  if (!chart || !showTrades.value || stockId !== props.stockId || run !== tradeDrawRun) return
   const agg = {}                                   // 同日同動作彙總，避免多筆重疊
   for (const t of ts || []) {
     const day = String(t.trade_date).slice(0, 10)
@@ -222,6 +235,7 @@ async function drawTrades() {
     try {
       const id = chart.createOverlay({
         name: 'simpleAnnotation',
+        groupId: TRADE_OVERLAY_GROUP,
         points: [{ timestamp: new Date(a.day).getTime(), value: price }],
         extendData: label,
         styles: { text: { color: '#ffffff', backgroundColor: isBuy ? UP : DOWN,
@@ -427,6 +441,8 @@ function clearClickLine() { if (priceLineId) { safeRemove(priceLineId); priceLin
 async function load() {
   if (!chart) return
   try {
+    ++tradeDrawRun              // 讓上一檔／上一週期仍在等待的交易請求失效
+    clearTradeOverlays()        // applyNewData 不保證清除 overlay，先主動移除
     const rows = await getPrices(props.stockId, {
       tf: period.value, bars: BARS[period.value], adj: adj.value ? 1 : 0,
     })
@@ -434,7 +450,7 @@ async function load() {
       timestamp: new Date(r.trade_date).getTime(),
       open: +r.open, high: +r.high, low: +r.low, close: +r.close, volume: +r.volume,
     }))
-    priceLineId = null; levelIds = []; tradeIds = []; eventIds = []; drawIds = []; pendingId = null
+    priceLineId = null; levelIds = []; eventIds = []; drawIds = []; pendingId = null
     chart.applyNewData(dataList)
     setRange('6M')            // 預設看近半年，不用手拖
     boundScroll()            // applyNewData/setBarSpace 會重置限制 → 最後重套過捲邊界
@@ -484,6 +500,8 @@ watch([drawColor, drawWidth], applyStyle)     // 有選取的線 → 立刻改�
 watch([zoomOn, scrollOn], applyInteract)
 
 onBeforeUnmount(() => {
+  ++tradeDrawRun
+  clearTradeOverlays()
   window.removeEventListener('resize', onResize)
   window.removeEventListener('keydown', onKey)
   if (el.value) el.value.removeEventListener('click', onChartClick)
