@@ -48,6 +48,19 @@ def _build_one(task):
         return code, False, str(e)[:100]
 
 
+def clean_dsn(dsn):
+    """容錯＋防呆：剝掉誤貼進值裡的旗標／引號，並先擋掉明顯不合法的連線字串。
+    （踩過的雷：DATABASE_URL="--dsn postgresql://…" 會一路傳到 psycopg2 才爆
+     invalid dsn: missing "=" after "--dsn"，而且 daily 已先燒掉數十秒的還原價計算。）"""
+    dsn = (dsn or "").strip().strip('"').strip("'").strip()
+    if dsn.startswith("--dsn"):                      # 誤把旗標本身貼進值裡
+        dsn = dsn[5:].lstrip().lstrip("=").lstrip()
+    if dsn and not (dsn.startswith(("postgresql://", "postgres://")) or "=" in dsn):
+        raise SystemExit(f"連線字串格式不對：{dsn!r}；"
+                         "應為 postgresql://user:pw@host:port/db（或 key=value 形式）")
+    return dsn
+
+
 def main():
     ap = argparse.ArgumentParser(description="每日一鍵：更新股價 → 重算還原價 → 增量入庫")
     ap.add_argument("--date", default=date.today().isoformat(), help="交易日 YYYY-MM-DD（預設今天）")
@@ -63,6 +76,7 @@ def main():
     ap.add_argument("--skip-index", action="store_true", help="略過步驟 5（大盤/櫃買價格指數）")
     ap.add_argument("--workers", type=int, default=0, help="步驟2重算還原價的平行核心數（0=自動 CPU 數）")
     args = ap.parse_args()
+    args.dsn = clean_dsn(args.dsn)
 
     try:                                   # 行緩衝：進度即時可見、且與子行程 load_to_db 輸出不會亂序（cron 導向 log 也對）
         sys.stdout.reconfigure(line_buffering=True)

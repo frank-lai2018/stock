@@ -286,6 +286,19 @@ def upsert(cur, table, rows):
     return len(rows)
 
 
+def clean_dsn(dsn):
+    """容錯＋防呆：剝掉誤貼進值裡的旗標／引號，並先擋掉明顯不合法的連線字串。
+    （踩過的雷：DATABASE_URL="--dsn postgresql://…" 會一路傳到 psycopg2 才爆
+     invalid dsn: missing "=" after "--dsn"，而且 daily 已先燒掉數十秒的還原價計算。）"""
+    dsn = (dsn or "").strip().strip('"').strip("'").strip()
+    if dsn.startswith("--dsn"):                      # 誤把旗標本身貼進值裡
+        dsn = dsn[5:].lstrip().lstrip("=").lstrip()
+    if dsn and not (dsn.startswith(("postgresql://", "postgres://")) or "=" in dsn):
+        raise SystemExit(f"連線字串格式不對：{dsn!r}；"
+                         "應為 postgresql://user:pw@host:port/db（或 key=value 形式）")
+    return dsn
+
+
 def main():
     ap = argparse.ArgumentParser(description="載入 H:\\data 的 CSV 進 PostgreSQL")
     ap.add_argument("--dsn", default=os.environ.get("DATABASE_URL", ""), help="PostgreSQL 連線字串")
@@ -297,6 +310,7 @@ def main():
     ap.add_argument("--since", default="", help="增量：只 upsert 日期>=此日(YYYY-MM-DD)的資料列；維度表 stock 不受限")
     ap.add_argument("--dry-run", action="store_true", help="不連 DB，只驗證讀檔/轉換")
     args = ap.parse_args()
+    args.dsn = clean_dsn(args.dsn)
 
     if args.since:
         try:

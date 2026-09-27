@@ -281,6 +281,19 @@ def build_cmd(job, d, dsn, extra):
     raise ValueError(job)
 
 
+def clean_dsn(dsn):
+    """容錯＋防呆：剝掉誤貼進值裡的旗標／引號，並先擋掉明顯不合法的連線字串。
+    （踩過的雷：DATABASE_URL="--dsn postgresql://…" 會一路傳到 psycopg2 才爆
+     invalid dsn: missing "=" after "--dsn"，而且 daily 已先燒掉數十秒的還原價計算。）"""
+    dsn = (dsn or "").strip().strip('"').strip("'").strip()
+    if dsn.startswith("--dsn"):                      # 誤把旗標本身貼進值裡
+        dsn = dsn[5:].lstrip().lstrip("=").lstrip()
+    if dsn and not (dsn.startswith(("postgresql://", "postgres://")) or "=" in dsn):
+        raise SystemExit(f"連線字串格式不對：{dsn!r}；"
+                         "應為 postgresql://user:pw@host:port/db（或 key=value 形式）")
+    return dsn
+
+
 def main():
     ap = argparse.ArgumentParser(description="排程大腦：依今天日期自動決定該跑哪些更新")
     ap.add_argument("--dsn", default=os.environ.get("DATABASE_URL", ""), help="PostgreSQL 連線字串")
@@ -291,6 +304,7 @@ def main():
     ap.add_argument("--skip-refresh", action="store_true", help="跑完不刷新 mv_stock_snapshot 選股視圖")
     ap.add_argument("--plan", action="store_true", help="只印排程決策，不執行")
     args = ap.parse_args()
+    args.dsn = clean_dsn(args.dsn)
 
     try:
         sys.stdout.reconfigure(line_buffering=True)
