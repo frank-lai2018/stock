@@ -129,5 +129,10 @@ export const addWatchItem = (payload) => api.post('/watchlist/items', payload).t
 export const addWatchItemsBulk = (payload) =>
   api.post('/watchlist/items/bulk', payload).then((r) => r.data)
 export const deleteWatchItem = (id) => api.delete(`/watchlist/items/${id}`).then((r) => r.data)
+// 自選股的決策檢視：規則同裸K決策／突破決策頁的「指定個股分析」，沒有訊號的也列（decision=null）
+export const getWatchPriceAction = (cid, params = {}) =>
+  api.get(`/watchlist/${cid}/price-action`, { params }).then((r) => r.data)
+export const getWatchBreakout = (cid, params = {}) =>
+  api.get(`/watchlist/${cid}/breakout`, { params }).then((r) => r.data)
 
 export default api

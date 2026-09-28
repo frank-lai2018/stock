@@ -2,12 +2,20 @@
 // 型態＋裸 K 決策頁最下方的欄位與規則說明。
 // 內容照 backend/app/price_action.py（裸 K 評分、狀態、決策）和 routers/patterns.py（篩選）寫；
 // 那兩支的門檻或配分改了，這裡要跟著改。字級沿用各頁「欄位說明」的 24px。
-import { ref } from 'vue'
+// watchlist：自選股的「裸K決策」檢視用，預設收起，並換掉只適用決策頁的說明（篩選、排序、最後一欄）。
+import { computed, ref } from 'vue'
+
+const props = defineProps({
+  watchlist: { type: Boolean, default: false },
+})
+const shown = ref(!props.watchlist)
+const toggle = () => { if (props.watchlist) shown.value = !shown.value }
 
 const open = ref(['read', 'cols', 'state', 'decision', 'score', 'plan', 'check', 'fakey', 'kbar', 'filters'])
 
-const COLS = [
-  ['決策', '依「狀態＋分數＋紅字」給的結論，規則見下方「決策規則」。'],
+const COLS = computed(() => [
+  ['決策', '依「狀態＋分數＋紅字」給的結論，規則見下方「決策規則」。'
+    + (props.watchlist ? '「無訊號」＝最近幾根 K 棒沒有可評估的裸 K 訊號。' : '')],
   ['分數', '五層評分加總，滿分 100。'],
   ['股票', '代號、名稱、產業；點名稱進個股頁看 K 線。'],
   ['訊號', '「多方／空方・K 棒型態」，紅字＝多方、綠字＝空方。標籤是訊號狀態；後面是訊號 K 的日期和距今幾根（0 根前＝最新一根）；已觸發的會多一行觸發日。'],
@@ -18,8 +26,8 @@ const COLS = [
   ['成長過濾', '最近一季 EPS、月營收連續月增幾個月、季營收連續季增幾季、最近一季毛利率和連續季增幾季；「營收月」是最新營收資料的月份。只用來篩選，不算進分數。'],
   ['檢查結果', '紅字＝會擋下決策的問題；黃字＝提醒；綠字「可依觸發條件執行」＝沒有紅字。'],
   ['流動性', '近 20 日平均成交金額（元）。'],
-  ['追蹤', '加入自選股。'],
-]
+  props.watchlist ? ['操作', '✕ 把這檔移出本分類。'] : ['追蹤', '加入自選股。'],
+])
 
 const STATES = [
   ['等待突破', '訊號已經形成，還沒觸發、也還沒碰到停損，而且還在「N 根內觸發」的期限內。'],
@@ -105,21 +113,35 @@ const FILTERS = [
   ['指定個股分析', '只分析這一檔：不管母體、流動性、證券類別和基本面門檻；波段型態只標示、不過濾；裸 K 的觀察窗照舊。'],
   ['結論／狀態／多空', '這三個下拉和「最低分」只篩選目前的結果，不會重新掃描。點上方的統計卡也能依決策篩選。'],
 ]
+const WL_FILTERS = [
+  ['近 N 根訊號', '訊號 K 必須是最近 N 根之一（0 根前＝最新一根）。'],
+  ['N 根內觸發', '訊號形成後的有效期限，超過還沒觸發就是「訊號過期」。'],
+  ['多空', '只看多方或空方訊號。'],
+  ['統計標籤', '點一下只看那一種決策，再點一次取消。'],
+  ['空方訊號提醒', '只算決策不是「略過」的空方訊號；點「只看這些」列出那幾檔。'],
+  ['不套的條件', '跟「指定個股分析」一樣，不管母體、流動性、證券類別和基本面門檻；波段型態只標示、不過濾。'],
+]
+const filterRows = computed(() => (props.watchlist ? WL_FILTERS : FILTERS))
 </script>
 
 <template>
-  <el-card shadow="never" class="guide">
+  <el-card shadow="never" class="guide" :body-style="shown ? undefined : { display: 'none' }">
     <template #header>
-      <span class="guide-title">📖 欄位與規則說明</span>
-      <span class="guide-sub">型態＋裸K規則評分 v1・紅漲綠跌・價格都是還原價</span>
+      <div :class="{ toggle: watchlist }" @click="toggle">
+        <span class="guide-title">📖 欄位與規則說明</span>
+        <span class="guide-sub">型態＋裸K規則評分 v1・紅漲綠跌・價格都是還原價</span>
+        <span v-if="watchlist" class="guide-toggle">{{ shown ? '收起 ▴' : '點開 ▾' }}</span>
+      </div>
     </template>
     <el-collapse v-model="open" class="guide-collapse">
       <el-collapse-item name="read" title="怎麼讀這張表">
         <ul>
-          <li><b>先過濾，再評分。</b>上方的波段型態和成長條件只負責篩選；留下來的股票再掃描最近幾根 K 棒的裸 K 訊號，用結構、位置、K 棒、確認、風險五層打分數，最後給出決策。</li>
+          <li v-if="watchlist"><b>只看這個分類的股票。</b>跟「指定個股分析」一樣，不套母體、流動性、證券類別和基本面門檻；每檔掃描最近幾根 K 棒的裸 K 訊號，用結構、位置、K 棒、確認、風險五層打分數，最後給出決策。</li>
+          <li v-else><b>先過濾，再評分。</b>上方的波段型態和成長條件只負責篩選；留下來的股票再掃描最近幾根 K 棒的裸 K 訊號，用結構、位置、K 棒、確認、風險五層打分數，最後給出決策。</li>
           <li><b>裸 K 分數只看開高低收</b>（還原價），不看成交量、均線、基本面和籌碼。</li>
           <li><b>每檔只列一個訊號。</b>觀察窗內每根 K 棒偵測到的型態都會評分，挑決策最好的；決策一樣再比狀態（已觸發 → 等待突破 → 觸發後停損 → 失效／過期）、分數、日期較新。</li>
-          <li><b>排序：</b>決策 → 分數 → 均額。全市場最多列 300 檔，排在後面的（多半是略過）會被截掉，所以「略過」常常是 0。</li>
+          <li v-if="watchlist"><b>排序：</b>決策 → 分數 → 均額；最近幾根沒有訊號的排在最後、灰字（「無訊號」）。</li>
+          <li v-else><b>排序：</b>決策 → 分數 → 均額。全市場最多列 300 檔，排在後面的（多半是略過）會被截掉，所以「略過」常常是 0。</li>
           <li><b>分數只用來比較同一批候選</b>，不是買進指令，也不是報酬預測；下單前要看 K 線圖確認。</li>
           <li><b>價格都是還原價：</b>最新一根等於實際股價，除權息以前的舊價格會往下調。</li>
           <li><b>空方訊號（綠字）＝短線可能轉弱。</b>台股大多數人不放空，可以把它當成手上持股的減碼、停利提醒，或是「先別買」；要融券放空才照空方的交易計畫做。波段型態是多方、K 棒訊號卻是空方，代表突破後出現賣壓，先等等看。</li>
@@ -273,7 +295,7 @@ const FILTERS = [
 
       <el-collapse-item name="filters" title="上方篩選條件">
         <dl class="defs">
-          <template v-for="[k, v] in FILTERS" :key="k"><dt>{{ k }}</dt><dd>{{ v }}</dd></template>
+          <template v-for="[k, v] in filterRows" :key="k"><dt>{{ k }}</dt><dd>{{ v }}</dd></template>
         </dl>
       </el-collapse-item>
     </el-collapse>
@@ -284,6 +306,8 @@ const FILTERS = [
 .guide { margin-top: 14px; }
 .guide-title { font-size: 26px; font-weight: 700; color: #303133; }
 .guide-sub { margin-left: 12px; font-size: 18px; color: #909399; }
+.toggle { cursor: pointer; }
+.guide-toggle { float: right; font-size: 20px; color: #409eff; }
 .guide-collapse {
   --el-collapse-header-height: 60px;
   --el-collapse-header-font-size: 24px;

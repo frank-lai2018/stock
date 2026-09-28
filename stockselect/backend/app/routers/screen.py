@@ -44,6 +44,16 @@ def _attach_recent_eps(rows, n=4):
     for r in rows:
         r["eps_recent"] = by.get(r["stock_id"], [])
 
+
+def _split_ids(text, cap=500):
+    """逗號分隔的股票代號 → 去空白、轉大寫、去重（保留順序）；自選股一次分析多檔用。"""
+    out = []
+    for x in (text or "").split(","):
+        x = x.strip().upper()
+        if x and x not in out:
+            out.append(x)
+    return out[:cap]
+
 router = APIRouter(prefix="/api", tags=["screen"])
 
 # 預設策略（一鍵套用的條件組合）
@@ -295,7 +305,7 @@ def breakout_patterns(group: str = "bottom"):
 def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 100,
                      security_type: str = "", min_amt: int = 20000000,
                      mode: str = "breakout", near_band: float = 0.05, recent: int = 3,
-                     stock_id: str = ""):
+                     stock_id: str = "", stock_ids: str = ""):
     """全市場掃描型態（Python 波段偵測，非 MV 篩選）。
 
     group：bottom（底部反轉）/ top（頭部反轉）/ continuation（連續整理）/
@@ -304,6 +314,8 @@ def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 1
     mode：breakout＝已確認突破（收盤穿頸線帶量）；near＝接近突破（收盤在頸線 near_band 內、尚未穿越）。
     recent：突破觀察窗（幾個交易日內發生的突破才收錄，預設 3；近2週≈10、近1月≈20）。
     候選限 in_universe 且 20 日均額 ≥ min_amt（濾掉不流動小型股，控制掃描量）。
+    stock_id＝指定個股分析；stock_ids＝逗號分隔的多檔（自選股用）。兩者都不套母體、流動性與證券類別；
+    只有 stock_id 找不到時回 404。
     """
     rec = max(1, min(int(recent), 25))
     if pattern in ("", "all"):
@@ -314,8 +326,9 @@ def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 1
         raise HTTPException(400, f"未知型態：{pattern}")
 
     sid = stock_id.strip().upper()
-    if sid:
-        cond, params = ["stock_id = %(sid)s"], {"sid": sid}
+    picked = [sid] if sid else _split_ids(stock_ids)
+    if picked:
+        cond, params = ["stock_id = ANY(%(sids)s)"], {"sids": picked}
     else:
         cond = ["in_universe = true", "amt20 >= %(amt)s"]
         params = {"amt": min_amt}
@@ -392,11 +405,12 @@ def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 1
 
 @router.get("/screen/breakout-ranking")
 def breakout_ranking(security_type: str = "stock", min_amt: int = 20000000,
-                     recent: int = 3, limit: int = 200, stock_id: str = ""):
-    """多方突破決策排行：底部反轉＋整理突破，附可解釋的五面向分數與風險檢查。"""
+                     recent: int = 3, limit: int = 200, stock_id: str = "", stock_ids: str = ""):
+    """多方突破決策排行：底部反轉＋整理突破，附可解釋的五面向分數與風險檢查。
+    stock_ids＝逗號分隔的多檔（自選股用），同指定個股分析不套母體、流動性與證券類別。"""
     scan = pattern_breakout(pattern="all", group="bull", limit=500,
                             security_type=security_type, min_amt=max(0, int(min_amt)),
-                            mode="breakout", recent=recent, stock_id=stock_id)
+                            mode="breakout", recent=recent, stock_id=stock_id, stock_ids=stock_ids)
     bt_rows = db.query(
         "SELECT pattern,n,win_rate,avg_ret,median_ret,avg_excess "
         "FROM pattern_backtest WHERE horizon=20") \

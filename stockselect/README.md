@@ -107,14 +107,15 @@ stockselect/
 |--------|------|------|-----------|
 | GET | `/api/strategies` | 預設策略清單（動能/價值/高息/籌碼）| — |
 | POST | `/api/screen` | 依條件篩選 + 排名，回傳股票清單 | `mv_stock_snapshot` |
-| GET | `/api/screen/breakout-ranking` | 多方突破二次評分與風險檢查 | `mv_stock_snapshot`, `price_daily`, `pattern_backtest` |
-| GET | `/api/screen/price-action` | 型態＋裸 K 決策（含 EPS、月季營收、毛利率連增過濾） | `mv_stock_snapshot`, `price_daily`, `monthly_revenue`, `fundamentals_quarterly` |
+| GET | `/api/screen/breakout-ranking` | 多方突破二次評分與風險檢查（`stock_id` 指定個股、`stock_ids` 逗號分隔多檔） | `mv_stock_snapshot`, `price_daily`, `pattern_backtest` |
+| GET | `/api/screen/price-action` | 型態＋裸 K 決策（含 EPS、月季營收、毛利率連增過濾；`stock_id`／`stock_ids` 同上） | `mv_stock_snapshot`, `price_daily`, `monthly_revenue`, `fundamentals_quarterly` |
 | GET | `/api/stock/{id}` | 個股最新特徵快照 | `mv_stock_snapshot`, `stock` |
 | GET | `/api/stock/{id}/prices?from&to&adj=1` | K 線 OHLC（還原）| `price_daily` |
 | GET | `/api/stock/{id}/chips?days=60` | 法人/融資/大戶時序 | `inst_trades`,`margin_trading`,`shareholding_dist` |
 | GET | `/api/stock/{id}/fundamentals` | 營收/EPS/財務比率 | `monthly_revenue`,`fundamentals_quarterly` |
 | GET | `/api/stock/{id}/news?days=30` | 個股新聞 | `news` |
 | GET/POST/DELETE | `/api/watchlist` | 自選股（存後端小表或前端 localStorage）| — |
+| GET | `/api/watchlist/{cid}/price-action`、`/api/watchlist/{cid}/breakout` | 自選股分類的裸 K／突破決策檢視：同「指定個股分析」不套母體、流動性與基本面門檻，沒有訊號的也列（`decision=null`） | 同上兩支＋`watchlist_item` |
 
 **`POST /api/screen` 範例**
 ```jsonc

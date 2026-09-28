@@ -2,12 +2,20 @@
 // 突破決策頁最下方的欄位與規則說明。
 // 內容照 backend/app/breakout_rank.py（五面向配分、硬條件、結論）、swings.py（型態偵測）和
 // backtest_patterns.py（型態回測）寫；那幾支的門檻或配分改了，這裡要跟著改。字級沿用各頁「欄位說明」的 24px。
-import { ref } from 'vue'
+// watchlist：自選股的「突破決策」檢視用，預設收起，並換掉只適用決策頁的說明（篩選、排序、最後一欄）。
+import { computed, ref } from 'vue'
+
+const props = defineProps({
+  watchlist: { type: Boolean, default: false },
+})
+const shown = ref(!props.watchlist)
+const toggle = () => { if (props.watchlist) shown.value = !shown.value }
 
 const open = ref(['read', 'cols', 'decision', 'score', 'plan', 'check', 'patterns', 'filters'])
 
-const COLS = [
-  ['結論', '依「總分＋硬條件」給的結論，規則見下方「結論規則」。'],
+const COLS = computed(() => [
+  ['結論', '依「總分＋硬條件」給的結論，規則見下方「結論規則」。'
+    + (props.watchlist ? '「無突破」＝最近幾天沒有已確認的多方型態突破，基本面欄照常顯示。' : '')],
   ['總分', '五面向加總，滿分 100。'],
   ['股票', '代號、名稱、產業；點名稱進個股頁看 K 線。'],
   ['型態', '命中的多方波段型態，定義見下方「型態」。'],
@@ -24,8 +32,8 @@ const COLS = [
   ['PER 位階', '目前本益比在這檔股票近 3 年的百分位：0%＝最便宜、100%＝最貴。'],
   ['均額', '近 20 日平均成交金額（元）。'],
   ['檢查結果', '紅字＝沒通過的硬條件；黃字＝提醒；綠字「硬條件全數通過」＝沒有紅字。'],
-  ['追蹤', '加入自選股。'],
-]
+  props.watchlist ? ['操作', '✕ 把這檔移出本分類。'] : ['追蹤', '加入自選股。'],
+])
 
 const DECISIONS = [
   ['優先評估', 'success', '總分 ≥ 75，而且硬條件全部通過'],
@@ -78,20 +86,31 @@ const FILTERS = [
   ['全部結論／最低分', '只篩選目前的結果，不會重新掃描。點上方的統計卡也能依結論篩選。'],
   ['指定個股分析', '只分析這一檔，不管證券類別、流動性和母體限制。'],
 ]
+const WL_FILTERS = [
+  ['近 3 日／2 週／1 月', '突破要發生在最近 3／10／20 個交易日內；自選股預設近 1 月（決策頁預設近 3 日）。'],
+  ['統計標籤', '點一下只看那一種結論，再點一次取消。'],
+  ['不套的條件', '跟「指定個股分析」一樣，不管證券類別、流動性和母體限制。'],
+]
+const filterRows = computed(() => (props.watchlist ? WL_FILTERS : FILTERS))
 </script>
 
 <template>
-  <el-card shadow="never" class="guide">
+  <el-card shadow="never" class="guide" :body-style="shown ? undefined : { display: 'none' }">
     <template #header>
-      <span class="guide-title">📖 欄位與規則說明</span>
-      <span class="guide-sub">規則評分 v1・紅漲綠跌・價格都是還原價</span>
+      <div :class="{ toggle: watchlist }" @click="toggle">
+        <span class="guide-title">📖 欄位與規則說明</span>
+        <span class="guide-sub">規則評分 v1・紅漲綠跌・價格都是還原價</span>
+        <span v-if="watchlist" class="guide-toggle">{{ shown ? '收起 ▴' : '點開 ▾' }}</span>
+      </div>
     </template>
     <el-collapse v-model="open" class="guide-collapse">
       <el-collapse-item name="read" title="怎麼讀這張表">
         <ul>
-          <li><b>先找型態，再排序。</b>掃描最近幾天「收盤帶量突破頸線」的多方型態（底部反轉和整理突破），再用趨勢、突破品質、盈餘、估值籌碼、風險五個面向打分數；另外用硬條件擋掉追高、停損太遠、報酬風險比不夠的標的。</li>
+          <li v-if="watchlist"><b>只看這個分類的股票。</b>跟「指定個股分析」一樣，不管證券類別、流動性和母體限制；掃描最近幾天「收盤帶量突破頸線」的多方型態，再用五個面向打分數，另外用硬條件擋掉追高、停損太遠、報酬風險比不夠的標的。</li>
+          <li v-else><b>先找型態，再排序。</b>掃描最近幾天「收盤帶量突破頸線」的多方型態（底部反轉和整理突破），再用趨勢、突破品質、盈餘、估值籌碼、風險五個面向打分數；另外用硬條件擋掉追高、停損太遠、報酬風險比不夠的標的。</li>
           <li><b>每檔只列一個型態：</b>照固定順序找，第一個命中的就用（順序就是下方「型態」表的順序）。</li>
-          <li><b>排序：</b>結論 → 總分 → RS。</li>
+          <li v-if="watchlist"><b>排序：</b>結論 → 總分 → RS；最近幾天沒有突破的排在最後、灰字（「無突破」）。</li>
+          <li v-else><b>排序：</b>結論 → 總分 → RS。</li>
           <li><b>型態是程式自動找的，一定有假訊號。</b>分數只用來比較同一批候選，不是買進指令，也不是報酬預測；下單前要看 K 線圖確認結構、隔天跳空和自己的產業持股。</li>
           <li><b>價格都是還原價：</b>最新一根等於實際股價，除權息以前的舊價格會往下調。</li>
         </ul>
@@ -186,7 +205,7 @@ const FILTERS = [
 
       <el-collapse-item name="filters" title="上方篩選條件">
         <dl class="defs">
-          <template v-for="[k, v] in FILTERS" :key="k"><dt>{{ k }}</dt><dd>{{ v }}</dd></template>
+          <template v-for="[k, v] in filterRows" :key="k"><dt>{{ k }}</dt><dd>{{ v }}</dd></template>
         </dl>
       </el-collapse-item>
     </el-collapse>
@@ -197,6 +216,8 @@ const FILTERS = [
 .guide { margin-top: 14px; }
 .guide-title { font-size: 26px; font-weight: 700; color: #303133; }
 .guide-sub { margin-left: 12px; font-size: 18px; color: #909399; }
+.toggle { cursor: pointer; }
+.guide-toggle { float: right; font-size: 20px; color: #409eff; }
 .guide-collapse {
   --el-collapse-header-height: 60px;
   --el-collapse-header-font-size: 24px;

@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getBreakoutRanking } from '../api'
-import WatchlistAddButton from '../components/WatchlistAddButton.vue'
+import BreakoutDecisionTable, { STATUS } from '../components/BreakoutDecisionTable.vue'
 import BreakoutDecisionGuide from '../components/BreakoutDecisionGuide.vue'
 
 const loading = ref(false)
@@ -18,12 +18,6 @@ const recent = ref(3)
 const minAmt = ref(20000000)
 const minScore = ref(0)
 const status = ref('')
-
-const STATUS = {
-  priority: { label: '優先評估', type: 'success' },
-  watch: { label: '等待／觀察', type: 'warning' },
-  skip: { label: '略過', type: 'info' },
-}
 
 const shown = computed(() => items.value.filter((r) => {
   const d = r.decision || {}
@@ -80,11 +74,6 @@ async function clearStockAnalysis() {
 }
 
 onMounted(load)
-
-const pct = (v) => v == null ? '—' : `${Number(v).toFixed(1)}%`
-const num = (v, n = 1) => v == null ? '—' : Number(v).toFixed(n)
-const money = (v) => v == null ? '—' : Number(v).toLocaleString('zh-TW', { maximumFractionDigits: 0 })
-const statusOf = (row) => STATUS[row.decision?.status] || STATUS.skip
 </script>
 
 <template>
@@ -153,80 +142,8 @@ const statusOf = (row) => STATUS[row.decision?.status] || STATUS.skip
       參考停損統一用「頸線下 1 ATR」以便比較；實際下單前仍應看圖確認結構、隔日跳空與產業持倉。
     </el-alert>
 
-    <el-table :data="shown" v-loading="loading" stripe border height="calc(100vh - 375px)" row-key="stock_id">
-      <el-table-column type="index" label="#" width="48" fixed />
-      <el-table-column label="結論" width="105" fixed>
-        <template #default="{ row }">
-          <el-tag :type="statusOf(row).type" effect="dark">{{ statusOf(row).label }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="總分" width="92" sortable :sort-method="(a, b) => a.decision.score - b.decision.score" fixed>
-        <template #default="{ row }"><span class="score">{{ row.decision.score }}</span></template>
-      </el-table-column>
-      <el-table-column label="股票" width="145" fixed>
-        <template #default="{ row }">
-          <router-link :to="`/stock/${row.stock_id}`" class="stock-link">{{ row.stock_id }} {{ row.name }}</router-link>
-          <div class="muted small">{{ row.industry || '—' }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column prop="pattern_name" label="型態" min-width="120" />
-      <el-table-column label="五面向" min-width="255">
-        <template #default="{ row }">
-          <div class="parts">
-            <span>趨 {{ row.decision.parts.trend }}/30</span>
-            <span>破 {{ row.decision.parts.breakout }}/25</span>
-            <span>盈 {{ row.decision.parts.fundamental }}/20</span>
-            <span>籌 {{ row.decision.parts.quality }}/10</span>
-            <span>險 {{ row.decision.parts.risk }}/15</span>
-          </div>
-        </template>
-      </el-table-column>
-      <el-table-column label="突破品質" width="145">
-        <template #default="{ row }">
-          <div>量比 <b>{{ num(row.breakout?.vol_ratio, 2) }}</b></div>
-          <div>離頸線 <b :class="{ danger: row.decision.extension_pct > 5 }">{{ pct(row.decision.extension_pct) }}</b></div>
-          <div>RS <b>{{ row.rs_rating ?? '—' }}</b></div>
-        </template>
-      </el-table-column>
-      <el-table-column label="風險計畫" width="170">
-        <template #default="{ row }">
-          <div>參考進場 {{ num(row.decision.entry, 2) }}</div>
-          <div>停損 {{ num(row.decision.stop, 2) }}（{{ pct(row.decision.risk_pct) }}）</div>
-          <div>目標 {{ num(row.decision.target, 2) }}・R/R <b>{{ num(row.decision.rr, 2) }}</b></div>
-        </template>
-      </el-table-column>
-      <el-table-column label="型態20日回測" width="150">
-        <template #default="{ row }">
-          <template v-if="row.decision.backtest_20d">
-            <div>超額 {{ pct(row.decision.backtest_20d.avg_excess) }}</div>
-            <div>勝率 {{ pct(row.decision.backtest_20d.win_rate) }}</div>
-            <div class="muted">n={{ row.decision.backtest_20d.n }}</div>
-          </template>
-          <span v-else>—</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="基本面／籌碼" width="175">
-        <template #default="{ row }">
-          <div>EPS YoY {{ pct(row.eps_yoy) }}</div>
-          <div>營收 YoY {{ pct(row.rev_yoy) }}</div>
-          <div>PER 位階 {{ pct(row.per_pctile) }}</div>
-          <div class="muted">均額 {{ money(row.amt20) }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column label="檢查結果" min-width="250">
-        <template #default="{ row }">
-          <div v-if="!row.decision.blockers.length" class="pass">硬條件全數通過</div>
-          <div v-for="x in row.decision.blockers" :key="x" class="blocker">• {{ x }}</div>
-          <div v-for="x in row.decision.notes" :key="x" class="note">• {{ x }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column label="追蹤" width="82" fixed="right">
-        <template #default="{ row }"><WatchlistAddButton :row="row" /></template>
-      </el-table-column>
-      <template #empty>
-        <el-empty :description="analysisError || (analysisStockId ? `${analysisStockId} 近 ${recent} 日沒有已確認的多方型態突破` : '目前條件沒有突破候選')" />
-      </template>
-    </el-table>
+    <BreakoutDecisionTable :items="shown" :loading="loading" height="calc(100vh - 375px)"
+                           :empty-text="analysisError || (analysisStockId ? `${analysisStockId} 近 ${recent} 日沒有已確認的多方型態突破` : '目前條件沒有突破候選')" />
     <div class="method">{{ method }}｜目前顯示 {{ shown.length }} 檔</div>
     <BreakoutDecisionGuide />
   </div>
@@ -238,7 +155,6 @@ const statusOf = (row) => STATUS[row.decision?.status] || STATUS.skip
 .toolbar-row { display: flex; justify-content: space-between; gap: 18px; align-items: center; flex-wrap: wrap; }
 h2 { margin: 0 0 4px; font-size: 22px; }
 .subtitle, .muted { color: #909399; }
-.small { font-size: 12px; margin-top: 3px; }
 .filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .stock-analyzer { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid #ebeef5; }
 .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 10px; margin-bottom: 10px; }
@@ -250,13 +166,6 @@ h2 { margin: 0 0 4px; font-size: 22px; }
 .summary.skip { border-left: 4px solid #909399; }
 .summary.meta { border-left: 4px solid #409eff; cursor: default; }
 .notice { margin-bottom: 10px; }
-.score { font-size: 22px; font-weight: 750; color: #303133; }
-.stock-link { color: #337ecc; font-weight: 650; text-decoration: none; }
-.parts { display: flex; gap: 4px; flex-wrap: wrap; }
-.parts span { background: #f2f6fc; border-radius: 4px; padding: 2px 5px; font-size: 12px; }
-.danger, .blocker { color: #f56c6c; }
-.pass { color: #529b2e; font-weight: 600; }
-.note { color: #a77700; }
 .method { color: #909399; font-size: 12px; margin-top: 7px; text-align: right; }
 @media (max-width: 900px) { .summary-grid { grid-template-columns: repeat(2, 1fr); } }
 </style>

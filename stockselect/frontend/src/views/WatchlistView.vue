@@ -1,14 +1,20 @@
 <script setup>
 // 自選股：自建分類（el-tabs 可增刪），每個分類的表格與「型態突破」同構。
 // 來源：其他頁★加入，或此頁手動搜尋加入。價格/RS/近3月為即時，型態為加入當下快照。
-import { ref, computed, onMounted } from 'vue'
+// 分類頁籤下有「檢視」切換：清單（原本的表格，完全不動）／裸K決策／突破決策（規則同兩個決策頁的「指定個股分析」）。
+import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as XLSX from 'xlsx'
 import {
   getWatchCategories, addWatchCategory, deleteWatchCategory,
   getWatchItems, addWatchItem, deleteWatchItem, searchStocks,
+  getWatchPriceAction, getWatchBreakout,
 } from '../api'
 import PatternResultTable from '../components/PatternResultTable.vue'
+import PriceActionTable, { CONCLUSIONS } from '../components/PriceActionTable.vue'
+import BreakoutDecisionTable, { STATUS } from '../components/BreakoutDecisionTable.vue'
+import PriceActionGuide from '../components/PriceActionGuide.vue'
+import BreakoutDecisionGuide from '../components/BreakoutDecisionGuide.vue'
 
 const cats = ref([])
 const active = ref(null)          // 目前分類 id（字串化，配合 el-tabs name）
@@ -43,6 +49,96 @@ const filtering = computed(() => !!Number(rsMin.value) || (epsMin.value !== '' &
 const options = ref([])
 const picked = ref(null)
 const searching = ref(false)
+
+// ---- 決策檢視：切過去才算，結果依「分類＋參數」快取；清單檢視不受影響 ----
+const view = ref('list')                   // list＝原本的清單；pa＝裸K決策；bk＝突破決策
+const paLookback = ref(5)
+const paExpiry = ref(5)
+const paDir = ref('')                      // '' | bull | bear
+const paPick = ref('')                     // 點統計標籤：priority / waiting / watch / skip / none
+const paBearOnly = ref(false)              // 只看「空方訊號提醒」那幾檔
+const pa = ref({ key: '', pending: '', items: [], asOf: '', loading: false })
+const bkRecent = ref(20)                   // 自選股很少剛好在近 3 日突破，預設近 1 月（決策頁是近 3 日）
+const bkPick = ref('')                     // priority / watch / skip / none
+const bk = ref({ key: '', pending: '', items: [], asOf: '', loading: false })
+
+const PA_TAGS = { ...CONCLUSIONS, none: { label: '無訊號', type: 'info' } }
+const BK_TAGS = { ...STATUS, none: { label: '無突破', type: 'info' } }
+const paKey = () => `${active.value}|${paLookback.value}|${paExpiry.value}`
+const bkKey = () => `${active.value}|${bkRecent.value}`
+
+// 同一組參數已載入或正在載入就不重打；回應回來時參數已變（換分類／改參數）就丟掉
+async function loadDecision(state, key, fetcher, label) {
+  if (!active.value || state.value.key === key || state.value.pending === key) return
+  state.value = { ...state.value, pending: key, loading: true }
+  try {
+    const res = await fetcher()
+    if (state.value.pending !== key) return
+    state.value = { key, pending: '', items: res.items || [], asOf: res.as_of || '', loading: false }
+  } catch (e) {
+    if (state.value.pending !== key) return
+    state.value = { key: '', pending: '', items: [], asOf: '', loading: false }
+    ElMessage.error(`${label}載入失敗：` + (e?.response?.data?.detail || e.message))
+  }
+}
+function loadPa(force = false) {
+  if (force) pa.value = { ...pa.value, key: '', pending: '' }
+  return loadDecision(pa, paKey(), () => getWatchPriceAction(active.value,
+    { lookback: paLookback.value, expiry: paExpiry.value }), '裸 K 決策')
+}
+function loadBk(force = false) {
+  if (force) bk.value = { ...bk.value, key: '', pending: '' }
+  return loadDecision(bk, bkKey(), () => getWatchBreakout(active.value, { recent: bkRecent.value }), '突破決策')
+}
+function loadView() {
+  if (view.value === 'pa') loadPa()
+  else if (view.value === 'bk') loadBk()
+}
+watch([view, active], loadView)            // 切檢視、換分類（含新增／刪除分類）
+watch([paLookback, paExpiry], () => loadPa())
+watch(bkRecent, () => loadBk())
+
+// 空方訊號提醒：只算決策不是「略過」的（持有者的減碼／停利提醒）
+const isBearAlert = (r) => r.decision?.direction === 'bear' && r.decision.conclusion !== 'skip'
+const paRows = computed(() => pa.value.items.filter((r) => {
+  const d = r.decision
+  if (paBearOnly.value && !isBearAlert(r)) return false
+  if (paPick.value === 'none') return !d
+  if (paPick.value && d?.conclusion !== paPick.value) return false
+  if (paDir.value && d?.direction !== paDir.value) return false
+  return true
+}))
+const paCount = computed(() => {
+  const c = Object.fromEntries(Object.keys(PA_TAGS).map((k) => [k, 0]))
+  for (const r of pa.value.items) c[r.decision ? r.decision.conclusion : 'none'] += 1
+  return c
+})
+const paBear = computed(() => {
+  const rows = pa.value.items.filter(isBearAlert)
+  return { n: rows.length, waiting: rows.filter((r) => r.decision.status === 'waiting').length }
+})
+const bkRows = computed(() => bk.value.items.filter((r) => (
+  !bkPick.value || (bkPick.value === 'none' ? !r.decision : r.decision?.status === bkPick.value))))
+const bkCount = computed(() => {
+  const c = Object.fromEntries(Object.keys(BK_TAGS).map((k) => [k, 0]))
+  for (const r of bk.value.items) c[r.decision ? r.decision.status : 'none'] += 1
+  return c
+})
+
+function dropFromViews(wid) {               // 清單與兩個決策檢視一起拿掉，不必重算
+  items.value = items.value.filter((r) => r.watchlist_id !== wid)
+  pa.value = { ...pa.value, items: pa.value.items.filter((r) => r.watchlist_id !== wid) }
+  bk.value = { ...bk.value, items: bk.value.items.filter((r) => r.watchlist_id !== wid) }
+}
+async function removeDecisionRow(row) {
+  try {
+    await deleteWatchItem(row.watchlist_id)
+    dropFromViews(row.watchlist_id)
+    loadCats()
+  } catch (e) {
+    ElMessage.error('移除失敗')
+  }
+}
 
 async function loadCats() {
   cats.value = await getWatchCategories()
@@ -114,6 +210,8 @@ async function addPicked() {
     ElMessage.success('已加入')
     picked.value = null
     options.value = []
+    pa.value = { ...pa.value, key: '' }
+    bk.value = { ...bk.value, key: '' }
     await loadItems()
     loadCats()
   } catch (e) {
@@ -123,7 +221,7 @@ async function addPicked() {
 async function removeItem(row) {
   try {
     await deleteWatchItem(row.watchlist_id)
-    items.value = items.value.filter((r) => r.watchlist_id !== row.watchlist_id)
+    dropFromViews(row.watchlist_id)
     loadCats()
   } catch (e) {
     ElMessage.error('移除失敗')
@@ -210,6 +308,16 @@ function downloadXlsx() {
     </el-empty>
 
     <div v-if="cats.length">
+      <div class="view-bar">
+        <el-radio-group v-model="view">
+          <el-radio-button value="list">清單</el-radio-button>
+          <el-radio-button value="pa">裸K決策</el-radio-button>
+          <el-radio-button value="bk">突破決策</el-radio-button>
+        </el-radio-group>
+        <span v-if="view !== 'list'" class="view-hint">規則同決策頁的「指定個股分析」：只看本分類，不套母體、流動性、證券類別和基本面門檻</span>
+      </div>
+
+      <div v-show="view === 'list'">
       <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 8px 0">
         <el-select v-model="picked" filterable remote :remote-method="remoteSearch" :loading="searching"
                    placeholder="搜尋代碼/名稱手動加入" style="width: 260px" clearable>
@@ -256,11 +364,79 @@ function downloadXlsx() {
           <el-button size="small" text bg circle title="移出自選" @click.stop="removeItem(row)">✕</el-button>
         </template>
       </PatternResultTable>
+      </div>
+
+      <div v-if="view === 'pa'">
+        <div class="dec-bar">
+          <el-select v-model="paLookback" size="small" style="width: 125px">
+            <el-option label="近 3 根訊號" :value="3" />
+            <el-option label="近 5 根訊號" :value="5" />
+            <el-option label="近 10 根訊號" :value="10" />
+          </el-select>
+          <el-select v-model="paExpiry" size="small" style="width: 125px">
+            <el-option label="3 根內觸發" :value="3" />
+            <el-option label="5 根內觸發" :value="5" />
+            <el-option label="10 根內觸發" :value="10" />
+          </el-select>
+          <el-select v-model="paDir" size="small" clearable placeholder="多空皆看" style="width: 110px">
+            <el-option label="多方" value="bull" />
+            <el-option label="空方" value="bear" />
+          </el-select>
+          <el-button size="small" :loading="pa.loading" @click="loadPa(true)">重新計算</el-button>
+          <el-tag v-for="(t, k) in PA_TAGS" :key="k" :type="t.type" :effect="paPick === k ? 'dark' : 'plain'"
+                  class="pick" @click="paPick = paPick === k ? '' : k">{{ t.label }} {{ paCount[k] }}</el-tag>
+          <el-tag v-if="pa.asOf">資料日 {{ pa.asOf }}</el-tag>
+          <el-tag type="danger" effect="dark">{{ paRows.length }} 檔<span v-if="paRows.length !== pa.items.length"> / 共 {{ pa.items.length }}</span></el-tag>
+        </div>
+        <el-alert v-if="paBear.n" type="warning" :closable="false" show-icon class="bear-alert">
+          <template #title>
+            {{ paBear.n }} 檔出現空方訊號（已觸發 {{ paBear.n - paBear.waiting }}、等待跌破 {{ paBear.waiting }}）
+            <el-button size="small" :type="paBearOnly ? 'warning' : ''" class="bear-btn" @click="paBearOnly = !paBearOnly">
+              {{ paBearOnly ? '顯示全部' : '只看這些' }}
+            </el-button>
+          </template>
+          只算決策不是「略過」的；持有的話可以當減碼、停利的提醒，還沒買的先別進場。
+        </el-alert>
+        <PriceActionTable :items="paRows" :loading="pa.loading" empty-text="沒有符合條件的股票"
+                          no-chart-text="近 10 日沒有" action-label="操作">
+          <template #action="{ row }">
+            <el-button size="small" text bg circle title="移出自選" @click.stop="removeDecisionRow(row)">✕</el-button>
+          </template>
+        </PriceActionTable>
+        <PriceActionGuide watchlist />
+      </div>
+
+      <div v-if="view === 'bk'">
+        <div class="dec-bar">
+          <el-select v-model="bkRecent" size="small" style="width: 112px">
+            <el-option label="近 3 日" :value="3" />
+            <el-option label="近 2 週" :value="10" />
+            <el-option label="近 1 月" :value="20" />
+          </el-select>
+          <el-button size="small" :loading="bk.loading" @click="loadBk(true)">重新計算</el-button>
+          <el-tag v-for="(t, k) in BK_TAGS" :key="k" :type="t.type" :effect="bkPick === k ? 'dark' : 'plain'"
+                  class="pick" @click="bkPick = bkPick === k ? '' : k">{{ t.label }} {{ bkCount[k] }}</el-tag>
+          <el-tag v-if="bk.asOf">資料日 {{ bk.asOf }}</el-tag>
+          <el-tag type="danger" effect="dark">{{ bkRows.length }} 檔<span v-if="bkRows.length !== bk.items.length"> / 共 {{ bk.items.length }}</span></el-tag>
+        </div>
+        <BreakoutDecisionTable :items="bkRows" :loading="bk.loading" empty-text="沒有符合條件的股票" action-label="操作">
+          <template #action="{ row }">
+            <el-button size="small" text bg circle title="移出自選" @click.stop="removeDecisionRow(row)">✕</el-button>
+          </template>
+        </BreakoutDecisionTable>
+        <BreakoutDecisionGuide watchlist />
+      </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.view-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 8px 0 4px; }
+.view-hint { color: #909399; font-size: 12px; }
+.dec-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.bear-alert { margin-bottom: 8px; }
+.bear-btn { margin-left: 8px; }
+.pick { cursor: pointer; }
 .legend-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(560px, 1fr));

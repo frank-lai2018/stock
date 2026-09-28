@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException
 
 from .. import db, patterns, price_action, swings
-from .screen import _attach_recent_eps
+from .screen import _attach_recent_eps, _split_ids
 
 router = APIRouter(prefix="/api", tags=["patterns"])
 
@@ -96,11 +96,14 @@ def screen_price_action(security_type: str = "stock", min_amt: int = 20000000,
                         chart_pattern: str = "", pattern_recent: int = 10,
                         eps_min: float = None, revenue_month_streak: int = 0,
                         revenue_quarter_streak: int = 0, gross_margin_quarter_streak: int = 0,
-                        stock_id: str = ""):
-    """型態＋裸 K 決策；基本面只做過濾，不混入裸 K 分數。"""
+                        stock_id: str = "", stock_ids: str = ""):
+    """型態＋裸 K 決策；基本面只做過濾，不混入裸 K 分數。
+    stock_id＝指定個股分析；stock_ids＝逗號分隔的多檔（自選股用）。兩者都不套母體、流動性、
+    證券類別與基本面門檻，波段型態只標示、不過濾；只有 stock_id 找不到時回 404。"""
     sid = stock_id.strip().upper()
-    if sid:
-        cond, params = ["stock_id = %(sid)s"], {"sid": sid}
+    picked = [sid] if sid else _split_ids(stock_ids)
+    if picked:
+        cond, params = ["stock_id = ANY(%(sids)s)"], {"sids": picked}
     else:
         cond = ["in_universe", "amt20 >= %(amt)s"]
         params = {"amt": max(0, int(min_amt))}
@@ -117,14 +120,14 @@ def screen_price_action(security_type: str = "stock", min_amt: int = 20000000,
             raise HTTPException(404, f"找不到股票代號：{sid}")
         return {"count": 0, "as_of": None, "summary": {}, "items": []}
     trends = _fundamental_trends(list(snap))
-    month_n = 0 if sid else max(0, min(int(revenue_month_streak), 6))
-    quarter_n = 0 if sid else max(0, min(int(revenue_quarter_streak), 4))
-    margin_n = 0 if sid else max(0, min(int(gross_margin_quarter_streak), 4))
-    snap = {sid: {**dict(row), "fundamental_trend": trends.get(sid, {})}
-            for sid, row in snap.items()
-            if trends.get(sid, {}).get("revenue_month_streak", 0) >= month_n
-            and trends.get(sid, {}).get("revenue_quarter_streak", 0) >= quarter_n
-            and trends.get(sid, {}).get("gross_margin_quarter_streak", 0) >= margin_n}
+    month_n = 0 if picked else max(0, min(int(revenue_month_streak), 6))
+    quarter_n = 0 if picked else max(0, min(int(revenue_quarter_streak), 4))
+    margin_n = 0 if picked else max(0, min(int(gross_margin_quarter_streak), 4))
+    snap = {code: {**dict(row), "fundamental_trend": trends.get(code, {})}
+            for code, row in snap.items()
+            if trends.get(code, {}).get("revenue_month_streak", 0) >= month_n
+            and trends.get(code, {}).get("revenue_quarter_streak", 0) >= quarter_n
+            and trends.get(code, {}).get("gross_margin_quarter_streak", 0) >= margin_n}
     if not snap:
         return {"count": 0, "as_of": None, "summary": {}, "items": []}
     rows = db.query(
@@ -139,13 +142,13 @@ def screen_price_action(security_type: str = "stock", min_amt: int = 20000000,
         grouped.setdefault(row["stock_id"], []).append(row)
     out = []
     pat_recent = max(1, min(int(pattern_recent), 25))
-    for sid, bars in grouped.items():
-        chart = _chart_pattern(bars, "any" if stock_id.strip() else chart_pattern, pat_recent)
-        if chart_pattern and not stock_id.strip() and not chart:
+    for code, bars in grouped.items():
+        chart = _chart_pattern(bars, "any" if picked else chart_pattern, pat_recent)
+        if chart_pattern and not picked and not chart:
             continue
         decision = price_action.analyze(bars, max(1, min(int(lookback), 10)), max(1, min(int(expiry), 10)))
         if decision:
-            row = {**dict(snap[sid]), "decision": decision}
+            row = {**dict(snap[code]), "decision": decision}
             if chart:
                 row.update({"chart_pattern": chart["key"], "chart_pattern_name": chart["name"],
                             "chart_breakout": chart["breakout"]})

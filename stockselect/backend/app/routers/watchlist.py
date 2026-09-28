@@ -3,6 +3,7 @@
 分類（watchlist_category）彼此獨立；成員（watchlist_item）記錄加入當下的型態快照
 （snapshot：breakout/pattern），檢視時再抓即時的 mv_stock_snapshot（股價/RS/近3月/產業）
 合併，讓每個分類的表格與「型態突破」搜尋結果同構。
+另有裸 K 決策、突破決策兩個檢視（/{cid}/price-action、/{cid}/breakout），規則同兩個決策頁的「指定個股分析」。
 """
 import bisect
 import json
@@ -12,7 +13,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from .. import db, target_track
-from .screen import _attach_last_pattern, _attach_recent_eps
+from .patterns import _fundamental_trends, screen_price_action
+from .screen import _attach_last_pattern, _attach_recent_eps, breakout_ranking
 
 
 def _bt_map():
@@ -269,6 +271,80 @@ def category_items(cid: int):
     _attach_recent_eps(items)                          # 近 4 季 EPS（供前端「每季 EPS >」過濾）
     return {"count": len(items), "as_of": as_of, "items": items,
             "target_summary": target_track.summarize([i.get("target_track") for i in items])}
+
+
+# ---- 決策檢視（裸 K／突破）：同決策頁的「指定個股分析」，不套母體、流動性、證券類別與基本面門檻 ----
+def _members(cid):
+    """分類成員，順序同清單檢視（新加入的在前）。"""
+    return db.query("SELECT id, stock_id FROM watchlist_item WHERE category_id = %(c)s "
+                    "ORDER BY created_at DESC, id DESC", {"c": cid})
+
+
+def _no_signal_rows(ids, reason, trends=False):
+    """沒有訊號的成員也列出（前端排最後、灰字）；mv 沒有的（下市／暫停交易）補名稱。"""
+    if not ids:
+        return []
+    snap = {r["stock_id"]: r for r in db.query(
+        "SELECT stock_id, name, industry, security_type, close, amt20, as_of_date, eps, gross_margin,"
+        " rs_rating, eps_yoy, rev_yoy, per_pctile FROM mv_stock_snapshot WHERE stock_id = ANY(%(ids)s)",
+        {"ids": ids})}
+    missing = [i for i in ids if i not in snap]
+    names = {r["stock_id"]: r for r in db.query(
+        "SELECT stock_id, name, industry FROM stock WHERE stock_id = ANY(%(ids)s)", {"ids": missing})} \
+        if missing else {}
+    ft = _fundamental_trends([i for i in ids if i in snap]) if trends else {}
+    rows = []
+    for sid in ids:
+        if sid in snap:
+            row = {**dict(snap[sid]), "reason": reason}
+            if trends:
+                row["fundamental_trend"] = ft.get(sid, {})
+        else:
+            nm = names.get(sid, {})
+            row = {"stock_id": sid, "name": nm.get("name") or sid, "industry": nm.get("industry"),
+                   "reason": "沒有最新行情（可能已下市或暫停交易）"}
+        row["decision"] = None
+        rows.append(row)
+    return rows
+
+
+def _decision_view(mem, res, empty_reason, trends=False):
+    """有訊號的照決策頁排序在前，沒有的依清單順序接在後面；每列附 watchlist_id 供移出。"""
+    got = {r["stock_id"] for r in res["items"]}
+    items = res["items"] + _no_signal_rows([m["stock_id"] for m in mem if m["stock_id"] not in got],
+                                           empty_reason, trends)
+    wid = {m["stock_id"]: m["id"] for m in mem}
+    for r in items:
+        r["watchlist_id"] = wid.get(r["stock_id"])
+    as_of = res.get("as_of") or next(
+        (r["as_of_date"].isoformat() for r in items if r.get("as_of_date")), None)
+    return {"count": len(items), "n_signal": len(res["items"]), "as_of": as_of,
+            "method": res.get("method"), "items": items}
+
+
+@router.get("/{cid}/price-action")
+def category_price_action(cid: int, lookback: int = 5, expiry: int = 5):
+    """分類成員的裸 K 決策；近 lookback 根沒有訊號的也列。"""
+    _ensure()
+    mem = _members(cid)
+    if not mem:
+        return {"count": 0, "n_signal": 0, "as_of": None, "items": []}
+    res = screen_price_action(stock_ids=",".join(m["stock_id"] for m in mem),
+                              lookback=lookback, expiry=expiry, limit=500)
+    lb = max(1, min(int(lookback), 10))
+    return _decision_view(mem, res, f"近 {lb} 根 K 棒沒有可評估的裸 K 訊號", trends=True)
+
+
+@router.get("/{cid}/breakout")
+def category_breakout(cid: int, recent: int = 20):
+    """分類成員的突破決策；近 recent 日沒有已確認多方突破的也列。預設近 1 月（決策頁是近 3 日）。"""
+    _ensure()
+    mem = _members(cid)
+    if not mem:
+        return {"count": 0, "n_signal": 0, "as_of": None, "items": []}
+    res = breakout_ranking(stock_ids=",".join(m["stock_id"] for m in mem), recent=recent, limit=500)
+    rec = max(1, min(int(recent), 25))
+    return _decision_view(mem, res, f"近 {rec} 日沒有已確認的多方型態突破")
 
 
 @router.post("/items")

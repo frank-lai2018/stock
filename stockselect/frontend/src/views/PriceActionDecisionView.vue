@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getBreakoutPatterns, getPriceActionDecisions } from '../api'
-import WatchlistAddButton from '../components/WatchlistAddButton.vue'
+import PriceActionTable, { CONCLUSIONS, STATES } from '../components/PriceActionTable.vue'
 import PriceActionGuide from '../components/PriceActionGuide.vue'
 
 const loading = ref(false)
@@ -29,21 +29,6 @@ const minScore = ref(0)
 const conclusion = ref('')
 const signalState = ref('')
 const direction = ref('')
-
-const CONCLUSIONS = {
-  priority: { label: '優先評估', type: 'success' },
-  waiting: { label: '等待確認', type: 'warning' },
-  watch: { label: '觸發觀察', type: 'primary' },
-  skip: { label: '略過', type: 'info' },
-}
-
-const STATES = {
-  waiting: { label: '等待突破', type: 'warning' },
-  triggered: { label: '已觸發', type: 'success' },
-  invalid: { label: '觸發前失效', type: 'danger' },
-  failed: { label: '觸發後停損', type: 'danger' },
-  expired: { label: '訊號過期', type: 'info' },
-}
 
 const baseShown = computed(() => items.value.filter((row) => {
   const d = row.decision || {}
@@ -140,13 +125,6 @@ onMounted(async () => {
   }
   await load()
 })
-
-const num = (v, digits = 1) => v == null ? '—' : Number(v).toFixed(digits)
-const pct = (v) => v == null ? '—' : `${Number(v).toFixed(1)}%`
-const money = (v) => v == null ? '—' : Number(v).toLocaleString('zh-TW', { maximumFractionDigits: 0 })
-const conclusionOf = (row) => CONCLUSIONS[row.decision?.conclusion] || CONCLUSIONS.skip
-const stateOf = (row) => STATES[row.decision?.status] || { label: row.decision?.status || '—', type: 'info' }
-const directionName = (v) => v === 'bull' ? '多方' : v === 'bear' ? '空方' : '中性'
 </script>
 
 <template>
@@ -265,94 +243,8 @@ const directionName = (v) => v === 'bull' ? '多方' : v === 'bear' ? '空方' :
       月營收可檢查連續月增，季營收與毛利率可檢查連續季增；財報沒有逐月毛利率資料，因此不做失真的月毛利條件。
     </el-alert>
 
-    <el-table :data="shown" v-loading="loading" stripe border height="calc(100vh - 490px)" row-key="stock_id">
-      <el-table-column type="index" label="#" width="48" fixed />
-      <el-table-column label="決策" width="112" fixed>
-        <template #default="{ row }">
-          <el-tag :type="conclusionOf(row).type" effect="dark">{{ conclusionOf(row).label }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="分數" width="82" sortable :sort-method="(a, b) => a.decision.score - b.decision.score" fixed>
-        <template #default="{ row }"><span class="score">{{ row.decision.score }}</span></template>
-      </el-table-column>
-      <el-table-column label="股票" width="150" fixed>
-        <template #default="{ row }">
-          <router-link :to="`/stock/${row.stock_id}`" class="stock-link">{{ row.stock_id }} {{ row.name }}</router-link>
-          <div class="muted small">{{ row.industry || '—' }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column label="訊號" min-width="175">
-        <template #default="{ row }">
-          <div class="signal-title" :class="row.decision.direction">{{ directionName(row.decision.direction) }}・{{ row.decision.pattern_name }}</div>
-          <el-tag :type="stateOf(row).type" size="small" effect="plain">{{ stateOf(row).label }}</el-tag>
-          <span class="small muted"> {{ row.decision.signal_date }}（{{ row.decision.age }} 根前）</span>
-          <div v-if="row.decision.trigger_date" class="small">觸發日 {{ row.decision.trigger_date }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column label="波段型態" width="155">
-        <template #default="{ row }">
-          <template v-if="row.chart_pattern_name">
-            <el-tag type="danger" effect="plain">{{ row.chart_pattern_name }}</el-tag>
-            <div class="small muted chart-meta">突破日 {{ row.chart_breakout?.breakout_date || '—' }}</div>
-            <div class="small muted">頸線 {{ num(row.chart_breakout?.neckline, 2) }}</div>
-          </template>
-          <span v-else class="muted">未限制</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="結構與位置" min-width="190">
-        <template #default="{ row }">
-          <div><b>{{ row.decision.structure_name }}</b><span class="muted">・區間 {{ pct(row.decision.range_pos) }}</span></div>
-          <div class="location-tags">
-            <el-tag v-for="tag in row.decision.locations" :key="tag" size="small" effect="plain">{{ tag }}</el-tag>
-          </div>
-          <div class="small muted">支撐 {{ num(row.decision.support, 2) }}／壓力 {{ num(row.decision.resistance, 2) }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column label="五層評分" min-width="265">
-        <template #default="{ row }">
-          <div class="parts">
-            <span>構 {{ row.decision.parts.structure }}/30</span>
-            <span>位 {{ row.decision.parts.location }}/25</span>
-            <span>K {{ row.decision.parts.pattern }}/20</span>
-            <span>確 {{ row.decision.parts.confirmation }}/15</span>
-            <span>險 {{ row.decision.parts.risk }}/10</span>
-          </div>
-        </template>
-      </el-table-column>
-      <el-table-column label="交易計畫" width="200">
-        <template #default="{ row }">
-          <div>觸發 {{ num(row.decision.trigger, 2) }}・進場 {{ num(row.decision.entry, 2) }}</div>
-          <div>停損 {{ num(row.decision.stop, 2) }}（<b :class="{ danger: row.decision.risk_pct > 8 }">{{ pct(row.decision.risk_pct) }}</b>）</div>
-          <div>目標 {{ num(row.decision.target, 2) }}・R/R <b>{{ num(row.decision.rr, 2) }}</b></div>
-          <div class="small muted">{{ row.decision.target_source }}・現價 {{ num(row.decision.current, 2) }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column label="成長過濾" width="185">
-        <template #default="{ row }">
-          <div>單季 EPS <b>{{ num(row.eps, 2) }}</b></div>
-          <div>月營收連增 <b>{{ row.fundamental_trend?.revenue_month_streak ?? 0 }}</b> 月</div>
-          <div>季營收連增 <b>{{ row.fundamental_trend?.revenue_quarter_streak ?? 0 }}</b> 季</div>
-          <div>毛利率 {{ pct(row.gross_margin) }}・連增 <b>{{ row.fundamental_trend?.gross_margin_quarter_streak ?? 0 }}</b> 季</div>
-          <div class="small muted">營收月 {{ row.fundamental_trend?.revenue_month || '—' }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column label="檢查結果" min-width="280">
-        <template #default="{ row }">
-          <div v-if="!row.decision.blockers.length" class="pass">可依觸發條件執行</div>
-          <div v-for="item in row.decision.blockers" :key="item" class="blocker">• {{ item }}</div>
-          <div v-for="item in row.decision.notes" :key="item" class="note">• {{ item }}</div>
-        </template>
-      </el-table-column>
-      <el-table-column label="流動性" width="115">
-        <template #default="{ row }"><span class="muted">均額</span><br>{{ money(row.amt20) }}</template>
-      </el-table-column>
-      <el-table-column label="追蹤" width="75" fixed="right">
-        <template #default="{ row }"><WatchlistAddButton :row="row" /></template>
-      </el-table-column>
-      <template #empty>
-        <el-empty :description="analysisError || (analysisStockId ? `${analysisStockId} 近 ${lookback} 根 K 棒沒有可評估的裸 K 訊號` : '目前型態、裸 K 與成長條件沒有交集候選')" />
-      </template>
-    </el-table>
+    <PriceActionTable :items="shown" :loading="loading" height="calc(100vh - 490px)"
+                      :empty-text="analysisError || (analysisStockId ? `${analysisStockId} 近 ${lookback} 根 K 棒沒有可評估的裸 K 訊號` : '目前型態、裸 K 與成長條件沒有交集候選')" />
     <div class="method">{{ method }}｜目前顯示 {{ shown.length }}／{{ items.length }} 檔</div>
     <PriceActionGuide />
   </div>
@@ -364,7 +256,6 @@ const directionName = (v) => v === 'bull' ? '多方' : v === 'bear' ? '空方' :
 .toolbar-row { display: flex; justify-content: space-between; gap: 18px; align-items: center; flex-wrap: wrap; }
 h2 { margin: 0 0 4px; font-size: 22px; }
 .subtitle, .muted { color: #909399; }
-.small { font-size: 12px; }
 .filters, .stock-analyzer, .server-filters, .client-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .stock-analyzer { margin-top: 12px; padding-top: 12px; border-top: 1px solid #ebeef5; }
 .server-filters { margin-top: 12px; padding-top: 12px; border-top: 1px solid #ebeef5; }
@@ -381,18 +272,6 @@ h2 { margin: 0 0 4px; font-size: 22px; }
 .summary.meta { border-left: 4px solid #606266; cursor: default; }
 .summary.meta b { font-size: 18px; }
 .notice { margin-bottom: 10px; }
-.score { font-size: 21px; font-weight: 750; }
-.stock-link { color: #337ecc; font-weight: 650; text-decoration: none; }
-.signal-title { font-weight: 650; margin-bottom: 5px; }
-.signal-title.bull { color: #f56c6c; }
-.signal-title.bear { color: #529b2e; }
-.location-tags { display: flex; gap: 4px; flex-wrap: wrap; margin: 4px 0; }
-.chart-meta { margin-top: 5px; }
-.parts { display: flex; gap: 4px; flex-wrap: wrap; }
-.parts span { background: #f2f6fc; border-radius: 4px; padding: 3px 6px; font-size: 12px; }
-.danger, .blocker { color: #f56c6c; }
-.pass { color: #529b2e; font-weight: 600; }
-.note { color: #a77700; }
 .method { color: #909399; font-size: 12px; margin-top: 7px; text-align: right; }
 @media (max-width: 1050px) { .summary-grid { grid-template-columns: repeat(2, 1fr); } }
 </style>
