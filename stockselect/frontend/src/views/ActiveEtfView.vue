@@ -1,13 +1,14 @@
 <script setup>
 // 主動ETF動向：各投信官網每日公告的持股，相鄰兩天相減、扣掉全面等比例的增減（申購贖回、全面調整水位）
-// 上：跨投信共識買進／賣出＋訊號回測（跟著買有沒有用）　中：各 ETF 概況　下：單檔明細（曝險走勢、當日異動、持股）
+// 上：跨投信共識買進／賣出、近 20 日相對加重（每單位持股）、訊號回測、持股籃策略　中：對照投信買賣超、各 ETF 概況
+// 下：單檔明細（曝險走勢、當日異動、持股）。家數只算規模 ≥1% 的投信（小投信照列、不計入）
 // 資料由 fetch_active_etf.py 每晚抓（nightly 的 etfhold 工作）、回測由 backtest_etf_flow.py 每週跑；說明見 主動ETF追蹤設計.md
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import * as echarts from 'echarts'
 import { getActiveEtfOverview, getActiveEtfConsensus, getActiveEtfFund, getActiveEtfBacktest,
-  getActiveEtfBacktestEvents, getActiveEtfBasket } from '../api'
+  getActiveEtfBacktestEvents, getActiveEtfBasket, getActiveEtfRelative, getActiveEtfVsTrust } from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -50,13 +51,95 @@ const w = (v) => (v == null ? '—' : Number(v).toFixed(2) + '%')
 const coverageText = computed(() => {
   const c = ov.value?.coverage
   if (!c) return ''
-  return `涵蓋 ${c.n_covered}/${c.n_total} 檔（${c.issuers.join('、')}），約占台股主動 ETF 規模 ${pct(c.pct, 0)}`
+  return `涵蓋 ${c.n_covered}/${c.n_total} 檔、${c.issuers.length} 家投信，約占台股主動 ETF 規模 ${pct(c.pct, 0)}`
 })
+// 家數只算規模占比 ≥1% 的投信（etf_issuer_share）；小投信照列，但不計入家數
+const minorIssuers = computed(() => (ov.value?.coverage?.issuer_share || []).filter((x) => !x.major))
+const majorText = computed(() => {
+  const all = ov.value?.coverage?.issuer_share || []
+  if (!all.length) return ''
+  const minor = minorIssuers.value
+  return `家數只算規模 ≥${pct(ov.value.coverage.min_share, 0)} 的 ${all.length - minor.length} 家投信` +
+    (minor.length ? `（${minor.map((x) => `${x.issuer} ${pct(x.share, 1)}`).join('、')} 照列、不計入）` : '')
+})
+const minorTip = '規模不到 1% 的投信：照列，但不計入家數'
 
 function sideEtfs(row, acts) {
   const seen = new Map()
   for (const x of row.detail || []) if (acts.includes(x.action) && !seen.has(x.etf_id)) seen.set(x.etf_id, x)
   return [...seen.values()]
+}
+
+// ---- 近 N 日相對加重／減輕（每單位持股＝股數 ÷ 單位數；扣掉申購贖回，後端 /relative）----
+const relWindow = ref(20)
+const relUp = ref([])
+const relDown = ref([])
+const relMeta = ref(null)
+const relLoading = ref(false)
+const REL = {
+  new: { label: '新建倉', type: 'danger', effect: 'dark' },
+  up: { label: '加重', type: 'danger', effect: 'plain' },
+  exit: { label: '出清', type: 'success', effect: 'dark' },
+  down: { label: '減輕', type: 'success', effect: 'plain' },
+}
+async function loadRelative() {
+  relLoading.value = true
+  try {
+    const [u, d] = await Promise.all([
+      getActiveEtfRelative({ date: date.value, window: relWindow.value, side: 'up', limit: 30 }),
+      getActiveEtfRelative({ date: date.value, window: relWindow.value, side: 'down', limit: 30 }),
+    ])
+    relUp.value = u.rows
+    relDown.value = d.rows
+    relMeta.value = u
+  } catch (e) { /* 表未建或資料不足 → 不顯示 */ } finally {
+    relLoading.value = false
+  }
+}
+function relEtfs(row, side) {
+  return (row.detail || []).filter((x) => (side === 'up' ? ['new', 'up'] : ['exit', 'down']).includes(x.status))
+}
+
+// ---- 對照投信買賣超（後端 /vs-trust）：主動 ETF 的實際買賣是投信買賣超的一部分，也拿來檢查持股日有沒有對齊 ----
+const vt = ref(null)
+const vtEl = ref(null)
+let vtChart = null
+const vtSummary = computed(() => {
+  const rs = (vt.value?.rows || []).filter((r) => r.trust_net)
+  if (!rs.length) return ''
+  const shares = rs.map((r) => r.share).filter((v) => v != null).sort((a, b) => a - b)
+  const med = shares.length ? shares[Math.floor(shares.length / 2)] : null
+  return `持股日 ${vt.value.as_of}：主動 ETF 實際買賣前 ${rs.length} 檔，方向跟投信買賣超一致 ${rs.filter((r) => r.same).length} 檔` +
+    (med != null ? `，占投信買賣超中位數 ${pct(med, 0)}` : '')
+})
+async function loadVsTrust() {
+  try {
+    vt.value = await getActiveEtfVsTrust({ date: date.value, top: 15, days: 60 })
+    await nextTick()
+    renderVsTrust()
+  } catch (e) { /* inst_trades 未建 → 不顯示 */ }
+}
+function renderVsTrust() {
+  if (!vtEl.value || !vt.value?.series?.length) return
+  if (!vtChart) vtChart = echarts.init(vtEl.value)
+  const s = vt.value.series
+  vtChart.setOption({
+    grid: { left: 8, right: 8, top: 36, bottom: 24, containLabel: true },
+    legend: { top: 0 },
+    tooltip: { trigger: 'axis' },
+    xAxis: { type: 'category', data: s.map((x) => x.date), axisLabel: { formatter: (v) => v.slice(5) } },
+    yAxis: [
+      { type: 'value', name: '檔', min: 0, max: vt.value.top, splitLine: { lineStyle: { color: '#f0f0f0' } } },
+      { type: 'value', name: '占比', min: 0, axisLabel: { formatter: (v) => Math.round(v * 100) + '%' }, splitLine: { show: false } },
+    ],
+    series: [
+      { name: `前 ${vt.value.top} 檔方向一致`, type: 'bar', barMaxWidth: 10, itemStyle: { color: '#e6a23c' },
+        data: s.map((x) => x.same) },
+      { name: '占投信買賣超（中位數）', type: 'line', yAxisIndex: 1, showSymbol: false, itemStyle: { color: '#409eff' },
+        data: s.map((x) => (x.median_share == null ? null : +Number(x.median_share).toFixed(3))) },
+    ],
+  }, true)
+  vtChart.resize()
 }
 
 // ---- 訊號回測（backtest_etf_flow.py；判讀規則在後端 routers/active_etf.py 的 _verdict）----
@@ -149,6 +232,8 @@ async function load() {
   try {
     ov.value = await getActiveEtfOverview()
     date.value = ov.value.as_of
+    loadRelative()
+    loadVsTrust()
     await loadConsensus()
     const want = String(route.query.etf || '').toUpperCase()
     const first = ov.value.funds.find((f) => f.etf_id === want) || ov.value.funds[0]
@@ -220,10 +305,12 @@ function renderChart() {
 
 function onDate() {
   loadConsensus()
+  loadRelative()
+  loadVsTrust()
   if (fund.value && fund.value.dates.includes(date.value)) openFund(fund.value.etf_id, date.value)
 }
 function fundRowClass({ row }) { return fund.value && row.etf_id === fund.value.etf_id ? 'current-row-etf' : '' }
-function onResize() { if (chart) chart.resize(); if (bkChart) bkChart.resize() }
+function onResize() { if (chart) chart.resize(); if (bkChart) bkChart.resize(); if (vtChart) vtChart.resize() }
 function go(id) { router.push(`/stock/${id}`) }
 
 onMounted(async () => {
@@ -234,6 +321,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   if (chart) chart.dispose()
   if (bkChart) bkChart.dispose()
+  if (vtChart) vtChart.dispose()
 })
 </script>
 
@@ -251,7 +339,7 @@ onBeforeUnmount(() => {
             <el-radio-button :value="5">近 5 日</el-radio-button>
             <el-radio-button :value="20">近 20 日</el-radio-button>
           </el-radio-group>
-          <span style="color: #999; font-size: 12px">{{ coverageText }}</span>
+          <span style="color: #999; font-size: 12px">{{ coverageText }}｜{{ majorText }}</span>
         </div>
       </template>
       <el-row :gutter="16" v-loading="cLoading">
@@ -266,8 +354,13 @@ onBeforeUnmount(() => {
             <el-table-column label="股票" min-width="120" show-overflow-tooltip>
               <template #default="{ row }">{{ row.stock_id }} {{ row.name }}</template>
             </el-table-column>
-            <el-table-column label="家數" width="56" align="center">
-              <template #default="{ row }"><b>{{ row[side.n] }}</b></template>
+            <el-table-column label="家數" width="64" align="center">
+              <template #default="{ row }">
+                <b>{{ row[side.n] }}</b>
+                <el-tooltip v-if="row[side.n + '_minor']" :content="`另有 ${row[side.n + '_minor']} 家小投信（規模 <1%，不計入）`">
+                  <span style="color: #bbb; font-size: 12px">+{{ row[side.n + '_minor'] }}</span>
+                </el-tooltip>
+              </template>
             </el-table-column>
             <el-table-column label="主動金額" width="92" align="right">
               <template #default="{ row }"><span :style="{ color: up(row.active_amount) }">{{ yi(row.active_amount) }}</span></template>
@@ -284,8 +377,10 @@ onBeforeUnmount(() => {
             <el-table-column label="ETF" min-width="150">
               <template #default="{ row }">
                 <el-tooltip v-for="x in sideEtfs(row, side.acts)" :key="x.etf_id"
-                            :content="`${x.date}　${ACT[x.action].label} ${lots(x.active_shares)}（${yi(x.active_amount)}）`">
-                  <el-tag :type="ACT[x.action].type" :effect="ACT[x.action].effect" size="small" style="margin: 1px 4px 1px 0">
+                            :content="`${x.date}　${x.issuer} ${ACT[x.action].label} ${lots(x.active_shares)}（${yi(x.active_amount)}）` +
+                                      (x.major ? '' : `｜${minorTip}`)">
+                  <el-tag :type="x.major ? ACT[x.action].type : 'info'" :effect="x.major ? ACT[x.action].effect : 'plain'"
+                          size="small" style="margin: 1px 4px 1px 0">
                     {{ x.etf_id }}
                   </el-tag>
                 </el-tooltip>
@@ -296,8 +391,65 @@ onBeforeUnmount(() => {
       </el-row>
       <div style="color: #999; font-size: 12px; margin-top: 8px">
         主動金額＝扣掉「全面等比例增減」後的調整（申購贖回或全面調整持股水位不算）；實際買賣＝股數變化 × 收盤價，是市場上真實的買賣壓力。
-        共識以投信家數計，同一家投信的兩檔 ETF 只算一家。占成交額＝實際買賣 ÷ 期間成交金額；持股占股本＝目前涵蓋的主動 ETF 合計持股 ÷ 發行股數。
+        共識以投信家數計，同一家投信的兩檔 ETF 只算一家；只算規模 ≥1% 的投信，灰色標籤的小投信照列、不計入（回測：這樣共識買進比較好）。
+        占成交額＝實際買賣 ÷ 期間成交金額；持股占股本＝目前涵蓋的主動 ETF 合計持股 ÷ 發行股數。
         持股資料收盤後才公布，最早只能隔天開盤反應。跟著買有沒有用，看下方「訊號回測」。
+      </div>
+    </el-card>
+
+    <el-card shadow="never" style="margin-top: 16px">
+      <template #header>
+        <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 12px">
+          <b>相對加重／減輕</b>
+          <el-radio-group v-model="relWindow" size="small" @change="loadRelative">
+            <el-radio-button :value="20">近 20 個持股日</el-radio-button>
+            <el-radio-button :value="60">近 60 個持股日</el-radio-button>
+          </el-radio-group>
+          <span style="color: #999; font-size: 12px">
+            每單位持股（股數 ÷ 單位數）比期初多 ≥10% 或新建倉＝加重，少 ≥10% 或出清＝減輕；扣掉申購贖回
+            <template v-if="relMeta">｜截至 {{ relMeta.as_of }}，{{ relMeta.n_funds }}/{{ relMeta.n_funds_total }} 檔 ETF 滿 {{ relMeta.window }} 個持股日</template>
+          </span>
+        </div>
+      </template>
+      <el-row :gutter="16" v-loading="relLoading">
+        <el-col v-for="side in [{ key: 'up', title: '相對加重', rows: relUp, n: 'n_up', color: '#EA4C4C' },
+                                { key: 'down', title: '相對減輕', rows: relDown, n: 'n_down', color: '#3F9E5A' }]"
+                :key="side.key" :xs="24" :lg="12">
+          <div style="font-weight: 600; margin-bottom: 6px" :style="{ color: side.color }">
+            {{ side.title }}<span style="color: #999; font-weight: 400; font-size: 12px">（依投信家數、再依相對金額排序）</span>
+          </div>
+          <el-table :data="side.rows" stripe height="360" size="small" style="cursor: pointer" @row-click="(r) => go(r.stock_id)">
+            <el-table-column label="股票" min-width="120" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.stock_id }} {{ row.name }}</template>
+            </el-table-column>
+            <el-table-column label="家數" width="64" align="center">
+              <template #default="{ row }">
+                <b>{{ row[side.n] }}</b>
+                <el-tooltip v-if="row[side.n + '_minor']" :content="`另有 ${row[side.n + '_minor']} 家小投信（規模 <1%，不計入）`">
+                  <span style="color: #bbb; font-size: 12px">+{{ row[side.n + '_minor'] }}</span>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+            <el-table-column label="相對金額" width="92" align="right">
+              <template #default="{ row }"><span :style="{ color: up(row.rel_amount) }">{{ yi(row.rel_amount) }}</span></template>
+            </el-table-column>
+            <el-table-column label="ETF" min-width="170">
+              <template #default="{ row }">
+                <el-tooltip v-for="x in relEtfs(row, side.key)" :key="x.etf_id"
+                            :content="`${x.issuer}　${x.t0} → ${x.t1}　${REL[x.status].label}` +
+                                      (x.pu != null ? ` ${spct(x.pu, 0)}` : '') + `（${yi(x.excess_amount)}）` + (x.major ? '' : `｜${minorTip}`)">
+                  <el-tag :type="x.major ? REL[x.status].type : 'info'" :effect="x.major ? REL[x.status].effect : 'plain'"
+                          size="small" style="margin: 1px 4px 1px 0">{{ x.etf_id }}</el-tag>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-col>
+      </el-row>
+      <div style="color: #999; font-size: 12px; margin-top: 8px">
+        單日的「加碼」常被申購贖回的時間差干擾（錢先進出現金、之後才分批買賣）；拉長到 20 個持股日比較每單位持股，
+        看的是「相對基金規模，經理人加重了誰」。相對金額＝比「跟著申購贖回等比例增減」多買（負＝少買）的股數 × 收盤價。
+        配股、分割已扣除。上市不滿窗口天數的 ETF 不列入。家數只算規模 ≥1% 的投信。
       </div>
     </el-card>
 
@@ -447,10 +599,78 @@ onBeforeUnmount(() => {
       <div style="color: #999; font-size: 12px; margin-top: 8px; line-height: 1.7">
         換股日用前一交易日收盤後公布的持股選股、換股日開盤成交，只交易差額；股票買進 0.1425%、賣出 0.1425%＋證交稅 0.3%，
         ETF 賣出證交稅 0.1%（券商手續費有折扣的話成本更低）。「月贏 00981A」沒有明顯過半、「去掉最好 2 月」接近 0 或為負，
-        代表超額集中在少數月份，不穩定。等權持有約 30 檔，每月換掉約四分之一；高價股（一張上百萬）要用零股才做得到等權。
-        還原價已補上 price_daily 漏掉的除權息與分割；ETF 的配息資料不在資料庫，00981A、0050 在 2026-06 之後的配息沒還原，報酬略微低估。
-        歷史只有 16 個月、多半是 AI／科技股多頭，換了行情不一定成立。
+        代表超額集中在少數月份，不穩定。家數只算規模 ≥1% 的投信；主策略等權持有約 30 檔，每月換掉約四分之一，
+        高價股（一張上百萬）要用零股才做得到等權。還原價用上市櫃官方除權息表，00981A、0050 的配息都已還原。
+        歷史只有 17 個月、多半是 AI／科技股多頭，換了行情不一定成立。
       </div>
+    </el-card>
+
+    <el-card v-if="vt && vt.rows.length" shadow="never" style="margin-top: 16px">
+      <template #header>
+        <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 12px">
+          <b>對照投信買賣超</b>
+          <span style="color: #999; font-size: 12px">
+            主動 ETF 的實際買賣是投信買賣超（證交所三大法人）的一部分：方向一致、占比合理，代表持股日對齊、股數正確
+          </span>
+        </div>
+      </template>
+      <div style="margin-bottom: 8px">{{ vtSummary }}</div>
+      <el-row :gutter="16">
+        <el-col :xs="24" :lg="12">
+          <el-table :data="vt.rows" size="small" stripe max-height="330" style="cursor: pointer" @row-click="(r) => go(r.stock_id)">
+            <el-table-column label="股票" min-width="110" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.stock_id }} {{ row.name }}</template>
+            </el-table-column>
+            <el-table-column label="主動 ETF" width="96" align="right">
+              <template #default="{ row }"><span :style="{ color: up(row.etf_shares) }">{{ lots(row.etf_shares) }}</span></template>
+            </el-table-column>
+            <el-table-column label="投信買賣超" width="104" align="right">
+              <template #default="{ row }"><span :style="{ color: up(row.trust_net) }">{{ lots(row.trust_net) }}</span></template>
+            </el-table-column>
+            <el-table-column label="占比" width="64" align="right">
+              <template #default="{ row }">
+                <span v-if="row.share != null">{{ pct(row.share, 0) }}</span>
+                <span v-else style="color: #e6a23c">{{ row.trust_net ? '反向' : '—' }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-col>
+        <el-col :xs="24" :lg="12">
+          <div ref="vtEl" style="width: 100%; height: 330px"></div>
+        </el-col>
+      </el-row>
+      <el-collapse style="margin-top: 8px">
+        <el-collapse-item :title="`持股日對齊檢查（各 ETF 近 ${vt.lag_days} 個持股日，自 ${vt.lag_since}）` +
+                                  (vt.lag.some((x) => x.suspect) ? '：⚠️ 有 ETF 可能錯開一天' : '：都對齊')" name="lag">
+          <el-table :data="vt.lag" size="small" stripe>
+            <el-table-column label="ETF" width="90">
+              <template #default="{ row }"><b v-if="row.suspect" style="color: #e6a23c">{{ row.etf_id }} ⚠️</b><span v-else>{{ row.etf_id }}</span></template>
+            </el-table-column>
+            <el-table-column prop="issuer" label="投信" width="70" />
+            <el-table-column prop="n" label="主動買賣筆數" width="104" align="right" />
+            <el-table-column label="當天一致" width="86" align="right">
+              <template #default="{ row }"><b>{{ pct(row.same, 0) }}</b></template>
+            </el-table-column>
+            <el-table-column label="前一天" width="76" align="right">
+              <template #default="{ row }">{{ pct(row.prev, 0) }}</template>
+            </el-table-column>
+            <el-table-column label="後一天" width="76" align="right">
+              <template #default="{ row }">{{ pct(row.next, 0) }}</template>
+            </el-table-column>
+            <el-table-column label="判斷" min-width="140">
+              <template #default="{ row }">
+                <span v-if="!row.enough" style="color: #999">樣本不足（{{ vt.lag_min_n }} 筆以下不判斷）</span>
+                <span v-else-if="row.suspect" style="color: #e6a23c">前／後一天比較一致，持股日可能錯開</span>
+                <span v-else style="color: #3F9E5A">當天最一致，已對齊</span>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div style="color: #999; font-size: 12px; margin-top: 6px">
+            依實際買賣金額加權：ETF 的買賣方向跟同一天投信買賣超相同的比例。持股日標錯一天時，前一天或後一天會比較一致。
+            小基金的買賣占投信買賣超太小，一致率接近雜訊（例如摩根、台新）。每晚 nightly 的報表也會印出這項檢查。
+          </div>
+        </el-collapse-item>
+      </el-collapse>
     </el-card>
 
     <el-card shadow="never" style="margin-top: 16px">
@@ -582,9 +802,17 @@ onBeforeUnmount(() => {
                 <span v-if="row.active_shares != null" :style="{ color: up(row.active_shares) }">{{ lots(row.active_shares) }}</span>
               </template>
             </el-table-column>
+            <el-table-column :label="`${fund.pu_window} 日每單位`" width="104" align="right">
+              <template #default="{ row }">
+                <span v-if="row.pu_status === 'new'" style="color: #EA4C4C">新建倉</span>
+                <span v-else-if="row.pu != null" :style="{ color: Math.abs(row.pu) >= 0.1 ? up(row.pu) : '#999' }">{{ spct(row.pu, 1) }}</span>
+                <span v-else style="color: #ccc">—</span>
+              </template>
+            </el-table-column>
           </el-table>
           <div style="color: #999; font-size: 12px; margin-top: 6px">
             不含佔位股（權重 0.00%，投信常在很多檔各留 1 張）。
+            {{ fund.pu_window }} 日每單位＝每單位持股（股數 ÷ 單位數）跟 {{ fund.pu_base || '—' }} 比的變化，扣掉申購贖回；±10% 以上才上色。
           </div>
         </el-tab-pane>
       </el-tabs>

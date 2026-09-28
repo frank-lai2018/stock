@@ -38,6 +38,10 @@ export const getActiveEtfBacktest = () => api.get('/active-etf/backtest').then((
 export const getActiveEtfBacktestEvents = (signal, horizon = 20, limit = 100) =>
   api.get('/active-etf/backtest/events', { params: { signal, horizon, limit } }).then((r) => r.data)
 export const getActiveEtfBasket = () => api.get('/active-etf/basket').then((r) => r.data)
+export const getActiveEtfRelative = ({ date, window = 20, side = 'up', limit = 40 } = {}) =>
+  api.get('/active-etf/relative', { params: { date, window, side, limit } }).then((r) => r.data)
+export const getActiveEtfVsTrust = ({ date, top = 15, days = 60 } = {}) =>
+  api.get('/active-etf/vs-trust', { params: { date, top, days } }).then((r) => r.data)
 export const runScreen = (payload) => api.post('/screen', payload).then((r) => r.data)
 export const screenBreakout = (params = {}) =>
   api.get('/screen/pattern-breakout', { params }).then((r) => r.data)

@@ -24,12 +24,47 @@ def _dates(n):
         "SELECT DISTINCT trade_date FROM theme_daily ORDER BY trade_date DESC LIMIT %(n)s", {"n": n})]
 
 
+AETF_DAYS = 5                 # 主動 ETF 淨買：最近幾個持股日
+
+
+def _aetf_dates():
+    """etf_flow 最新 AETF_DAYS 個持股日（主動 ETF 表還沒建時回空，族群頁照常顯示）。"""
+    if not db.query("SELECT to_regclass('public.etf_flow') AS t")[0]["t"]:
+        return []
+    return [r["trade_date"] for r in db.query(
+        "SELECT DISTINCT trade_date FROM etf_flow ORDER BY trade_date DESC LIMIT %(n)s", {"n": AETF_DAYS})]
+
+
+def _aetf_by_theme(codes, ds):
+    """{族群代碼: 主動 ETF 近 N 個持股日的淨買}：成分股（同 members：含子節點）的實際買賣金額加總（amount＝股數變化
+    × 收盤價），另附主動調整金額（扣掉申購贖回的等比例增減）、淨買／淨賣檔數、占成分股同期成交額的比例。"""
+    if not codes or not ds:
+        return {}
+    rows = db.query(
+        "WITH ff AS (SELECT stock_id, sum(amount) AS amt, sum(active_amount) AS act FROM etf_flow "
+        "            WHERE trade_date = ANY(%(ds)s) AND action <> 'corp' GROUP BY stock_id), "
+        "mem AS (SELECT DISTINCT t.code, st.stock_id FROM theme t "
+        "        JOIN theme k ON (k.code = t.code OR k.parent_code = t.code) AND k.is_active "
+        "        JOIN stock_theme st ON st.theme_id = k.theme_id AND st.valid_to IS NULL "
+        "             AND ((k.layer = 2 AND st.status = 'confirmed') OR (k.layer = 3 AND st.status IN ('confirmed', 'seed'))) "
+        "        WHERE t.code = ANY(%(codes)s)), "
+        "tv AS (SELECT stock_id, sum(amount) AS turnover FROM price_daily "
+        "       WHERE trade_date = ANY(%(ds)s) AND stock_id IN (SELECT stock_id FROM mem) GROUP BY stock_id) "
+        "SELECT mem.code, sum(ff.amt) AS aetf_net, sum(ff.act) AS aetf_active, "
+        "       count(*) FILTER (WHERE ff.amt > 0) AS aetf_n_buy, count(*) FILTER (WHERE ff.amt < 0) AS aetf_n_sell, "
+        "       sum(ff.amt) / NULLIF(sum(tv.turnover), 0) AS aetf_ratio "
+        "FROM mem LEFT JOIN ff USING (stock_id) LEFT JOIN tv USING (stock_id) GROUP BY mem.code",
+        {"ds": ds, "codes": list(codes)})
+    return {r["code"]: r for r in rows}
+
+
 @router.get("/ranking")
 def ranking(layer: int = Query(3, ge=2, le=3), limit: int = Query(50, ge=1, le=300)):
-    """最新一日熱度排行；rank_chg＝與 5 個交易日前相比的名次變化（正＝上升）。"""
+    """最新一日熱度排行；rank_chg＝與 5 個交易日前相比的名次變化（正＝上升）；
+    aetf_*＝主動 ETF 近 5 個持股日在這個族群的淨買（見 _aetf_by_theme；不計入熱度分數）。"""
     ds = _dates(6)
     if not ds:
-        return {"as_of": None, "prev": None, "rows": []}
+        return {"as_of": None, "prev": None, "rows": [], "aetf_dates": []}
     as_of, prev = ds[0], ds[-1]
     rows = db.query(
         f"SELECT t.code, {_NAME} AS name, t.layer, d.n_members, d.ret_1d, d.ret_5d, d.ret_20d, "
@@ -42,7 +77,14 @@ def ranking(layer: int = Query(3, ge=2, le=3), limit: int = Query(50, ge=1, le=3
         "WHERE d.trade_date = %(as_of)s AND t.layer = %(layer)s "
         "ORDER BY d.heat_rank LIMIT %(limit)s",
         {"as_of": as_of, "prev": prev, "layer": layer, "limit": limit})
-    return {"as_of": as_of.isoformat(), "prev": prev.isoformat(), "rows": rows}
+    fds = _aetf_dates()
+    aetf = _aetf_by_theme([r["code"] for r in rows], fds)
+    for r in rows:
+        a = aetf.get(r["code"]) or {}
+        for k in ("aetf_net", "aetf_active", "aetf_n_buy", "aetf_n_sell", "aetf_ratio"):
+            r[k] = a.get(k)
+    return {"as_of": as_of.isoformat(), "prev": prev.isoformat(), "rows": rows,
+            "aetf_dates": [d.isoformat() for d in sorted(fds)]}
 
 
 _METRICS = {"heat_score", "heat_rank", "ret_5d", "ret_20d", "breadth_ma20"}
@@ -121,9 +163,18 @@ def members(code: str):
             r["tag"] = "leader"
         elif med is not None and r["stock_id"] in live_ids and float(r["ret_20d"]) < med and r["above_ma60"]:
             r["tag"] = "laggard"
+    fds = _aetf_dates()                                  # 主動 ETF 近 5 個持股日的淨買（實際買賣／主動調整金額）
+    ff = {x["stock_id"]: x for x in db.query(
+        "SELECT stock_id, sum(amount) AS aetf_net, sum(active_amount) AS aetf_active FROM etf_flow "
+        "WHERE trade_date = ANY(%(ds)s) AND action <> 'corp' AND stock_id = ANY(%(ids)s) GROUP BY stock_id",
+        {"ds": fds, "ids": [r["stock_id"] for r in rows]})} if fds and rows else {}
+    for r in rows:
+        a = ff.get(r["stock_id"]) or {}
+        r["aetf_net"], r["aetf_active"] = a.get("aetf_net"), a.get("aetf_active")
     return {"code": m["code"], "name": m["name"], "layer": m["layer"], "keywords": m["keywords"],
             "note": m["note"], "as_of": ds[0].isoformat() if ds else None,
-            "daily": daily[0] if daily else None, "median_ret_20d": med, "rows": rows}
+            "daily": daily[0] if daily else None, "median_ret_20d": med, "rows": rows,
+            "aetf": _aetf_by_theme([m["code"]], fds).get(m["code"]), "aetf_dates": [d.isoformat() for d in sorted(fds)]}
 
 
 @router.get("/today")

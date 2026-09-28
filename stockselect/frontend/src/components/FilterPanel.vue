@@ -63,21 +63,22 @@ onMounted(async () => {
           </el-option-group>
         </el-select>
       </el-form-item>
-      <!-- 主動式 ETF：近 5 個持股日有 N 家投信主動新建倉／加碼（或出清／減碼），已扣申購贖回；見 主動ETF追蹤設計.md -->
+      <!-- 主動式 ETF：近 5 個持股日有 N 家投信主動新建倉／加碼（或出清／減碼），已扣申購贖回；見 主動ETF追蹤設計.md
+           家數只算規模 ≥1% 的投信（後端 etf_issuer_share.major；第一金、兆豐、摩根、台新不計） -->
       <el-form-item label="主動ETF加碼">
         <el-select v-model="filters.aetf_buy_5d_min" style="width: 160px" clearable placeholder="不限">
-          <el-option v-for="n in [1, 2, 3, 4, 5]" :key="n" :label="`近5日 ≥${n} 家投信`" :value="n" />
+          <el-option v-for="n in [1, 2, 3, 4, 5]" :key="n" :label="`近5日 ≥${n} 家投信`" :title="`只算規模 ≥1% 的投信`" :value="n" />
         </el-select>
       </el-form-item>
       <el-form-item label="主動ETF減碼">
         <el-select v-model="filters.aetf_sell_5d_min" style="width: 160px" clearable placeholder="不限">
-          <el-option v-for="n in [1, 2, 3, 4, 5]" :key="n" :label="`近5日 ≥${n} 家投信`" :value="n" />
+          <el-option v-for="n in [1, 2, 3, 4, 5]" :key="n" :label="`近5日 ≥${n} 家投信`" :title="`只算規模 ≥1% 的投信`" :value="n" />
         </el-select>
       </el-form-item>
-      <!-- 回測：持有的投信越多越好（13 家投信時 ≥4 家、每月換股贏 00981A）；見「主動ETF」頁的持股籃策略 -->
+      <!-- 回測：持有的投信越多越好（只算規模 ≥1% 的投信，≥4 家、每月換股贏 00981A）；見「主動ETF」頁的持股籃策略 -->
       <el-form-item label="主動ETF持有">
         <el-select v-model="filters.aetf_held_min" style="width: 160px" clearable placeholder="不限">
-          <el-option v-for="n in [1, 2, 3, 4, 5]" :key="n" :label="`目前 ≥${n} 家投信持有`" :value="n" />
+          <el-option v-for="n in [1, 2, 3, 4, 5]" :key="n" :label="`目前 ≥${n} 家投信持有`" :title="`只算規模 ≥1% 的投信`" :value="n" />
         </el-select>
       </el-form-item>
       <el-form-item label="近3月報酬≥">

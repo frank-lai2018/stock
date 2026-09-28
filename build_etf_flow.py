@@ -359,23 +359,77 @@ def print_report(cur, top=6):
                 print(f"  {label}：" + "、".join(
                     f"{r[2]} {float(r[5]) / 1000:+,.0f}張 {_yi(float(r[6]) if r[6] is not None else None)}"
                     f"[{ACTION_NAME[r[3]]}]" for r in rs))
-    # 跨投信共識（新建倉／加碼 vs 出清／減碼，以投信家數計）
+    # 跨投信共識（新建倉／加碼 vs 出清／減碼，以投信家數計；只算規模占比 ≥ 1% 的投信，同網頁與選股條件）
     issuer_of = {eid: issuer for eid, issuer, *_ in funds}
+    cur.execute("SELECT to_regclass('public.etf_issuer_share')")
+    if cur.fetchone()[0]:
+        cur.execute("SELECT issuer FROM etf_issuer_share WHERE major")
+        majors = {r[0] for r in cur.fetchall()}
+    else:                                                  # 還沒跑新版 schema_etf_holding.sql：全部投信都算
+        majors = set(issuer_of.values())
     agg = defaultdict(lambda: {"buy": set(), "sell": set(), "amt": 0.0, "name": ""})
     for eid, fs in flows.items():
         for r in fs:
             a = agg[r[1]]
             a["name"] = r[2]
             a["amt"] += float(r[6] or 0)
+            issuer = issuer_of.get(eid, eid)
+            if issuer not in majors:
+                continue
             if r[3] in ("new", "add"):
-                a["buy"].add(issuer_of.get(eid, eid))
+                a["buy"].add(issuer)
             elif r[3] in ("exit", "cut"):
-                a["sell"].add(issuer_of.get(eid, eid))
+                a["sell"].add(issuer)
     for side, label in (("buy", "共識買進"), ("sell", "共識賣出")):
         rs = sorted((v for v in agg.values() if len(v[side]) >= 2), key=lambda v: -abs(v["amt"]))
         if rs:
-            print(f"\n{label}（≥2 家投信）：" + "、".join(
+            print(f"\n{label}（≥2 家規模 ≥1% 的投信）：" + "、".join(
                 f"{v['name']}（{'/'.join(sorted(v[side]))}，{_yi(v['amt'])}）" for v in rs[:10]))
+    trust_check(cur, d)
+
+
+def trust_check(cur, d, top=15, lag_days=40, min_n=60):
+    """對照投信買賣超（inst_trades.trust_net），檢查資料有沒有對齊：
+    (1) 持股日 d 主動 ETF 實際買賣金額前 top 檔，跟投信買賣超方向一致幾檔、占比中位數（正常：大多一致、六到十成）；
+    (2) 各 ETF 近 lag_days 個持股日的方向一致率（依金額加權）。持股日對齊的話「當天」最高；前一天或後一天比當天高
+        5 個百分點以上、而且至少 min_n 筆，就印警告：持股日可能錯開一天（新增投信時最容易出錯）。
+        小基金的買賣占投信買賣超太小，一致率接近雜訊，不到 min_n 筆的不判斷（摩根、台新）。"""
+    cur.execute("SELECT count(*) FROM inst_trades WHERE trade_date = %s", (d,))
+    if not cur.fetchone()[0]:
+        print(f"\n對照投信買賣超：inst_trades 還沒有 {d} 的資料，略過")
+        return
+    cur.execute("WITH e AS (SELECT stock_id, sum(d_shares) AS s, sum(amount) AS a FROM etf_flow "
+                "           WHERE trade_date = %s AND amount IS NOT NULL GROUP BY stock_id HAVING sum(d_shares) <> 0) "
+                "SELECT e.s, i.trust_net FROM e LEFT JOIN inst_trades i ON i.stock_id = e.stock_id AND i.trade_date = %s "
+                "ORDER BY abs(e.a) DESC LIMIT %s", (d, d, top))
+    rs = [(float(s), float(t)) for s, t in cur.fetchall() if t]
+    same = [s / t for s, t in rs if (s > 0) == (t > 0)]
+    print(f"\n對照投信買賣超（{d}）：實際買賣前 {len(rs)} 檔方向一致 {len(same)}/{len(rs)}"
+          + (f"，占投信買賣超中位數 {median(same):.0%}" if same else ""))
+    cur.execute("SELECT min(d) FROM (SELECT DISTINCT trade_date AS d FROM etf_flow WHERE trade_date <= %s "
+                "ORDER BY 1 DESC LIMIT %s) x", (d, lag_days))
+    d0 = cur.fetchone()[0]
+    cur.execute(
+        "WITH td AS (SELECT d AS trade_date, lag(d) OVER (ORDER BY d) AS prv, lead(d) OVER (ORDER BY d) AS nxt "
+        "            FROM (SELECT DISTINCT trade_date AS d FROM inst_trades WHERE trade_date >= %(d0)s::date - 10) x), "
+        "f AS (SELECT f.etf_id, f.stock_id, f.trade_date, sign(f.d_shares) AS sg, abs(f.amount) AS w FROM etf_flow f "
+        "      WHERE f.trade_date >= %(d0)s AND f.action IN ('new', 'add', 'exit', 'cut') "
+        "        AND f.amount IS NOT NULL AND f.d_shares <> 0) "
+        "SELECT f.etf_id, count(*), "
+        "  sum(f.w) FILTER (WHERE f.sg = sign(i0.trust_net)) / NULLIF(sum(f.w) FILTER (WHERE i0.trust_net <> 0), 0), "
+        "  sum(f.w) FILTER (WHERE f.sg = sign(ip.trust_net)) / NULLIF(sum(f.w) FILTER (WHERE ip.trust_net <> 0), 0), "
+        "  sum(f.w) FILTER (WHERE f.sg = sign(i1.trust_net)) / NULLIF(sum(f.w) FILTER (WHERE i1.trust_net <> 0), 0) "
+        "FROM f JOIN td USING (trade_date) "
+        "LEFT JOIN inst_trades i0 ON i0.stock_id = f.stock_id AND i0.trade_date = f.trade_date "
+        "LEFT JOIN inst_trades ip ON ip.stock_id = f.stock_id AND ip.trade_date = td.prv "
+        "LEFT JOIN inst_trades i1 ON i1.stock_id = f.stock_id AND i1.trade_date = td.nxt "
+        "GROUP BY f.etf_id ORDER BY f.etf_id", {"d0": d0})
+    bad = []
+    for eid, n, s0, sp, sn in cur.fetchall():
+        if n >= min_n and s0 is not None and max(float(sp or 0), float(sn or 0)) >= float(s0) + 0.05:
+            bad.append(f"{eid}（{n} 筆：當天 {float(s0):.0%}、前一天 {float(sp or 0):.0%}、後一天 {float(sn or 0):.0%}）")
+    if bad:
+        print("⚠️ 持股日可能錯開一天（主動買賣跟前／後一天的投信買賣超比較一致）：" + "、".join(bad))
 
 
 def main():

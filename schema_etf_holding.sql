@@ -159,3 +159,16 @@ CREATE TABLE IF NOT EXISTS etf_basket_curve (
     nav        NUMERIC NOT NULL,            -- 起始＝1（已扣買進成本）
     PRIMARY KEY (strategy, trade_date)
 );
+
+-- 投信規模占比（2026-09-28）：各 ETF 最新持股日的基金淨資產，依投信加總（只含已支援的 ETF）。
+--   共識家數、持有家數只算 major（占比 ≥ 1%）的投信：第三階段的小投信（第一金、兆豐、摩根、台新）照抓照顯示，
+--   但不計入家數。回測（backtest_etf_flow.py 用事件當天的占比）顯示這樣共識買進 5／10／20 日都比較好。
+CREATE OR REPLACE VIEW etf_issuer_share AS
+SELECT e.issuer,
+       sum(l.nav_total) AS nav_total,
+       sum(l.nav_total) / NULLIF(sum(sum(l.nav_total)) OVER (), 0) AS share,
+       COALESCE(sum(l.nav_total) / NULLIF(sum(sum(l.nav_total)) OVER (), 0) >= 0.01, false) AS major
+FROM (SELECT DISTINCT ON (etf_id) etf_id, nav_total FROM etf_snapshot ORDER BY etf_id, as_of DESC) l
+JOIN etf_fund e USING (etf_id)
+WHERE e.adapter IS NOT NULL
+GROUP BY e.issuer;

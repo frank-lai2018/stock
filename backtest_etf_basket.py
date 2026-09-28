@@ -9,12 +9,12 @@ r"""backtest_etf_basket.py — 持股籃策略回測：持有「被 N 家投信�
   basket1_m   ≥1 家投信持有（整個持股籃）、等權、每月換股
   basket2_m   ≥2 家投信持有、等權、每月換股
   basket3_m   ≥3 家投信持有、等權、每月換股
-  basket4_m   ≥4 家投信持有、等權、每月換股（主策略：13 家投信時約 36 檔；安聯 00984A 上市後才有 4 家，2025-07 起）
+  basket4_m   ≥4 家投信持有、等權、每月換股（主策略：約 30 檔；安聯 00984A 上市後才有 4 家，2025-07 起）
   basket5_m   ≥5 家投信持有、等權、每月換股（2025-12 起）
   basket4_w   ≥4 家投信持有、等權、每週換股（看換手成本）
   basket4_vw  ≥4 家投信持有、依主動 ETF 合計持股市值加權、每月換股
   門檻要看籃子大小：維持 30～40 檔時最好。投信從 3 家、8 家擴到 13 家，主策略也從 ≥2 家、≥3 家改成 ≥4 家
-  （平均 30、33、36 檔）。
+  （平均 30、33、30 檔）。家數只算當天規模占比 ≥1% 的投信（同 backtest_etf_flow），2026-09-28 起。
 基準（買進持有）：00981A 主動統一台股增長、0050 元大台灣50
 成本：股票買進 0.1425%、賣出 0.1425%＋證交稅 0.3%；ETF 賣出證交稅 0.1%。券商手續費有折扣的話成本更低。
 價格：還原價，並修正還原價斷點（見 backtest_etf_flow.sanitize；0050 2025-06-18 一拆四就是這種斷點）。
@@ -54,14 +54,17 @@ STRATEGIES = {   # key: (名稱, 最少投信家數, 換股頻率, 加權)；前
 # ---------- 載入 ----------
 
 def load_holdings(cur):
-    """回傳 {etf_id: (issuer, {as_of: {code: 持股市值}})}；市值＝權重 × 基金淨資產（非佔位股）。"""
+    """回傳 {etf_id: (issuer, {as_of: {code: 持股市值}})}；市值＝權重 × 基金淨資產（非佔位股）。
+    家數只算當天規模占比 ≥ 1% 的投信（同 backtest_etf_flow.major）：小投信的持股不收。"""
+    shares = bt.issuer_shares(cur)
     cur.execute("SELECT h.etf_id, e.issuer, h.as_of, h.code, h.weight * s.nav_total / 100 "
                 "FROM etf_holding h JOIN etf_fund e USING (etf_id) "
                 "JOIN etf_snapshot s ON s.etf_id = h.etf_id AND s.as_of = h.as_of "
                 "WHERE h.kind = 'stock' AND (h.weight >= 0.05 OR (h.weight >= 0.01 AND h.shares > 1000))")
     out = {}
     for eid, issuer, d, code, val in cur.fetchall():
-        out.setdefault(eid, (issuer, defaultdict(dict)))[1][d][code] = float(val or 0)
+        if bt.major(shares, issuer, d):
+            out.setdefault(eid, (issuer, defaultdict(dict)))[1][d][code] = float(val or 0)
     return out
 
 

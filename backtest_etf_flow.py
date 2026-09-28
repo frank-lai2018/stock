@@ -1,6 +1,9 @@
 r"""backtest_etf_flow.py — 主動式 ETF 進出訊號回測：跟著買（或避開）有沒有超額報酬。說明見 主動ETF追蹤設計.md。
 
 事件（同一檔、同一持股日 T，依 etf_flow 的 action；家數以投信計，同投信兩檔 ETF 只算一家）：
+  家數只算當天規模占比 ≥ MIN_ISSUER_SHARE（1%）的投信（占比＝各 ETF 最新 nav_total 依投信加總，不看未來）。
+  2026-09-28 加入第三階段的五家後，≥2 家的共識多了一半、而且較弱，其中第一金、兆豐、摩根、台新合計只有 2% 規模；
+  只算大投信，共識買進 5／10／20 日都比較好（相對持股籃：全部投信 +0.32／+0.79／+2.48% → +0.54／+1.08／+2.66%）。
   buy2   共識買進   ≥2 家投信新建倉／加碼
   buy1   單家加碼   只有 1 家新建倉／加碼、沒有人賣
   new    新建倉     任一家新建倉
@@ -48,6 +51,7 @@ COOLDOWN = 10               # 同股同訊號 N 個交易日內只算一次
 MIN_AMT = 20_000_000        # 母體：20 日均成交額門檻（同 backtest_patterns.py）
 MIN_DAYS = 60               # 母體：至少交易 60 天
 INFLOW = 0.01               # 加碼的 ETF 當天單位數增加 > 1% 視為申購期
+MIN_ISSUER_SHARE = 0.01     # 家數只算規模占比 ≥ 1% 的投信（同 etf_issuer_share.major）
 PRICE_START = date(2025, 1, 1)   # 價格多載入幾個月，母體的 60 日門檻才算得出來
 SCHEMA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema_etf_holding.sql")
 
@@ -145,8 +149,35 @@ def load_prices(cur):
     return O, C, wide["amt"]
 
 
+def issuer_shares(cur):
+    """{持股日: {投信: 規模占比}}：當天（含）以前各 ETF 最新一份的 nav_total，依投信加總後的占比（不看未來）。
+    跟 etf_issuer_share view 同一個算法，只是逐日。"""
+    cur.execute("SELECT s.etf_id, e.issuer, s.as_of, s.nav_total FROM etf_snapshot s JOIN etf_fund e USING (etf_id) "
+                "ORDER BY s.as_of")
+    by_date = defaultdict(list)
+    for eid, issuer, d, nav in cur.fetchall():
+        by_date[d].append((eid, issuer, float(nav or 0)))
+    last, out = {}, {}
+    for d in sorted(by_date):
+        for eid, issuer, nav in by_date[d]:
+            last[eid] = (issuer, nav)
+        tot = sum(n for _, n in last.values()) or 1.0
+        share = defaultdict(float)
+        for issuer, nav in last.values():
+            share[issuer] += nav / tot
+        out[d] = dict(share)
+    return out
+
+
+def major(shares, issuer, d):
+    """這家投信在持股日 d 是否計入家數（規模占比 ≥ MIN_ISSUER_SHARE）。"""
+    return shares.get(d, {}).get(issuer, 0.0) >= MIN_ISSUER_SHARE
+
+
 def load_events(cur):
-    """每 (股票, 持股日) 一列：買進／賣出的投信、是否新建倉／出清、主動金額、買方 ETF 當天的單位數變動。"""
+    """每 (股票, 持股日) 一列：買進／賣出的投信、是否新建倉／出清、主動金額、買方 ETF 當天的單位數變動。
+    只收當天規模占比 ≥ MIN_ISSUER_SHARE 的投信。"""
+    shares = issuer_shares(cur)
     cur.execute("SELECT f.stock_id, f.trade_date, e.issuer, f.action, f.active_amount, s.flow_k_units "
                 "FROM etf_flow f JOIN etf_fund e USING (etf_id) "
                 "JOIN etf_snapshot s ON s.etf_id = f.etf_id AND s.as_of = f.trade_date "
@@ -154,6 +185,8 @@ def load_events(cur):
     agg = defaultdict(lambda: {"buy": set(), "sell": set(), "new": False, "exit": False,
                                "buy_amt": 0.0, "sell_amt": 0.0, "inflow": 0.0})
     for sid, d, issuer, act, amt, ku in cur.fetchall():
+        if not major(shares, issuer, d):
+            continue
         a = agg[(sid, d)]
         if act in ("new", "add"):
             a["buy"].add(issuer)

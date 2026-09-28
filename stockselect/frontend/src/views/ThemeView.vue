@@ -31,7 +31,12 @@ const STATUS = { confirmed: '已確認', seed: '待複核' }
 const pctx = (v, d = 1) => (v == null ? '—' : (v >= 0 ? '+' : '') + (Number(v) * 100).toFixed(d) + '%')
 const up = (v) => (v == null ? '#999' : v >= 0 ? '#EA4C4C' : '#3F9E5A')
 const yi = (v) => (v == null ? '—' : (Number(v) / 1e8).toFixed(1) + ' 億')
+const syi = (v) => (v == null ? '—' : (Number(v) > 0 ? '+' : '') + (Number(v) / 1e8).toFixed(1) + ' 億')
 const lots = (v) => (v == null ? '—' : (v >= 0 ? '+' : '') + Math.round(Number(v) / 1000).toLocaleString('en-US') + ' 張')
+// 主動 ETF 近 5 個持股日在這個族群的淨買（實際買賣金額；後端 routers/themes.py 的 _aetf_by_theme）
+const aetfTip = (r) => (r.aetf_net == null ? '主動 ETF 近 5 個持股日沒有買賣' :
+  `實際買賣 ${syi(r.aetf_net)}（主動調整 ${syi(r.aetf_active)}，扣掉申購贖回的等比例增減）｜` +
+  `淨買 ${r.aetf_n_buy} 檔、淨賣 ${r.aetf_n_sell} 檔｜占成分股成交額 ${pctx(r.aetf_ratio, 2)}`)
 
 async function load(code) {
   loading.value = true
@@ -171,6 +176,13 @@ onBeforeUnmount(() => {
         <el-table-column label="法人" width="76" align="right">
           <template #default="{ row }"><span :style="{ color: up(row.inst_ratio) }">{{ pctx(row.inst_ratio) }}</span></template>
         </el-table-column>
+        <el-table-column label="主動ETF 5日" width="100" align="right">
+          <template #default="{ row }">
+            <el-tooltip :content="aetfTip(row)">
+              <span :style="{ color: row.aetf_net == null ? '#ccc' : up(Number(row.aetf_net)) }">{{ syi(row.aetf_net) }}</span>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column label="熱度" width="130">
           <template #default="{ row }">
             <el-progress :percentage="Math.round(row.heat_score || 0)" :stroke-width="10" :format="(p) => p"
@@ -181,6 +193,8 @@ onBeforeUnmount(() => {
       <div style="color: #999; font-size: 12px; margin-top: 8px">
         熱度＝20 日動能 30%＋5 日動能 15%＋站上月線 20%＋20 日新高 10%＋量比 10%＋法人 15%，各項先轉成同層級內的百分位（相對熱度）。
         成分股只計入交易滿 60 天、20 日均成交額 ≥500 萬的股票；等權平均容易被單一飆股拉高，搭配「站上月線」一起看。
+        主動ETF 5日＝涵蓋的主動 ETF 近 5 個持股日（{{ ranking.aetf_dates?.[0] || '—' }}～{{ ranking.aetf_dates?.slice(-1)[0] || '—' }}）
+        在成分股的實際買賣淨額，不計入熱度分數；游標移上去看主動調整金額與占成交額。
       </div>
     </el-card>
 
@@ -207,6 +221,9 @@ onBeforeUnmount(() => {
             <span>站上月線 <b>{{ Math.round(detail.daily.breadth_ma20 * 100) }}%</b></span>
             <span>法人 <b :style="{ color: up(detail.daily.inst_ratio) }">{{ pctx(detail.daily.inst_ratio) }}</b></span>
           </template>
+          <el-tooltip v-if="detail.aetf" :content="aetfTip(detail.aetf)">
+            <span>主動ETF 5日 <b :style="{ color: up(Number(detail.aetf.aetf_net || 0)) }">{{ syi(detail.aetf.aetf_net) }}</b></span>
+          </el-tooltip>
           <span v-else style="color: #999">（成分股不足 5 檔，未計算熱度）</span>
           <span style="color: #999; font-size: 12px">共 {{ detail.rows.length }} 檔｜20 日報酬中位數 {{ pctx(detail.median_ret_20d) }}</span>
         </div>
@@ -252,6 +269,14 @@ onBeforeUnmount(() => {
         <el-table-column label="法人20日" width="100" align="right">
           <template #default="{ row }"><span :style="{ color: up(row.inst_net_20d) }">{{ lots(row.inst_net_20d) }}</span></template>
         </el-table-column>
+        <el-table-column label="主動ETF 5日" width="100" align="right">
+          <template #default="{ row }">
+            <el-tooltip v-if="row.aetf_net != null" :content="`實際買賣 ${syi(row.aetf_net)}（主動調整 ${syi(row.aetf_active)}）`">
+              <span :style="{ color: up(Number(row.aetf_net)) }">{{ syi(row.aetf_net) }}</span>
+            </el-tooltip>
+            <span v-else style="color: #ccc">—</span>
+          </template>
+        </el-table-column>
         <el-table-column label="日均成交" width="88" align="right">
           <template #default="{ row }">
             <span :style="{ color: row.in_universe ? '' : '#bbb' }">{{ yi(row.amt20) }}</span>
@@ -262,7 +287,8 @@ onBeforeUnmount(() => {
         </el-table-column>
       </el-table>
       <div v-if="detail" style="color: #999; font-size: 12px; margin-top: 8px">
-        領頭羊＝20 日報酬前 3 名；落後補漲＝20 日報酬低於族群中位數、但仍站上季線。灰色成交額＝未達母體門檻（不計入族群熱度）。點列進個股頁。
+        領頭羊＝20 日報酬前 3 名；落後補漲＝20 日報酬低於族群中位數、但仍站上季線。灰色成交額＝未達母體門檻（不計入族群熱度）。
+        主動ETF 5日＝近 5 個持股日主動 ETF 的實際買賣淨額。點列進個股頁。
       </div>
     </el-card>
   </div>

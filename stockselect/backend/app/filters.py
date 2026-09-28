@@ -80,18 +80,22 @@ FILTERS = {
                           "WHERE (t.code = %(theme)s OR t.parent_code = %(theme)s) AND t.is_active "
                           "AND st.valid_to IS NULL AND st.status IN ('confirmed', 'seed'))", _STR),
     # 主動式 ETF（見 主動ETF追蹤設計.md）：近 5 個持股日有 N 家以上投信主動新建倉／加碼（或出清／減碼）。
-    # 直查 etf_flow，每晚抓完就生效、不必等 mv 刷新；以投信家數計（同投信兩檔 ETF 只算一家）
+    # 直查 etf_flow，每晚抓完就生效、不必等 mv 刷新；以投信家數計（同投信兩檔 ETF 只算一家），
+    # 而且只算規模占比 ≥ 1% 的投信（etf_issuer_share.major；第一金、兆豐、摩根、台新不計）
     "aetf_buy_5d_min":   ("stock_id IN (SELECT f.stock_id FROM etf_flow f JOIN etf_fund e USING (etf_id) "
+                          "JOIN etf_issuer_share i ON i.issuer = e.issuer AND i.major "
                           "WHERE f.action IN ('new', 'add') AND f.trade_date >= (SELECT min(d) FROM "
                           "(SELECT DISTINCT trade_date AS d FROM etf_flow ORDER BY d DESC LIMIT 5) w) "
                           "GROUP BY f.stock_id HAVING count(DISTINCT e.issuer) >= %(aetf_buy_5d_min)s)", _NUM),
     "aetf_sell_5d_min":  ("stock_id IN (SELECT f.stock_id FROM etf_flow f JOIN etf_fund e USING (etf_id) "
+                          "JOIN etf_issuer_share i ON i.issuer = e.issuer AND i.major "
                           "WHERE f.action IN ('exit', 'cut') AND f.trade_date >= (SELECT min(d) FROM "
                           "(SELECT DISTINCT trade_date AS d FROM etf_flow ORDER BY d DESC LIMIT 5) w) "
                           "GROUP BY f.stock_id HAVING count(DISTINCT e.issuer) >= %(aetf_sell_5d_min)s)", _NUM),
-    # 目前被 N 家以上投信的主動 ETF 持有（非佔位股：權重 ≥ 0.05%，或 ≥ 0.01% 且不只 1 張）。回測（13 家投信）：
-    # 持股籃本身每 20 日贏大盤約 1.9%；≥4 家持有、每月換股贏 00981A（見 主動ETF追蹤設計.md；有時期依賴）
+    # 目前被 N 家以上投信的主動 ETF 持有（非佔位股：權重 ≥ 0.05%，或 ≥ 0.01% 且不只 1 張；同樣只算大投信）。
+    # 回測：持股籃本身每 20 日贏大盤約 1.9%；≥4 家持有、每月換股贏 00981A（見 主動ETF追蹤設計.md；有時期依賴）
     "aetf_held_min":     ("stock_id IN (SELECT h.code FROM etf_holding h JOIN etf_fund e USING (etf_id) "
+                          "JOIN etf_issuer_share i ON i.issuer = e.issuer AND i.major "
                           "JOIN (SELECT etf_id, max(as_of) AS as_of FROM etf_snapshot GROUP BY etf_id) m "
                           "USING (etf_id, as_of) WHERE h.kind = 'stock' "
                           "AND (h.weight >= 0.05 OR (h.weight >= 0.01 AND h.shares > 1000)) "

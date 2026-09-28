@@ -279,7 +279,7 @@ function go(id) { router.push(`/stock/${id}`) }
       </div>
     </el-card>
 
-    <!-- 主動ETF動向：各投信公告的持股相鄰兩天相減（已扣全面等比例增減），以投信家數算共識 -->
+    <!-- 主動ETF動向：各投信公告的持股相鄰兩天相減（已扣全面等比例增減），以投信家數算共識（只算規模 ≥1% 的投信） -->
     <el-card v-if="aetfToday && (aetfToday.buys.length || aetfToday.sells.length)" shadow="never" style="margin-top: 16px">
       <template #header>
         <div style="display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px">
@@ -299,14 +299,14 @@ function go(id) { router.push(`/stock/${id}`) }
           <div v-for="r in side.rows" :key="r.stock_id" style="cursor: pointer; line-height: 1.9"
                @click="router.push(`/stock/${r.stock_id}`)">
             {{ r.stock_id }} {{ r.name }}
-            <span style="color: #888; font-size: 12px">{{ r[side.n] }} 家（{{ r.etfs.join('、') }}）</span>
+            <span style="color: #888; font-size: 12px">{{ r[side.n] }} 家<template v-if="r[side.n + '_minor']">+{{ r[side.n + '_minor'] }}</template>（{{ r.etfs.join('、') }}）</span>
             <span :style="{ color: up(r.active_amount), marginLeft: '6px' }">{{ yi1(r.active_amount) }}</span>
           </div>
           <div v-if="!side.rows.length" style="color: #ccc">—</div>
         </div>
       </div>
       <div style="color: #bbb; font-size: 12px; margin-top: 6px">
-        金額為主動調整（扣掉申購贖回等全面等比例增減）；持股資料收盤後才公布，最早隔天開盤反應。
+        金額為主動調整（扣掉申購贖回等全面等比例增減）；家數只算規模 ≥1% 的投信，「+N」是另外的小投信；持股資料收盤後才公布，最早隔天開盤反應。
       </div>
     </el-card>
 
