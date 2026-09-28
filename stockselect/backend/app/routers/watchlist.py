@@ -13,7 +13,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from .. import db, target_track
-from .patterns import _fundamental_trends, screen_price_action
+from ..growth import fundamental_trends
+from .patterns import screen_price_action
 from .screen import _attach_last_pattern, _attach_recent_eps, breakout_ranking
 
 
@@ -292,7 +293,7 @@ def _no_signal_rows(ids, reason, trends=False):
     names = {r["stock_id"]: r for r in db.query(
         "SELECT stock_id, name, industry FROM stock WHERE stock_id = ANY(%(ids)s)", {"ids": missing})} \
         if missing else {}
-    ft = _fundamental_trends([i for i in ids if i in snap]) if trends else {}
+    ft = fundamental_trends([i for i in ids if i in snap]) if trends else {}
     rows = []
     for sid in ids:
         if sid in snap:
@@ -344,7 +345,7 @@ def category_breakout(cid: int, recent: int = 20):
         return {"count": 0, "n_signal": 0, "as_of": None, "items": []}
     res = breakout_ranking(stock_ids=",".join(m["stock_id"] for m in mem), recent=recent, limit=500)
     rec = max(1, min(int(recent), 25))
-    return _decision_view(mem, res, f"近 {rec} 日沒有已確認的多方型態突破")
+    return _decision_view(mem, res, f"近 {rec} 日沒有已確認的多方型態突破", trends=True)
 
 
 @router.post("/items")

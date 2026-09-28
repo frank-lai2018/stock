@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from .. import db, patterns, swings
 from ..breakout_rank import score_breakout
 from ..filters import SORT_WHITELIST, build_where
+from ..growth import fundamental_trends, passes
 from ..schemas import ScreenRequest
 
 
@@ -405,12 +406,35 @@ def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 1
 
 @router.get("/screen/breakout-ranking")
 def breakout_ranking(security_type: str = "stock", min_amt: int = 20000000,
-                     recent: int = 3, limit: int = 200, stock_id: str = "", stock_ids: str = ""):
+                     recent: int = 3, limit: int = 200, stock_id: str = "", stock_ids: str = "",
+                     pattern: str = "", eps_min: float = None, revenue_month_streak: int = 0,
+                     revenue_quarter_streak: int = 0, gross_margin_quarter_streak: int = 0):
     """多方突破決策排行：底部反轉＋整理突破，附可解釋的五面向分數與風險檢查。
-    stock_ids＝逗號分隔的多檔（自選股用），同指定個股分析不套母體、流動性與證券類別。"""
-    scan = pattern_breakout(pattern="all", group="bull", limit=500,
+    pattern＝只找這一種多方型態（空＝全部，依優先序取第一個命中）。eps_min（單季 EPS 下限）與
+    *_streak（月營收、季營收、毛利率連增次數）＝成長過濾，同裸 K 決策頁，不算進分數。
+    stock_id＝指定個股分析；stock_ids＝逗號分隔的多檔（自選股用）；兩者都不套母體、流動性、證券類別、
+    型態與成長過濾。"""
+    picked = bool(stock_id.strip() or _split_ids(stock_ids))
+    pat = "" if picked else pattern.strip()
+    if pat and pat not in swings.BULL_KEYS:
+        raise HTTPException(400, f"未知多方型態：{pat}")
+    scan = pattern_breakout(pattern=pat or "all", group="bull", limit=500,
                             security_type=security_type, min_amt=max(0, int(min_amt)),
                             mode="breakout", recent=recent, stock_id=stock_id, stock_ids=stock_ids)
+    # 成長過濾：每列附 fundamental_trend（表格的「成長過濾」欄），再依門檻篩
+    trends = fundamental_trends([r["stock_id"] for r in scan["items"]])
+    month_n = 0 if picked else max(0, min(int(revenue_month_streak), 6))
+    quarter_n = 0 if picked else max(0, min(int(revenue_quarter_streak), 4))
+    margin_n = 0 if picked else max(0, min(int(gross_margin_quarter_streak), 4))
+    eps_floor = None if picked or eps_min is None else float(eps_min)
+    kept = []
+    for row in scan["items"]:
+        row["fundamental_trend"] = trends.get(row["stock_id"], {})
+        if eps_floor is not None and (row.get("eps") is None or float(row["eps"]) < eps_floor):
+            continue
+        if passes(row["fundamental_trend"], month_n, quarter_n, margin_n):
+            kept.append(row)
+    scan["items"] = kept
     bt_rows = db.query(
         "SELECT pattern,n,win_rate,avg_ret,median_ret,avg_excess "
         "FROM pattern_backtest WHERE horizon=20") \

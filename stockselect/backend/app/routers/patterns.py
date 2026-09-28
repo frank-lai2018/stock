@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException
 
 from .. import db, patterns, price_action, swings
+from ..growth import fundamental_trends, passes
 from .screen import _attach_recent_eps, _split_ids
 
 router = APIRouter(prefix="/api", tags=["patterns"])
@@ -36,40 +37,6 @@ def screen_pattern(pattern: str, limit: int = 100):
         {"ids": matches, "n": n})
     _attach_recent_eps(snap)                          # 近 4 季 EPS（供前端「每季 EPS >」過濾）
     return {"pattern": pattern, "name": patterns.CATALOG[pattern][0], "count": len(snap), "items": snap}
-
-
-def _fundamental_trends(stock_ids):
-    """回傳月營收、季營收與毛利率的連續成長次數（最新一期往回算）。"""
-    if not stock_ids:
-        return {}
-    monthly = db.query(
-        "SELECT stock_id,revenue_month,revenue FROM ("
-        " SELECT stock_id,revenue_month,revenue,row_number() OVER "
-        " (PARTITION BY stock_id ORDER BY revenue_month DESC) rn FROM monthly_revenue "
-        " WHERE stock_id=ANY(%(ids)s)) z WHERE rn<=7 ORDER BY stock_id,revenue_month DESC",
-        {"ids": stock_ids})
-    quarterly = db.query(
-        "SELECT stock_id,period_date,revenue,gross_margin FROM ("
-        " SELECT stock_id,period_date,revenue,gross_margin,row_number() OVER "
-        " (PARTITION BY stock_id ORDER BY period_date DESC) rn FROM fundamentals_quarterly "
-        " WHERE stock_id=ANY(%(ids)s)) z WHERE rn<=5 ORDER BY stock_id,period_date DESC",
-        {"ids": stock_ids})
-    months, quarters = {}, {}
-    for row in monthly:
-        months.setdefault(row["stock_id"], []).append(row)
-    for row in quarterly:
-        quarters.setdefault(row["stock_id"], []).append(row)
-    out = {}
-    for sid in stock_ids:
-        mr, qr = months.get(sid, []), quarters.get(sid, [])
-        out[sid] = {
-            "revenue_month_streak": price_action.growth_streak([r["revenue"] for r in mr]),
-            "revenue_quarter_streak": price_action.growth_streak([r["revenue"] for r in qr]),
-            "gross_margin_quarter_streak": price_action.growth_streak([r["gross_margin"] for r in qr]),
-            "revenue_month": mr[0]["revenue_month"].isoformat() if mr else None,
-            "financial_quarter": qr[0]["period_date"].isoformat() if qr else None,
-        }
-    return out
 
 
 def _chart_pattern(bars, requested, recent):
@@ -119,15 +86,12 @@ def screen_price_action(security_type: str = "stock", min_amt: int = 20000000,
         if sid:
             raise HTTPException(404, f"找不到股票代號：{sid}")
         return {"count": 0, "as_of": None, "summary": {}, "items": []}
-    trends = _fundamental_trends(list(snap))
+    trends = fundamental_trends(list(snap))
     month_n = 0 if picked else max(0, min(int(revenue_month_streak), 6))
     quarter_n = 0 if picked else max(0, min(int(revenue_quarter_streak), 4))
     margin_n = 0 if picked else max(0, min(int(gross_margin_quarter_streak), 4))
     snap = {code: {**dict(row), "fundamental_trend": trends.get(code, {})}
-            for code, row in snap.items()
-            if trends.get(code, {}).get("revenue_month_streak", 0) >= month_n
-            and trends.get(code, {}).get("revenue_quarter_streak", 0) >= quarter_n
-            and trends.get(code, {}).get("gross_margin_quarter_streak", 0) >= margin_n}
+            for code, row in snap.items() if passes(trends.get(code), month_n, quarter_n, margin_n)}
     if not snap:
         return {"count": 0, "as_of": None, "summary": {}, "items": []}
     rows = db.query(

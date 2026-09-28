@@ -41,7 +41,7 @@ const scoreOf = (row) => row.decision?.score ?? -1
         <span v-else class="muted">—</span>
       </template>
     </el-table-column>
-    <el-table-column label="股票" width="145" fixed>
+    <el-table-column label="股票" width="140" fixed>
       <template #default="{ row }">
         <router-link :to="`/stock/${row.stock_id}`" class="stock-link">{{ row.stock_id }} {{ row.name }}</router-link>
         <div class="muted small">{{ row.industry || '—' }}</div>
@@ -53,7 +53,7 @@ const scoreOf = (row) => row.decision?.score ?? -1
         <span v-else class="muted small">{{ row.reason || '近期沒有已確認的多方型態突破' }}</span>
       </template>
     </el-table-column>
-    <el-table-column label="五面向" min-width="255">
+    <el-table-column label="五面向" min-width="240">
       <template #default="{ row }">
         <div v-if="row.decision" class="parts">
           <span>趨 {{ row.decision.parts.trend }}/30</span>
@@ -65,7 +65,7 @@ const scoreOf = (row) => row.decision?.score ?? -1
         <span v-else class="muted">—</span>
       </template>
     </el-table-column>
-    <el-table-column label="突破品質" width="145">
+    <el-table-column label="突破品質" width="125">
       <template #default="{ row }">
         <template v-if="row.decision">
           <div>量比 <b>{{ num(row.breakout?.vol_ratio, 2) }}</b></div>
@@ -84,7 +84,7 @@ const scoreOf = (row) => row.decision?.score ?? -1
         <span v-else class="muted">—</span>
       </template>
     </el-table-column>
-    <el-table-column label="型態20日回測" width="150">
+    <el-table-column label="型態20日回測" width="120">
       <template #default="{ row }">
         <template v-if="row.decision?.backtest_20d">
           <div>超額 {{ pct(row.decision.backtest_20d.avg_excess) }}</div>
@@ -94,12 +94,24 @@ const scoreOf = (row) => row.decision?.score ?? -1
         <span v-else>—</span>
       </template>
     </el-table-column>
-    <el-table-column label="基本面／籌碼" width="175">
+    <el-table-column label="基本面／籌碼" width="160">
       <template #default="{ row }">
         <div>EPS YoY {{ pct(row.eps_yoy) }}</div>
         <div>營收 YoY {{ pct(row.rev_yoy) }}</div>
         <div>PER 位階 {{ pct(row.per_pctile) }}</div>
         <div class="muted">均額 {{ money(row.amt20) }}</div>
+      </template>
+    </el-table-column>
+    <el-table-column label="成長過濾" width="185">
+      <template #default="{ row }">
+        <template v-if="row.fundamental_trend">
+          <div>單季 EPS <b>{{ num(row.eps, 2) }}</b></div>
+          <div>月營收連增 <b>{{ row.fundamental_trend.revenue_month_streak ?? 0 }}</b> 月</div>
+          <div>季營收連增 <b>{{ row.fundamental_trend.revenue_quarter_streak ?? 0 }}</b> 季</div>
+          <div>毛利率 {{ pct(row.gross_margin) }}・連增 <b>{{ row.fundamental_trend.gross_margin_quarter_streak ?? 0 }}</b> 季</div>
+          <div class="small muted">營收月 {{ row.fundamental_trend.revenue_month || '—' }}</div>
+        </template>
+        <span v-else class="muted">—</span>
       </template>
     </el-table-column>
     <el-table-column label="檢查結果" min-width="250">
