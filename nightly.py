@@ -32,7 +32,7 @@ r"""nightly.py — 排程大腦：每晚無腦執行這一支，由它依「今�
         限流用量記在 finmind_rate_state.json，跨行程共用：同一晚先跑 dividend 再跑 capreduction
         不會各自重新計數，合計仍受 550/hr 約束。
   etfnav     每晚固定跑 fetch_etf_nav.py（ETF 淨值/折溢價/規模；mis.twse 單一請求，便宜）。
-  etfhold    每晚固定跑 fetch_active_etf.py（主動式 ETF 每日持股 → 算進出 etf_flow；統一／群益／復華官網，
+  etfhold    每晚固定跑 fetch_active_etf.py（主動式 ETF 每日持股 → 算進出 etf_flow；13 家投信官網，
                冪等、自動補近 10 個交易日的缺口）。各家傍晚到晚上才陸續公布，run_nightly.bat 在整套跑完後
                會再補抓一次：python nightly.py --only etfhold --skip-refresh（晚上 9 點後執行）。說明見 主動ETF追蹤設計.md。
   etfbacktest 每週第一次執行時跑 backtest_etf_flow.py（主動 ETF 進出訊號回測＋持股籃策略回測；約 20 秒，

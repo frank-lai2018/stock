@@ -95,11 +95,12 @@ function btRowClass({ row }) { return row.signal === btSig.value ? 'current-row-
 const bk = ref(null)
 const bkEl = ref(null)
 let bkChart = null
-const BK_MAIN = 'basket3_m'           // 主策略（8 家投信後改成 ≥3 家；見 backtest_etf_basket.py）
+const BK_MAIN = 'basket4_m'           // 主策略（13 家投信後改成 ≥4 家；見 backtest_etf_basket.py）
 const BK_STYLE = {
-  basket3_m: { color: '#EA4C4C', width: 2.5 }, '00981A': { color: '#303133', width: 2.5 },
-  '0050': { color: '#909399', width: 1.5, type: 'dashed' }, basket3_vw: { color: '#e6a23c', width: 1.2 },
-  basket3_w: { color: '#f89898', width: 1.2, type: 'dotted' }, basket4_m: { color: '#9b59b6', width: 1.2 },
+  basket4_m: { color: '#EA4C4C', width: 2.5 }, '00981A': { color: '#303133', width: 2.5 },
+  '0050': { color: '#909399', width: 1.5, type: 'dashed' }, basket4_vw: { color: '#e6a23c', width: 1.2 },
+  basket4_w: { color: '#f89898', width: 1.2, type: 'dotted' }, basket5_m: { color: '#9b59b6', width: 1.2 },
+  basket3_m: { color: '#16a085', width: 1.2 },
   basket2_m: { color: '#67c23a', width: 1.2 }, basket1_m: { color: '#409eff', width: 1.2 },
 }
 const bkHeadline = computed(() => {

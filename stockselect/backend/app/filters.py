@@ -89,8 +89,8 @@ FILTERS = {
                           "WHERE f.action IN ('exit', 'cut') AND f.trade_date >= (SELECT min(d) FROM "
                           "(SELECT DISTINCT trade_date AS d FROM etf_flow ORDER BY d DESC LIMIT 5) w) "
                           "GROUP BY f.stock_id HAVING count(DISTINCT e.issuer) >= %(aetf_sell_5d_min)s)", _NUM),
-    # 目前被 N 家以上投信的主動 ETF 持有（非佔位股：權重 ≥ 0.05%，或 ≥ 0.01% 且不只 1 張）。回測（8 家投信）：
-    # 持股籃本身每 20 日贏大盤約 2.7%；≥3 家持有、每月換股贏 00981A（見 主動ETF追蹤設計.md；有時期依賴）
+    # 目前被 N 家以上投信的主動 ETF 持有（非佔位股：權重 ≥ 0.05%，或 ≥ 0.01% 且不只 1 張）。回測（13 家投信）：
+    # 持股籃本身每 20 日贏大盤約 1.9%；≥4 家持有、每月換股贏 00981A（見 主動ETF追蹤設計.md；有時期依賴）
     "aetf_held_min":     ("stock_id IN (SELECT h.code FROM etf_holding h JOIN etf_fund e USING (etf_id) "
                           "JOIN (SELECT etf_id, max(as_of) AS as_of FROM etf_snapshot GROUP BY etf_id) m "
                           "USING (etf_id, as_of) WHERE h.kind = 'stock' "

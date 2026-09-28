@@ -4,6 +4,10 @@ r"""build_etf_flow.py — 主動式 ETF 每日進出：相鄰兩個持股日相�
   （每檔 本日股數÷前日股數，取落在 ±0.5 個百分點內最多檔的那一群的中位數；群聚不到 25% 且不到 5 檔就當 1）。
   例：00981A 2026-09-24 有變動的 30 檔全部減少、共同比例 −1.7%（當天淨贖回 1.66%，經理人全面等比例賣）；
       扣掉之後，真正主動賣的是日月光投控、信驊、台積電、緯穎，旺矽等 11 檔只是跟著等比例賣出。
+  共同比例還要跟「整本股票部位的放大倍數」（單位數比例 × 股票權重合計比例）對得上：log 差距超過 K_TOL 就當 1。
+  例：安聯 00984A 月初分兩天換股，2025-10-01 舊持股大多砍半、單位數沒變，最多檔一起變的比例是 0.5；
+      那是換股不是申贖，照 0.5 扣的話，砍半的會變成「隨申贖」、沒動的反而變成「相對加碼」。
+      群益 00982A 2025-08-18～21、安聯 00993A 也有。申購的錢晚幾天才投入（股票權重上升）也算在放大倍數裡。
 為什麼不直接用單位數比例：實測經理人多半「不會」在申購贖回當天等比例買賣——錢先進出現金、之後才分批處理
   （00981A 9/16、9/17 單位數各 +0.8%，持股幾乎沒動）。用單位數去扣，會把「只加碼一檔」誤判成隨申贖。
   單位數比例仍存在 etf_snapshot.flow_k_units 對照。
@@ -41,6 +45,7 @@ MIN_REL = 0.01            # 主動調整至少是前日部位的 1%
 FLOW_TOL = 0.3            # …且至少是申購贖回應增減量的 30%
 MIN_SHARES = 1000         # …且至少 1 張
 RECENT = 15               # 平常重算最近幾個持股日
+K_TOL = 0.1               # 共同比例與整本股票部位放大倍數的 log 差距上限（實測正常日 ≤ 0.083、換股日 ≥ 0.149）
 
 ACTION_NAME = {"new": "新建倉", "exit": "出清", "add": "加碼", "cut": "減碼",
                "add_rel": "相對加碼", "cut_rel": "相對減碼", "flow": "隨申贖", "corp": "分割/配股/減資"}
@@ -79,6 +84,21 @@ def common_factor(ratios, tol=0.005, min_share=0.25, min_n=5):
         return 1.0
     k = median(cluster)
     return 1.0 if abs(k - 1) < 0.001 else k
+
+
+def book_scale(u0, u1, h0, h1):
+    """整本股票部位的放大倍數：單位數比例 × 股票權重合計比例（申購的錢晚幾天才投入、權重上升也算在內）。
+    缺單位數或權重時回 None（不檢查）。"""
+    w0, w1 = [w for _, w, _ in h0.values()], [w for _, w, _ in h1.values()]
+    if not (u0 and u1) or any(w is None for w in w0 + w1):
+        return None
+    s0, s1 = sum(float(w) for w in w0), sum(float(w) for w in w1)
+    return float(u1) / float(u0) * s1 / s0 if s0 > 0 and s1 > 0 else None
+
+
+def plausible(k, scale):
+    """共同比例要跟整本部位的放大倍數對得上，否則是換股（例：00984A 月初舊持股一天砍半、單位數沒變），當 1。"""
+    return k if scale is None or abs(log(k) - log(scale)) <= K_TOL else 1.0
 
 
 def is_dust(shares, weight):
@@ -190,8 +210,10 @@ def compute_fund(etf_id, snaps, hold, close, events, breaks, notes=None):
         eff0 = {k: (0 if is_dust(s, w) else s) for k, (s, w, _) in h0.items()}
         eff1 = {k: (0 if is_dust(s, w) else s) for k, (s, w, _) in h1.items()}
         both = [x for x, v in eff0.items() if v > 0 and eff1.get(x, 0) > 0]
+        scale = book_scale(u0, u1, h0, h1)
         # 先用區間內沒有公司行動的持股估共同比例，判斷配股入帳時扣掉（全面等比例賣 2% 的日子，配股 1% 也分得出來）
-        k0 = common_factor([eff1[x] / eff0[x] for x in both if not in_interval(x, p, c, events, breaks)])
+        k0 = plausible(common_factor([eff1[x] / eff0[x] for x in both if not in_interval(x, p, c, events, breaks)]),
+                       scale)
         fac = {}                                          # 公司行動倍數：前日股數 × fac＝本日股本基礎
         for x in both:
             f = corp_factor(x, p, c, eff1[x] / eff0[x] / k0, events, breaks, credited, notes)
@@ -199,7 +221,7 @@ def compute_fund(etf_id, snaps, hold, close, events, breaks, notes=None):
                 fac[x] = f
         base0 = {x: v * fac.get(x, 1.0) for x, v in eff0.items()}
         k_units = float(u1) / float(u0) if u0 and u1 else None
-        k = common_factor([eff1[x] / base0[x] for x in base0 if base0[x] > 0 and eff1.get(x, 0) > 0])
+        k = plausible(common_factor([eff1[x] / base0[x] for x in base0 if base0[x] > 0 and eff1.get(x, 0) > 0]), scale)
         updates.append((p, k, k_units, etf_id, c))
         for code in set(h0) | set(h1):
             s0, w0, _ = h0.get(code, (0, None, None))

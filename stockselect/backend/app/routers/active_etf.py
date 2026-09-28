@@ -251,7 +251,8 @@ def backtest_events(signal: str, horizon: int = Query(20, ge=1, le=60), limit: i
         {"k": key, "sig": signal, "n": limit})
 
 
-_BASKET_ORDER = ["basket3_m", "basket3_vw", "basket3_w", "basket4_m", "basket2_m", "basket1_m", "00981A", "0050"]
+_BASKET_ORDER = ["basket4_m", "basket4_vw", "basket4_w", "basket5_m", "basket3_m", "basket2_m", "basket1_m",
+                 "00981A", "0050"]
 
 
 @router.get("/basket")
