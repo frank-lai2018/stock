@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getBreakoutPatterns, getPriceActionDecisions } from '../api'
 import WatchlistAddButton from '../components/WatchlistAddButton.vue'
+import PriceActionGuide from '../components/PriceActionGuide.vue'
 
 const loading = ref(false)
 const items = ref([])
@@ -130,8 +131,9 @@ onMounted(async () => {
     const [bottom, continuation] = await Promise.all([
       getBreakoutPatterns('bottom'), getBreakoutPatterns('continuation'),
     ])
-    bottomPatterns.value = bottom || []
-    continuationPatterns.value = continuation || []
+    // 只列可能多方突破的型態（下降三角只判跌破，選了一定沒結果）
+    bottomPatterns.value = (bottom || []).filter((item) => item.bull !== false)
+    continuationPatterns.value = (continuation || []).filter((item) => item.bull !== false)
   } catch (e) {
     ElMessage.warning('波段型態清單讀取失敗，仍可使用裸 K 掃描')
     chartPattern.value = ''
@@ -352,6 +354,7 @@ const directionName = (v) => v === 'bull' ? '多方' : v === 'bear' ? '空方' :
       </template>
     </el-table>
     <div class="method">{{ method }}｜目前顯示 {{ shown.length }}／{{ items.length }} 檔</div>
+    <PriceActionGuide />
   </div>
 </template>
 

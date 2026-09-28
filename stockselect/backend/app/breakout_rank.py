@@ -2,6 +2,7 @@
 
 這裡只做可解釋的規則評分，不把分數包裝成報酬保證。輸入是一列
 mv_stock_snapshot + breakout 資訊；輸出包含五個子分、風險欄位與淘汰理由。
+頁面說明在 frontend/src/components/BreakoutDecisionGuide.vue；門檻或配分改了要一起改。
 """
 
 

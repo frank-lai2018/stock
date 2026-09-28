@@ -497,13 +497,14 @@ def detect_wedge(bars, window=50, k=2, recent=3, vol_mult=1.4):
     mid = ch["closes"][-1]
     ru, rl = _rel(up[0], mid), _rel(lo[0], mid)
     h = abs(_at(up, ch["s"]) - _at(lo, ch["s"]))
+    # 收斂＝上緣斜率 < 下緣斜率（兩線距離隨時間縮小）；上升楔、下降楔都一樣。
     if ru > _FLAT and rl > _FLAT and up[0] < lo[0]:            # 上升楔（收斂）→ 空
         b = _brk_line(ch["closes"], ch["vols"], lo, recent, vol_mult, up=False)
         if b:
             j, vr, lvl = b
             return _out_cont("wedge", "bear", lvl, h, bars, ch["closes"], j, vr,
                              [(ch["ph"][0][0], ch["ph"][0][1], "上緣"), (ch["pl"][0][0], ch["pl"][0][1], "下緣")])
-    if ru < -_FLAT and rl < -_FLAT and up[0] > lo[0]:         # 下降楔（收斂）→ 多
+    if ru < -_FLAT and rl < -_FLAT and up[0] < lo[0]:         # 下降楔（收斂）→ 多
         b = _brk_line(ch["closes"], ch["vols"], up, recent, vol_mult, up=True)
         if b:
             j, vr, lvl = b
@@ -704,6 +705,8 @@ DETECTORS_CONT = {                  # 連續 / 整理
 }
 GROUPS = {"bottom": DETECTORS, "top": DETECTORS_TOP, "continuation": DETECTORS_CONT}
 ALL = {**DETECTORS, **DETECTORS_TOP, **DETECTORS_CONT}
+# 可能出現多方突破的型態（突破決策、裸 K 決策用）：下降三角只判向下跌破，不在內
+BULL_KEYS = [k for k in (*DETECTORS, *DETECTORS_CONT) if k != "desc_triangle"]
 PATTERN_NAMES = {
     "double_bottom": "W底/雙重底", "triple_bottom": "三重底", "hs_bottom": "頭肩底",
     "cup_handle": "杯柄", "rounding_bottom": "圓弧底", "v_reversal": "V型反轉",

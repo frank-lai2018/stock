@@ -286,9 +286,9 @@ def backtest_events(pattern: str, limit: int = 200):
 @router.get("/screen/breakout-patterns")
 def breakout_patterns(group: str = "bottom"):
     """型態突破頁的型態目錄（key + 中文名，含掃描優先序）。
-    group=bottom（底部反轉）/ continuation（連續整理）。"""
+    group=bottom（底部反轉）/ continuation（連續整理）。bull＝可能出現多方突破（裸 K 決策頁的下拉只列這些）。"""
     grp = swings.GROUPS.get(group, swings.DETECTORS)
-    return [{"key": k, "name": swings.PATTERN_NAMES[k]} for k in grp]
+    return [{"key": k, "name": swings.PATTERN_NAMES[k], "bull": k in swings.BULL_KEYS} for k in grp]
 
 
 @router.get("/screen/pattern-breakout")
@@ -299,7 +299,7 @@ def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 1
     """全市場掃描型態（Python 波段偵測，非 MV 篩選）。
 
     group：bottom（底部反轉）/ top（頭部反轉）/ continuation（連續整理）/
-           bull（底部反轉＋整理突破，供突破決策頁使用）。
+           bull（可能多方突破的底部反轉＋整理型態＝swings.BULL_KEYS，供突破決策頁使用）。
     pattern：型態 key，或 all=該組全部（依優先序，每檔取第一個命中）。可逗號多選。
     mode：breakout＝已確認突破（收盤穿頸線帶量）；near＝接近突破（收盤在頸線 near_band 內、尚未穿越）。
     recent：突破觀察窗（幾個交易日內發生的突破才收錄，預設 3；近2週≈10、近1月≈20）。
@@ -307,8 +307,7 @@ def pattern_breakout(pattern: str = "all", group: str = "bottom", limit: int = 1
     """
     rec = max(1, min(int(recent), 25))
     if pattern in ("", "all"):
-        keys = list(swings.DETECTORS) + list(swings.DETECTORS_CONT) if group == "bull" \
-            else list(swings.GROUPS.get(group, swings.DETECTORS))
+        keys = list(swings.BULL_KEYS) if group == "bull" else list(swings.GROUPS.get(group, swings.DETECTORS))
     else:
         keys = [p for p in pattern.split(",") if p in swings.ALL]
     if not keys:

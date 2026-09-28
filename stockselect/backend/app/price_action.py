@@ -2,6 +2,7 @@
 
 只使用 OHLC：K 棒型態、市場結構、支撐壓力、觸發/失效與風險報酬。
 成交量、均線、基本面與籌碼刻意不進入分數，避免「裸 K」定義失焦。
+頁面說明在 frontend/src/components/PriceActionGuide.vue；型態定義、門檻或配分改了要一起改。
 """
 from statistics import median
 

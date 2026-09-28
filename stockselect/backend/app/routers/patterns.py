@@ -76,7 +76,7 @@ def _chart_pattern(bars, requested, recent):
     """找近期已確認突破的多方波段型態；requested=any 時依既有優先序取第一個。"""
     if not requested:
         return None
-    bull_keys = [*swings.DETECTORS, *swings.DETECTORS_CONT]
+    bull_keys = swings.BULL_KEYS
     if requested == "any":
         keys = bull_keys
     elif requested in bull_keys:

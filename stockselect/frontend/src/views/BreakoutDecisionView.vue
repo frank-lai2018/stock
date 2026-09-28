@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getBreakoutRanking } from '../api'
 import WatchlistAddButton from '../components/WatchlistAddButton.vue'
+import BreakoutDecisionGuide from '../components/BreakoutDecisionGuide.vue'
 
 const loading = ref(false)
 const items = ref([])
@@ -227,6 +228,7 @@ const statusOf = (row) => STATUS[row.decision?.status] || STATUS.skip
       </template>
     </el-table>
     <div class="method">{{ method }}｜目前顯示 {{ shown.length }} 檔</div>
+    <BreakoutDecisionGuide />
   </div>
 </template>
 
