@@ -2,7 +2,8 @@
 
 > 建立日期：2026-07-13
 > 資料來源：既有 PostgreSQL 資料庫 **`twstock`**（由上層 `stock_screener_starter` 的資料管線每日更新）。
-> 本系統**只讀** DB，不重抓資料；資料更新交給上層的 `nightly.py`。
+> 本系統不重抓原始資料；資料更新交給上層的 `nightly.py`。除交易帳、自選股等使用者資料外，
+> 今日決策中心會寫入 `decision_signal_log`，用來累積分數區間的前瞻校準結果。
 
 ---
 
@@ -11,6 +12,7 @@
 把「散在各表的台股資料」變成一套**可互動選股**的網頁工具：
 
 - **選股器**：用動能 / 基本面 / 估值 / 籌碼條件篩選，結果依分數排名。
+- **今日決策中心**：合併突破與裸 K、去除重複候選，依現有持股限制產業曝險，並以停損距離反推股數；同步累積分數區間的勝率與期望 R。頁內「決策追蹤／歷史紀錄」可回看當時進場、停損、目標、入選理由及後續 20 日結果。
 - **突破決策**：把底部反轉與整理突破候選做五面向評分，列出參考停損、報酬風險比與淘汰原因。
 - **型態＋裸 K 決策**：波段型態與 EPS／營收／毛利成長先過濾，再用 OHLC 評估結構、位置、K 棒品質、後續確認與風險。
 - **指定個股分析**：突破決策與裸 K 決策皆可直接輸入股票代號，繞過全市場母體與流動性門檻檢查近期訊號。
@@ -32,7 +34,7 @@
 | 路由 | **Vue Router** | 頁面切換 |
 | HTTP | **axios** | 打後端 API |
 | 後端 | **FastAPI + uvicorn**（Python）| 輕量、自動 API 文件（/docs）、型別驗證 |
-| DB 存取 | **psycopg2**（沿用上層）+ 連線池 | 唯讀查詢為主；參數化避免注入 |
+| DB 存取 | **psycopg2**（沿用上層）+ 連線池 | 市場資料以查詢為主；交易帳、自選股與決策校準表需寫入 |
 | 驗證/序列化 | **Pydantic** | request/response schema |
 | DB | **PostgreSQL `twstock`**（現成）| 15+ 張表；本系統讀取 |
 
@@ -43,7 +45,7 @@
 ## 3. 系統架構
 
 ```
-┌────────────────┐   HTTP / JSON    ┌──────────────────┐   SQL(唯讀)   ┌──────────────────┐
+┌────────────────┐   HTTP / JSON    ┌──────────────────┐   SQL         ┌──────────────────┐
 │  Vue 3 (Vite)  │ ───────────────▶ │  FastAPI 後端     │ ───────────▶ │ PostgreSQL twstock│
 │  選股器/個股頁 │ ◀─────────────── │  /api/*          │ ◀─────────── │ (nightly.py 更新) │
 └────────────────┘                  └──────────────────┘              └──────────────────┘
@@ -109,6 +111,8 @@ stockselect/
 | POST | `/api/screen` | 依條件篩選 + 排名，回傳股票清單 | `mv_stock_snapshot` |
 | GET | `/api/screen/breakout-ranking` | 多方突破二次評分與風險檢查（`stock_id` 指定個股、`stock_ids` 逗號分隔多檔） | `mv_stock_snapshot`, `price_daily`, `pattern_backtest` |
 | GET | `/api/screen/price-action` | 型態＋裸 K 決策（含 EPS、月季營收、毛利率連增過濾；`stock_id`／`stock_ids` 同上） | `mv_stock_snapshot`, `price_daily`, `monthly_revenue`, `fundamentals_quarterly` |
+| GET | `/api/screen/daily-decision` | 今日決策中心：策略共識、分數校準、持股產業限制、固定風險部位 | 上述資料＋`trade_log`, `decision_signal_log` |
+| GET | `/api/screen/daily-decision/history` | 決策歷史：依日期、股票、策略、結果篩選，追蹤目前／最終 R | `decision_signal_log`, `price_daily`, `mv_stock_snapshot` |
 | GET | `/api/stock/{id}` | 個股最新特徵快照 | `mv_stock_snapshot`, `stock` |
 | GET | `/api/stock/{id}/prices?from&to&adj=1` | K 線 OHLC（還原）| `price_daily` |
 | GET | `/api/stock/{id}/chips?days=60` | 法人/融資/大戶時序 | `inst_trades`,`margin_trading`,`shareholding_dist` |
@@ -136,7 +140,7 @@ stockselect/
                "momentum_score":0.88 }, ... ] }
 ```
 
-**安全**：`filters` 走**白名單**（`filters.py` 只允許已知欄位/運算子），一律**參數化查詢**，杜絕 SQL 注入。DB 帳號建議另開**唯讀角色**給 App 用。
+**安全**：`filters` 走**白名單**（`filters.py` 只允許已知欄位/運算子），一律**參數化查詢**。DB 帳號建議另開 App 專用角色：市場資料表只給 SELECT，僅對交易帳、自選股、畫線及 `decision_signal_log` 等 App 表給寫入權限。
 
 ---
 
@@ -176,7 +180,7 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 copy .env.example .env
-:: 打開 .env 填入 DATABASE_URL（建議用唯讀角色）
+:: 打開 .env 填入 DATABASE_URL（建議用最小權限的 App 專用角色）
 ```
 
 ### 步驟 2：前端（Vue 3）— 首次設定
@@ -206,7 +210,7 @@ npm run dev
 
 ### 環境變數（backend/.env）
 ```
-DATABASE_URL=postgresql://frank:密碼@localhost:5432/twstock   # 建議改用唯讀角色
+DATABASE_URL=postgresql://frank:密碼@localhost:5432/twstock   # 建議改用最小權限的 App 專用角色
 CORS_ORIGINS=http://localhost:5173
 ```
 
@@ -254,4 +258,4 @@ stockselect/ 後端讀 twstock + snapshot → 前端選股
 - **自選股存哪**：前端 localStorage（最簡）vs 後端新表（跨裝置）。
 - **snapshot 更新頻率**：每晚 REFRESH（夠用）vs 盤中即時（本系統定位日/週選股，不需要）。
 - **部署**：先本機開發；日後要不要包成 Docker / 對外服務再議。
-- **權限**：建議建 PostgreSQL 唯讀角色給 App，降低風險。
+- **權限**：建議建 PostgreSQL 最小權限角色；市場資料只讀，App 自有表才允許寫入。

@@ -47,6 +47,10 @@ export const screenBreakout = (params = {}) =>
   api.get('/screen/pattern-breakout', { params }).then((r) => r.data)
 export const getBreakoutRanking = (params = {}) =>
   api.get('/screen/breakout-ranking', { params }).then((r) => r.data)
+export const getDailyDecision = (params = {}) =>
+  api.get('/screen/daily-decision', { params }).then((r) => r.data)
+export const getDailyDecisionHistory = (params = {}) =>
+  api.get('/screen/daily-decision/history', { params }).then((r) => r.data)
 export const getPriceActionDecisions = (params = {}) =>
   api.get('/screen/price-action', { params }).then((r) => r.data)
 export const getBreakoutPatterns = (group = 'bottom') =>

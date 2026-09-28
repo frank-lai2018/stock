@@ -43,6 +43,7 @@ r"""nightly.py — 排程大腦：每晚無腦執行這一支，由它依「今�
   renko      每晚固定跑 renko_etl.py（磚形圖/三線反轉狀態 → renko_state；全市場約 35 秒）。
                **必須排在 refresh 之前**，否則選股視圖 join 到的是昨天的狀態。
   refresh    以上跑完後，刷新選股物化視圖 mv_stock_snapshot（選股器同步最新；--skip-refresh 可略過）。
+  decision   refresh 成功後保存今日決策中心候選、結算到期觀察，累積分數校準資料。
 
 防重複：quarterly / dividend 是 FinMind 逐檔的重工作，用狀態檔 nightly_state.json 記錄
         「本季/本週已完成」，跨夜自動不重跑（daily / revenue 便宜則照排程窗口每晚跑）。
@@ -75,6 +76,7 @@ THEME = os.path.join(HERE, "build_theme_daily.py")             # 族群熱度 �
 BACKTEST_DIR = os.path.join(HERE, "stockselect", "backend")   # 回測腳本在後端（需 import app）
 BACKTEST = os.path.join(BACKTEST_DIR, "backtest_patterns.py")
 RENKO = os.path.join(BACKTEST_DIR, "renko_etl.py")            # 磚形圖狀態（同樣需 import app）
+DECISION_CAPTURE = os.path.join(BACKTEST_DIR, "capture_daily_decisions.py")
 HOLDERS_RAW = r"H:\data\Holders"           # 集保週快照封存（往後自建歷史）
 
 
@@ -362,7 +364,7 @@ def main():
     args.dsn = clean_dsn(args.dsn)
 
     try:
-        sys.stdout.reconfigure(line_buffering=True)
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     except (AttributeError, ValueError):
         pass
 
@@ -385,6 +387,7 @@ def main():
         print(f"  [{'✓ 跑' if run else '– 略'}] {job:10} {why}")
     if not args.skip_refresh:
         print(f"  [✓ 跑] {'refresh':10} 執行後刷新 mv_stock_snapshot（選股器同步最新）")
+        print(f"  [✓ 跑] {'decision':10} refresh 成功後保存候選並結算分數校準")
 
     if args.plan:
         print("\n(--plan：僅顯示決策，未執行)")
@@ -422,6 +425,11 @@ def main():
         ok, err = refresh_snapshot(args.dsn)
         results.append(("refresh", ok))
         print("    → " + ("已刷新 ✓" if ok else f"刷新失敗（{err}）；若尚未建視圖請先跑 stockselect/sql/mv_stock_snapshot.sql"))
+        if ok:
+            print("\n----- daily decision capture -----")
+            rc = run_cmd([sys.executable, DECISION_CAPTURE, "--dsn", args.dsn], cwd=BACKTEST_DIR)
+            results.append(("decision", rc == 0))
+            print(f"    → {'成功' if rc == 0 else f'失敗 (rc={rc})'}")
 
     print("\n=== nightly 完成 ===")
     for job, ok in results:

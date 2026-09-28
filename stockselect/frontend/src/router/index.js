@@ -5,6 +5,7 @@ export default createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', name: 'home', component: HomeView },
+    { path: '/daily-decision', name: 'daily-decision', component: () => import('../views/DailyDecisionView.vue') },
     { path: '/screener', name: 'screener', component: () => import('../views/ScreenerView.vue') },
     { path: '/themes', name: 'themes', component: () => import('../views/ThemeView.vue') },
     { path: '/active-etf', name: 'active-etf', component: () => import('../views/ActiveEtfView.vue') },

@@ -10,6 +10,7 @@ const route = useRoute()
       <h2 style="margin: 0; white-space: nowrap">📈 台股選股系統</h2>
       <el-menu mode="horizontal" :router="true" :default-active="route.path" style="border: 0; flex: 1; min-width: 0">
         <el-menu-item index="/">首頁</el-menu-item>
+        <el-menu-item index="/daily-decision">今日決策中心</el-menu-item>
         <el-menu-item index="/themes">族群熱度</el-menu-item>
         <el-menu-item index="/active-etf">主動ETF</el-menu-item>
         <el-menu-item index="/screener">選股器</el-menu-item>

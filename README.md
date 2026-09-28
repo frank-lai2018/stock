@@ -78,6 +78,7 @@ python rag_news.py --stock 2330 --q "台積電最近的基本面與法人動向�
 | `update_fundamentals.py` | **低頻**財報/EPS/股利/減資更新：串 `fetch_fundamentals → load_to_db`（季/年跑；preset：quarterly/dividend/revenue/capreduction/all）| FinMind，**需 token** |
 | `update_holderdist.py` | **by-date 全市場**集保戶股權分散（千張/400張大戶）→ `shareholding_dist`（每週）| TDCC opendata，免 token |
 | `nightly.py` | **排程大腦**：每晚跑這一支，依當天日期自動判斷該跑哪些更新（狀態檔防重）| 綜合（每晚固定跑）|
+| `stockselect/backend/capture_daily_decisions.py` | 刷新快照後保存今日突破／裸 K 候選，並結算到期觀察，累積分數區間勝率與期望 R | PostgreSQL 本機運算 |
 
 > 需求：`pip install pandas lxml openpyxl`（下載器本身純標準庫，代碼清單 / 批次驅動 / 基本面 / 還原才需要這些）；入庫另需 `pip install psycopg2-binary`。
 
@@ -341,6 +342,7 @@ python nightly.py --dsn "postgresql://帳號:密碼@localhost:5432/twstock" #每
 | capreduction（減資；還原價只當後備，主要用官方表）| 綁季報窗口，但**避開股利旺季 5~8 月** → 實際只在 **4 月、11 月**各跑一次 | 狀態檔記「本季已跑」，跨夜不重跑；5/8 月窗口讓給 dividend，避免兩支 ~4.5hr 重工作同晚（會拖到 ~9hr）。臨時要補：`python nightly.py --only capreduction` |
 | etfnav（ETF 淨值/折溢價/規模）| 每晚固定（mis.twse 單一請求，便宜）| — |
 | refresh | 以上跑完後刷新 `mv_stock_snapshot`（選股器同步最新）| `--skip-refresh` 可略過 |
+| decision | refresh 成功後保存今日決策候選、結算 20 日觀察（自動執行）| 同日同策略同股票以主鍵去重 |
 
 - **狀態檔 `nightly_state.json`**（自動建立）：記錄 quarterly/dividend 這類 FinMind 逐檔的重工作「本季/本週已完成」，避免跨夜重跑；daily/revenue/holderdist 便宜則照窗口每晚跑。
 - **重工作避開平日**：dividend 只在週六/日跑，平日 nightly 都是分鐘級（不會被 3-4 小時卡住）。
