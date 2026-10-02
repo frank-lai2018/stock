@@ -41,14 +41,16 @@ def daily_decision(capital: float = 1_000_000, risk_per_trade_pct: float = 0.75,
                    lookback: int = 5, expiry: int = 5,
                    eps_min: float | None = None, revenue_yoy_min: float | None = None,
                    gross_margin_chg_min: float | None = None, limit: int = 200,
-                   mode: str = decision_center.DEFAULT_MODE):
+                   mode: str = decision_center.DEFAULT_MODE, gate: str = decision_center.DEFAULT_GATE):
     """整合多方突破與多方裸 K，回傳最多 N 檔新倉及未入選原因。
 
     capital 是這次可投入資金；risk_per_trade_pct 是每檔最多承擔的總資金風險。
     現有持股只用來限制同產業檔數，不會從 capital 重複扣除。
-    mode=momentum（預設）：趨勢模板＋大盤濾網＋RS 排序、8% 停損 20 日到期；mode=classic：原始規則。
+    mode=momentum（預設）：篩選條件＋大盤濾網＋RS 排序、8% 停損 20 日到期；mode=classic：原始規則。
+    gate（動能模式的篩選條件）：trend_template（預設，趨勢模板成立）、breakout（型態突破可執行）。
     """
     mode = decision_center.normalize_mode(mode)
+    gate = decision_center.normalize_gate(gate)
     scan = _cached_scan(
         min_amt=max(0, int(min_amt)), recent=max(1, min(int(recent), 25)),
         lookback=max(1, min(int(lookback), 10)), expiry=max(1, min(int(expiry), 10)),
@@ -60,7 +62,7 @@ def daily_decision(capital: float = 1_000_000, risk_per_trade_pct: float = 0.75,
     holdings = decision_center.current_holdings()
     market = decision_center.market_regime(scan.get("as_of"))
     response = decision_center.build_decision_response(
-        scan, calibrations, holdings, mode=mode, market=market,
+        scan, calibrations, holdings, mode=mode, market=market, gate=gate,
         capital=max(1, float(capital)),
         risk_per_trade_pct=max(0.01, min(float(risk_per_trade_pct), 10)),
         max_new_positions=max(1, min(int(max_new_positions), 20)),
@@ -68,7 +70,7 @@ def daily_decision(capital: float = 1_000_000, risk_per_trade_pct: float = 0.75,
         max_position_pct=max(1, min(float(max_position_pct), 100)),
         lot_size=1 if int(lot_size) == 1 else 1000,
         limit=max(1, min(int(limit), 500)))
-    recorded = decision_center.record_candidates(scan, response, mode)
+    recorded = decision_center.record_candidates(scan, response, mode, gate)
     response["tracking"] = {"recorded": recorded, "settled": settled}
     return response
 
@@ -78,9 +80,11 @@ def daily_decision_history(stock_id: str | None = None, strategy: str | None = N
                            outcome_status: str | None = None,
                            date_from: date | None = None, date_to: date | None = None,
                            selected_only: bool = False, limit: int = 500,
-                           mode: str = decision_center.DEFAULT_MODE):
-    """依觀察日回看原始決策，並追蹤達標、停損、到期或目前 R；mode 決定讀哪一套規則的紀錄。"""
+                           mode: str = decision_center.DEFAULT_MODE,
+                           gate: str = decision_center.DEFAULT_GATE):
+    """依觀察日回看原始決策，並追蹤達標、停損、到期或目前 R；mode 決定讀哪一套規則的紀錄，
+    gate 決定「當時入選」依哪個篩選條件（只對動能模式有效）。"""
     return decision_center.decision_history(
         stock_id=stock_id, strategy=strategy, outcome_status=outcome_status,
         date_from=date_from, date_to=date_to, selected_only=selected_only,
-        limit=max(1, min(int(limit), 1000)), mode=mode)
+        limit=max(1, min(int(limit), 1000)), mode=mode, gate=gate)

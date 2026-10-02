@@ -1,6 +1,7 @@
 """每晚刷新快照後，保存今日決策候選並結算到期觀察。
 
-兩種模式（momentum 動能模式、classic 原始規則）都記錄，追蹤紀錄以 model_version 分開，方便實盤對照。
+兩種模式（momentum 動能模式、classic 原始規則）都記錄，追蹤紀錄以 model_version 分開，方便實盤對照；
+動能模式的每個篩選條件（趨勢模板／型態突破）也各記一次入選結果。
 
 可獨立執行：
   python capture_daily_decisions.py
@@ -33,10 +34,13 @@ def main():
     parts = []
     for mode in decision_center.MODES:
         rows = decision_center.calibration_rows(mode)
-        response = decision_center.build_decision_response(
-            scan, rows, holdings, limit=500, mode=mode, market=market)
-        recorded = decision_center.record_candidates(scan, response, mode)
-        parts.append(f"{mode}：入選 {response['summary']['selected']}、新增觀察 {recorded}")
+        # 動能模式每個篩選條件都記一次入選結果；訊號列只有第一次會新增，其餘只補 gate_selection。
+        for gate in (decision_center.GATES if mode == "momentum" else [decision_center.DEFAULT_GATE]):
+            response = decision_center.build_decision_response(
+                scan, rows, holdings, limit=500, mode=mode, market=market, gate=gate)
+            recorded = decision_center.record_candidates(scan, response, mode, gate)
+            name = f"{mode}/{gate}" if mode == "momentum" else mode
+            parts.append(f"{name}：入選 {response['summary']['selected']}、新增觀察 {recorded}")
     above = market.get("above")
     regime = "資料不足" if above is None else ("站上" if above else "跌破") + f" {market['ma_days']} 日線"
     print(f"今日決策中心：資料日 {scan.get('as_of') or '—'}｜掃描 {scan['scanned']} 檔｜"

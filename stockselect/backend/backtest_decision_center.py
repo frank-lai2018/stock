@@ -1,9 +1,10 @@
-r"""backtest_decision_center.py — 今日決策中心歷史回測（兩種模式並排比較）。
+r"""backtest_decision_center.py — 今日決策中心歷史回測（原始規則與動能模式各篩選條件並排比較）。
 
 每個交易日只用「當天以前看得到」的資料，呼叫 decision_center 本身的突破／裸 K 函式產生候選，
-再交給 build_decision_response 依 momentum（動能模式）與 classic（原始規則）各挑新倉，
-最後照 settle_pending 的規則結算 20 個交易日後的結果。改了決策中心的規則之後重跑這支，
-就能確認新規則在歷史上是否真的比較好（結果與方法見 動能分析設計.md §9）。
+再交給 build_decision_response 依 classic（原始規則）與 momentum（動能模式）的每個篩選條件
+（GATES：趨勢模板／型態突破）各挑新倉，最後照 settle_pending 的規則結算 20 個交易日後的結果。
+改了決策中心的規則之後重跑這支，就能確認新規則在歷史上是否真的比較好（結果與方法見 動能分析設計.md §9）。
+候選掃描與模式無關只跑一次；scan_candidates／evaluate 可單獨 import，用同一批候選比較其他規則。
 
 點時間（point-in-time）處理：
 - K 棒：t 以前 150 根還原 K（同 scan_market）。
@@ -238,12 +239,106 @@ def nw_t(x, lag=HORIZON):
     return float(x.mean() / np.sqrt(var / n))
 
 
-def main():
+def variants():
+    """要比較的規則組合：原始規則＋動能模式的每個篩選條件。"""
+    from app import decision_center
+    return [("classic", None)] + [("momentum", gate) for gate in decision_center.GATES]
+
+
+def variant_name(mode, gate):
+    from app import decision_center
+    return "原始規則" if mode == "classic" else f"動能・{decision_center.GATES.get(gate, gate)}"
+
+
+def scan_candidates(D, workers):
+    """多程序逐檔逐日跑突破／裸 K，回傳 {日期: [候選]}（與模式無關，只跑一次）。"""
+    px = D["px"]
+    bars = {sid: list(zip(g["trade_date"], g["adj_open"], g["adj_high"], g["adj_low"], g["adj_close"], g["volume"]))
+            for sid, g in px.groupby("stock_id")}
+    feats = {k: {sid: v[sid].to_numpy() for sid in v.columns} for k, v in D["feats"].items()}
+    lo, hi = D["sig_idx"][0], D["sig_idx"][-1] + 1
+    ever = [sid for sid in feats["scan"] if feats["scan"][sid][lo:hi].any() and sid in bars]
+    chunks = [ever[i::workers * 4] for i in range(workers * 4)]
+    tasks = [{"dates": D["dates"], "sig_idx": D["sig_idx"], "meta": {s: D["meta"].get(s, {}) for s in ch},
+              "feats": {k: {s: v[s] for s in ch} for k, v in feats.items()}, "bars": {s: bars[s] for s in ch},
+              "fq": {s: D["fq"].get(s, []) for s in ch}, "rev": {s: D["rev"].get(s, []) for s in ch},
+              "per": {s: D["per"].get(s) for s in ch}, "backtests": D["backtests"]} for ch in chunks]
+    t0 = time.time()
+    by_date = {}
+    with mp.Pool(workers) as pool:
+        for i, rows in enumerate(pool.imap_unordered(run_chunk, tasks), 1):
+            for t, cand in rows:
+                by_date.setdefault(t, []).append(cand)
+            if i % 8 == 0 or i == len(tasks):
+                print(f"  掃描 {i}/{len(tasks)} 組（{time.time()-t0:.0f}s）", flush=True)
+    return by_date
+
+
+def evaluate(D, by_date, combos):
+    """每天把候選交給 build_decision_response，依每個 (mode, gate) 挑新倉並結算；回傳入選明細。"""
     import numpy as np
     import pandas as pd
     from app import decision_center
 
-    ap = argparse.ArgumentParser(description="今日決策中心歷史回測（momentum vs classic）")
+    px = D["px"]
+    hlc = {sid: (g["adj_high"].to_numpy(), g["adj_low"].to_numpy(), g["adj_close"].to_numpy()) for sid, g in px.groupby("stock_id")}
+    pos = {sid: {d: i for i, d in enumerate(g["trade_date"])} for sid, g in px.groupby("stock_id")}
+    empty = {"items": [], "stock_ids": set(), "industry_counts": {}}
+    picks = []
+    for d in sorted(by_date):
+        scan = {"as_of": d.isoformat(), "items": by_date[d], "scanned": len(by_date[d])}
+        for mode, gate in combos:
+            resp = decision_center.build_decision_response(scan, [], empty, mode=mode, market=D["market"].get(d),
+                                                           limit=500, gate=gate or decision_center.DEFAULT_GATE)
+            for it in resp["items"]:
+                if not it["selected"]:
+                    continue
+                p = it["position_plan"]
+                i = pos[it["stock_id"]].get(d)
+                ret, outcome = settle(hlc[it["stock_id"]], i, p["entry"], p["stop"], p["target"]) if i is not None else (None, None)
+                picks.append({"variant": variant_name(mode, gate), "mode": mode, "gate": gate, "date": d,
+                              "stock_id": it["stock_id"], "name": it["name"],
+                              "industry": it["industry"], "lead": it["lead_strategy"], "rs": it.get("rs_rating"),
+                              "trend_template": it.get("trend_template"), "breakout_ready": it.get("breakout_ready"),
+                              "entry": p["entry"], "stop": p["stop"],
+                              "target": p["target"], "ret": ret, "outcome": outcome,
+                              "excess": None if ret is None else ret - D["bench"].get(d, np.nan)})
+    return pd.DataFrame(picks)
+
+
+def report(P, D, by_date, combos):
+    import numpy as np
+    import pandas as pd
+
+    days = len(by_date)
+    print(f"\n回測期間 {min(by_date)} ~ {max(by_date)}（{days} 個交易日）；每筆淨報酬已扣 {COST*100:.1f}% 來回成本；"
+          f"超額＝減同日掃描母體 20 日等權報酬（母體平均 {D['bench'].reindex(sorted(by_date)).mean()*100:.2f}%）")
+    rows = []
+    order = [variant_name(m, g) for m, g in combos]
+    for name in order:
+        g = P[P["variant"] == name].dropna(subset=["ret"]) if len(P) else P
+        if not len(g):
+            rows.append({"規則": name, "有選股天數": 0, "檔次": 0})
+            continue
+        daily = g.groupby("date")["excess"].mean()
+        half = pd.to_datetime(g["date"]).dt.year.astype(str) + np.where(pd.to_datetime(g["date"]).dt.month <= 6, "H1", "H2")
+        hx = g.groupby(half.to_numpy())["excess"].mean()
+        rows.append({"規則": name, "有選股天數": g["date"].nunique(), "檔次": len(g),
+                     "每筆淨報酬%": round(g["ret"].mean() * 100, 2), "勝率%": round((g["ret"] > 0).mean() * 100, 1),
+                     "停損%": round((g["outcome"] == "loss").mean() * 100, 1),
+                     "超額%": round(g["excess"].mean() * 100, 2), "NW t": round(nw_t(daily.to_numpy()), 2),
+                     "超額為負的半年": f"{int((hx < 0).sum())}/{len(hx)}", "最差%": round(g["ret"].min() * 100, 1)})
+    pd.set_option("display.width", 250); pd.set_option("display.unicode.east_asian_width", True)
+    print(pd.DataFrame(rows).set_index("規則").to_string())
+    for name in order:
+        g = P[P["variant"] == name].dropna(subset=["ret"]) if len(P) else P
+        if len(g):
+            print(f"  {name} 依領頭策略每筆淨報酬%：",
+                  (g.groupby("lead")["ret"].mean() * 100).round(2).to_dict(), "｜檔次", g["lead"].value_counts().to_dict())
+
+
+def main():
+    ap = argparse.ArgumentParser(description="今日決策中心歷史回測（原始規則 vs 動能模式各篩選條件）")
     ap.add_argument("--start", default="2024-07-01", help="訊號起日（預設 2024-07-01）")
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--out", default="", help="另存入選明細 CSV")
@@ -251,65 +346,10 @@ def main():
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
     D = load_all(date.fromisoformat(args.start))
-    px = D["px"]
-    bars = {sid: list(zip(g["trade_date"], g["adj_open"], g["adj_high"], g["adj_low"], g["adj_close"], g["volume"]))
-            for sid, g in px.groupby("stock_id")}
-    hlc = {sid: (g["adj_high"].to_numpy(), g["adj_low"].to_numpy(), g["adj_close"].to_numpy()) for sid, g in px.groupby("stock_id")}
-    pos = {sid: {d: i for i, d in enumerate(g["trade_date"])} for sid, g in px.groupby("stock_id")}
-    feats = {k: {sid: v[sid].to_numpy() for sid in v.columns} for k, v in D["feats"].items()}
-    lo, hi = D["sig_idx"][0], D["sig_idx"][-1] + 1
-    ever = [sid for sid in feats["scan"] if feats["scan"][sid][lo:hi].any() and sid in bars]
-    chunks = [ever[i::args.workers * 4] for i in range(args.workers * 4)]
-    tasks = [{"dates": D["dates"], "sig_idx": D["sig_idx"], "meta": {s: D["meta"].get(s, {}) for s in ch},
-              "feats": {k: {s: v[s] for s in ch} for k, v in feats.items()}, "bars": {s: bars[s] for s in ch},
-              "fq": {s: D["fq"].get(s, []) for s in ch}, "rev": {s: D["rev"].get(s, []) for s in ch},
-              "per": {s: D["per"].get(s) for s in ch}, "backtests": D["backtests"]} for ch in chunks]
-    t0 = time.time()
-    by_date = {}
-    with mp.Pool(args.workers) as pool:
-        for i, rows in enumerate(pool.imap_unordered(run_chunk, tasks), 1):
-            for t, cand in rows:
-                by_date.setdefault(t, []).append(cand)
-            if i % 8 == 0 or i == len(tasks):
-                print(f"  掃描 {i}/{len(tasks)} 組（{time.time()-t0:.0f}s）", flush=True)
-
-    empty = {"items": [], "stock_ids": set(), "industry_counts": {}}
-    picks = []
-    for d in sorted(by_date):
-        scan = {"as_of": d.isoformat(), "items": by_date[d], "scanned": len(by_date[d])}
-        for mode in decision_center.MODES:
-            resp = decision_center.build_decision_response(scan, [], empty, mode=mode, market=D["market"].get(d), limit=500)
-            for it in resp["items"]:
-                if not it["selected"]:
-                    continue
-                p = it["position_plan"]
-                i = pos[it["stock_id"]].get(d)
-                ret, outcome = settle(hlc[it["stock_id"]], i, p["entry"], p["stop"], p["target"]) if i is not None else (None, None)
-                picks.append({"mode": mode, "date": d, "stock_id": it["stock_id"], "name": it["name"],
-                              "industry": it["industry"], "lead": it["lead_strategy"], "rs": it.get("rs_rating"),
-                              "trend_template": it.get("trend_template"), "entry": p["entry"], "stop": p["stop"],
-                              "target": p["target"], "ret": ret, "outcome": outcome,
-                              "excess": None if ret is None else ret - D["bench"].get(d, np.nan)})
-    P = pd.DataFrame(picks)
-    days = len(by_date)
-    print(f"\n回測期間 {min(by_date)} ~ {max(by_date)}（{days} 個交易日）；每筆淨報酬已扣 {COST*100:.1f}% 來回成本；"
-          f"超額＝減同日掃描母體 20 日等權報酬（母體平均 {D['bench'].reindex(sorted(by_date)).mean()*100:.2f}%）")
-    rows = []
-    for mode, g in P.groupby("mode"):
-        g = g.dropna(subset=["ret"])
-        daily = g.groupby("date")["excess"].mean()
-        half = pd.to_datetime(g["date"]).dt.year.astype(str) + np.where(pd.to_datetime(g["date"]).dt.month <= 6, "H1", "H2")
-        hx = g.groupby(half.to_numpy())["excess"].mean()
-        rows.append({"模式": mode, "有選股天數": g["date"].nunique(), "檔次": len(g),
-                     "每筆淨報酬%": round(g["ret"].mean() * 100, 2), "勝率%": round((g["ret"] > 0).mean() * 100, 1),
-                     "停損%": round((g["outcome"] == "loss").mean() * 100, 1),
-                     "超額%": round(g["excess"].mean() * 100, 2), "NW t": round(nw_t(daily.to_numpy()), 2),
-                     "超額為負的半年": f"{int((hx < 0).sum())}/{len(hx)}", "最差%": round(g["ret"].min() * 100, 1)})
-    pd.set_option("display.width", 250); pd.set_option("display.unicode.east_asian_width", True)
-    print(pd.DataFrame(rows).set_index("模式").to_string())
-    for mode, g in P.dropna(subset=["ret"]).groupby("mode"):
-        print(f"  {mode} 依領頭策略每筆淨報酬%：",
-              (g.groupby("lead")["ret"].mean() * 100).round(2).to_dict(), "｜檔次", g["lead"].value_counts().to_dict())
+    by_date = scan_candidates(D, args.workers)
+    combos = variants()
+    P = evaluate(D, by_date, combos)
+    report(P, D, by_date, combos)
     if args.out:
         P.to_csv(args.out, index=False, encoding="utf-8-sig")
         print(f"入選明細 → {args.out}")

@@ -4,8 +4,12 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getDailyDecisionHistory } from '../api'
 
-// 兩種模式的追蹤紀錄分開存（model_version），跟著今日決策頁的模式切換
-const props = defineProps({ mode: { type: String, default: 'momentum' } })
+// 兩種模式的追蹤紀錄分開存（model_version），跟著今日決策頁的模式切換；
+// 動能模式的篩選條件（gate）共用訊號與結算，只有「當時入選」、理由與部位依條件不同
+const props = defineProps({
+  mode: { type: String, default: 'momentum' },
+  gate: { type: String, default: 'trend_template' },
+})
 const router = useRouter()
 const loading = ref(false)
 const result = ref({ items: [], summary: {}, dates: [] })
@@ -21,7 +25,7 @@ const form = reactive({
 async function load() {
   loading.value = true
   try {
-    const params = { ...form, mode: props.mode }
+    const params = { ...form, mode: props.mode, gate: props.gate }
     for (const key of ['stock_id', 'strategy', 'outcome_status']) {
       if (!params[key]) delete params[key]
     }
@@ -61,9 +65,10 @@ const outcomeMeta = {
 
 const shownR = (row) => row.outcome_status === 'pending' ? row.current_r : row.outcome_r
 const rClass = (row) => Number(shownR(row)) >= 0 ? 'up' : 'down'
-const modeName = (m) => m === 'classic' ? '原始規則' : '動能模式'
+const GATE_NAMES = { trend_template: '趨勢模板', breakout: '型態突破' }
+const modeName = (m, g) => m === 'classic' ? '原始規則' : `動能模式・${GATE_NAMES[g] || GATE_NAMES.trend_template}`
 
-watch(() => props.mode, load)
+watch(() => [props.mode, props.gate], load)
 onMounted(load)
 </script>
 
@@ -72,8 +77,8 @@ onMounted(load)
     <el-card shadow="never" class="history-toolbar">
       <div class="history-title">
         <div>
-          <h2>決策追蹤／歷史紀錄 <el-tag size="small" effect="plain">{{ modeName(props.mode) }}</el-tag></h2>
-          <div class="muted">保留訊號出現當天的進場、停損、目標與入選理由，往後追蹤最多 20 個交易日；兩種模式的紀錄分開計算。</div>
+          <h2>決策追蹤／歷史紀錄 <el-tag size="small" effect="plain">{{ modeName(props.mode, props.gate) }}</el-tag></h2>
+          <div class="muted">保留訊號出現當天的進場、停損、目標與入選理由，往後追蹤最多 20 個交易日；兩種模式的紀錄分開計算，動能模式的篩選條件只影響「當時入選」。</div>
         </div>
         <el-button type="primary" :loading="loading" @click="load">更新追蹤結果</el-button>
       </div>
@@ -107,7 +112,7 @@ onMounted(load)
     </div>
 
     <el-alert type="info" :closable="false" class="history-notice">
-      同一天同股票可能同時有「型態突破」與「裸 K」兩筆策略紀錄。觀察中 R 以最新收盤估算；正式結果採先碰停損、先碰目標或第 20 個交易日收盤，並扣除 0.6% 來回成本。動能模式不設目標，只會停損（進場價下 8%）或到期。
+      同一天同股票可能同時有「型態突破」與「裸 K」兩筆策略紀錄。觀察中 R 以最新收盤估算；正式結果採先碰停損、先碰目標或第 20 個交易日收盤，並扣除 0.6% 來回成本。動能模式不設目標，只會停損（進場價下 8%）或到期。「型態突破」篩選條件是 2026-10 新增的，新增前的訊號沒有保存當時是否入選，會顯示「舊紀錄」。
     </el-alert>
 
     <el-table v-loading="loading" :data="result.items || []" stripe border

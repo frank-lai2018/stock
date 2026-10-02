@@ -12,7 +12,7 @@
 把「散在各表的台股資料」變成一套**可互動選股**的網頁工具：
 
 - **選股器**：用動能 / 基本面 / 估值 / 籌碼條件篩選，結果依分數排名。
-- **今日決策中心**：合併突破與裸 K、去除重複候選，依現有持股限制產業曝險，並以停損距離反推股數；同步累積分數區間的勝率與期望 R。頁內「決策追蹤／歷史紀錄」可回看當時進場、停損、目標、入選理由及後續 20 日結果。
+- **今日決策中心**：合併突破與裸 K、去除重複候選，依現有持股限制產業曝險，並以停損距離反推股數；同步累積分數區間的勝率與期望 R。預設「動能模式」：篩選條件可切換為趨勢模板或型態突破，加權指數站上 60 日線才開新倉，依 RS 排序，進場價下 8% 停損、第 20 日收盤出場；「原始規則」保留對照（回測見 `動能分析設計.md` §9）。頁內「決策追蹤／歷史紀錄」可回看當時進場、停損、目標、入選理由及後續 20 日結果。
 - **突破決策**：把底部反轉與整理突破候選做五面向評分，列出參考停損、報酬風險比與淘汰原因。
 - **型態＋裸 K 決策**：波段型態與 EPS／營收／毛利成長先過濾，再用 OHLC 評估結構、位置、K 棒品質、後續確認與風險。
 - **指定個股分析**：突破決策與裸 K 決策皆可直接輸入股票代號，繞過全市場母體與流動性門檻檢查近期訊號。
@@ -111,8 +111,8 @@ stockselect/
 | POST | `/api/screen` | 依條件篩選 + 排名，回傳股票清單 | `mv_stock_snapshot` |
 | GET | `/api/screen/breakout-ranking` | 多方突破二次評分與風險檢查（`pattern` 只找一種型態；EPS、月季營收、毛利率連增過濾同裸 K；`stock_id` 指定個股、`stock_ids` 逗號分隔多檔） | `mv_stock_snapshot`, `price_daily`, `pattern_backtest`, `monthly_revenue`, `fundamentals_quarterly` |
 | GET | `/api/screen/price-action` | 型態＋裸 K 決策（含 EPS、月季營收、毛利率連增過濾；`stock_id`／`stock_ids` 同上） | `mv_stock_snapshot`, `price_daily`, `monthly_revenue`, `fundamentals_quarterly` |
-| GET | `/api/screen/daily-decision` | 今日決策中心：策略共識、分數校準、持股產業限制、固定風險部位 | 上述資料＋`trade_log`, `decision_signal_log` |
-| GET | `/api/screen/daily-decision/history` | 決策歷史：依日期、股票、策略、結果篩選，追蹤目前／最終 R | `decision_signal_log`, `price_daily`, `mv_stock_snapshot` |
+| GET | `/api/screen/daily-decision` | 今日決策中心：策略共識、分數校準、持股產業限制、固定風險部位（`mode`=`momentum`／`classic`；動能模式的 `gate`=`trend_template`／`breakout`） | 上述資料＋`trade_log`, `decision_signal_log`, `market_index` |
+| GET | `/api/screen/daily-decision/history` | 決策歷史：依日期、股票、策略、結果篩選，追蹤目前／最終 R（`mode`、`gate` 同上，`gate` 決定「當時入選」依哪個篩選條件） | `decision_signal_log`, `price_daily`, `mv_stock_snapshot` |
 | GET | `/api/stock/{id}` | 個股最新特徵快照 | `mv_stock_snapshot`, `stock` |
 | GET | `/api/stock/{id}/prices?from&to&adj=1` | K 線 OHLC（還原）| `price_daily` |
 | GET | `/api/stock/{id}/chips?days=60` | 法人/融資/大戶時序 | `inst_trades`,`margin_trading`,`shareholding_dist` |

@@ -12,8 +12,10 @@ const view = ref('selected')
 const activeTab = ref('today')
 
 const form = reactive({
-  // momentum：趨勢模板＋大盤站上 60 日線＋RS 排序、8% 停損 20 日到期；classic：原始規則（保留對照）
+  // momentum：篩選條件＋大盤站上 60 日線＋RS 排序、8% 停損 20 日到期；classic：原始規則（保留對照）
   mode: 'momentum',
+  // 動能模式的篩選條件：trend_template（預設）／breakout，對應後端 decision_center.GATES
+  gate: 'trend_template',
   capital: 1000000,
   risk_per_trade_pct: 0.75,
   max_new_positions: 3,
@@ -39,9 +41,24 @@ const shown = computed(() => {
   return items
 })
 
+const GATES = [
+  { value: 'trend_template', label: '趨勢模板', short: '趨勢模板成立',
+    rule: '可執行訊號＋趨勢模板成立（多頭排列、RS ≥ 70）' },
+  { value: 'breakout', label: '型態突破', short: '型態突破可執行',
+    rule: '型態突破可執行（量比 ≥ 1.5、離頸線 5% 內、RS ≥ 70）' },
+]
 // 依 backend/backtest_decision_center.py（2024-07～2026-09，已扣 0.6% 成本）；規則改了請重跑並更新這段
-const BACKTEST_NOTE = '回測 2024-07～2026-09：動能模式每筆平均淨報酬 +1.78%（勝率 38.5%），原始規則 −0.44%（勝率 31.4%）；相對大盤只多 0.35%、統計上不顯著，主要是避開原始規則的負期望值。'
+const BACKTEST_NOTES = {
+  trend_template: '回測 2024-07～2026-09：每筆平均淨報酬 +1.78%（勝率 38.5%），原始規則 −0.44%（勝率 31.4%）；相對大盤只多 0.35%、統計上不顯著，主要是避開原始規則的負期望值。',
+  breakout: '回測 2024-07～2026-09：每筆平均淨報酬 +1.27%（勝率 36.9%），低於趨勢模板的 +1.78%；相對大盤只多 0.16%、統計上不顯著。可執行的突破較少，529 天裡 286 天有選股（趨勢模板 403 天）。',
+}
 const isMomentum = computed(() => form.mode === 'momentum')
+const gateInfo = computed(() => GATES.find((g) => g.value === form.gate) || GATES[0])
+// 表格依「這批資料」算出時的篩選條件判斷，避免切換後、資料還沒回來前顯示錯的原因
+const activeGate = computed(() => result.value.gate || form.gate)
+const gateMiss = (row) => activeGate.value === 'breakout'
+  ? (row.breakout_ready ? '' : '型態突破未達可執行')
+  : (row.trend_template ? '' : '趨勢模板未成立')
 // 大盤濾網：動能模式只在加權指數站上 60 日線時開新倉
 const market = computed(() => result.value.market || null)
 const marketAlert = computed(() => {
@@ -99,7 +116,7 @@ onMounted(load)
       <div class="title-row">
         <div>
           <h2>今日決策中心</h2>
-          <div v-if="isMomentum" class="muted">突破與裸 K 負責找買點，動能負責篩選與排序：趨勢模板成立、大盤站上 60 日線才開新倉，依 RS 挑最強的。</div>
+          <div v-if="isMomentum" class="muted">突破與裸 K 負責找買點，動能負責篩選與排序：{{ gateInfo.short }}、大盤站上 60 日線才開新倉，依 RS 挑最強的。</div>
           <div v-else class="muted">把突破與裸 K 合併成一張可執行清單；同時檢查持股產業重疊與單筆風險。</div>
         </div>
         <div class="title-actions">
@@ -107,6 +124,12 @@ onMounted(load)
             <el-radio-button value="momentum">動能模式</el-radio-button>
             <el-radio-button value="classic">原始規則</el-radio-button>
           </el-radio-group>
+          <template v-if="isMomentum">
+            <span class="gate-label">篩選條件</span>
+            <el-radio-group v-model="form.gate" size="large" @change="load">
+              <el-radio-button v-for="g in GATES" :key="g.value" :value="g.value">{{ g.label }}</el-radio-button>
+            </el-radio-group>
+          </template>
           <el-button type="primary" size="large" :loading="loading" @click="load">重新計算</el-button>
         </div>
       </div>
@@ -186,9 +209,9 @@ onMounted(load)
     <el-alert type="warning" :closable="false" show-icon class="notice">
       <template #title>入選代表通過目前規則與資金限制，不是自動買進指令</template>
       <template v-if="isMomentum">
-        動能模式：可執行訊號＋趨勢模板成立（多頭排列、RS ≥ 70）＋大盤站上 60 日線才開新倉，依 RS 評等排序；
+        動能模式（篩選：{{ gateInfo.label }}）：{{ gateInfo.rule }}＋大盤站上 60 日線才開新倉，依 RS 評等排序；
         停損為進場價下 8%、不設目標，第 20 個交易日收盤出場。部位以進場到停損的價差反推；同產業上限會先計入交易帳中的未平倉持股。
-        <div class="backtest-note">{{ BACKTEST_NOTE }}</div>
+        <div class="backtest-note">{{ BACKTEST_NOTES[gateInfo.value] }}</div>
       </template>
       <template v-else>
         部位以進場到停損的價差反推；同產業上限會先計入交易帳中的未平倉持股。若分數校準未滿 30 筆，只顯示參考，不影響名次。
@@ -221,8 +244,11 @@ onMounted(load)
           <b>{{ row.stock_id }} {{ row.name }}</b>
           <div class="muted small">{{ row.industry }}</div>
           <div class="small">收 {{ num(row.close, 2) }}・RS {{ num(row.rs_rating, 0) }}</div>
-          <el-tag v-if="row.trend_template" size="small" type="danger" effect="plain">趨勢模板</el-tag>
-          <span v-else-if="isMomentum" class="muted small">趨勢模板未成立</span>
+          <div class="gate-tags">
+            <el-tag v-if="row.trend_template" size="small" type="danger" effect="plain">趨勢模板</el-tag>
+            <el-tag v-if="row.breakout_ready" size="small" type="warning" effect="plain">突破可執行</el-tag>
+          </div>
+          <div v-if="isMomentum && !row.momentum_ok" class="muted small">{{ gateMiss(row) }}</div>
         </template>
       </el-table-column>
       <el-table-column label="策略共識" min-width="190">
@@ -295,7 +321,7 @@ onMounted(load)
         <template #title><b>分數校準明細與目前持股限制</b></template>
         <el-alert type="info" :closable="false" class="notice">
           每個交易日只保存當日畫面上已觸發的候選；往後 20 個交易日以「先碰停損／先碰目標／到期收盤」結算，已扣 0.6% 來回成本。同根同碰時保守算停損。
-          動能模式與原始規則分開累積；動能模式不設目標，只會停損或到期，「先到目標」一欄會是 0。
+          動能模式與原始規則分開累積；動能模式不設目標，只會停損或到期，「先到目標」一欄會是 0。動能模式的兩種篩選條件共用同一批訊號紀錄，校準數字相同。
         </el-alert>
         <el-table :data="result.calibration || []" size="small" border empty-text="尚無已到期的分數校準樣本；系統會從今天開始累積">
           <el-table-column label="策略" width="100"><template #default="{ row }">{{ calibrationName(row.strategy) }}</template></el-table-column>
@@ -321,7 +347,7 @@ onMounted(load)
     <div class="method">{{ result.method }}｜模型 {{ result.settings?.model_version || '—' }}</div>
       </el-tab-pane>
       <el-tab-pane label="決策追蹤／歷史紀錄" name="history" lazy>
-        <DecisionHistoryPanel :mode="form.mode" />
+        <DecisionHistoryPanel :mode="form.mode" :gate="form.gate" />
       </el-tab-pane>
     </el-tabs>
   </div>
@@ -344,6 +370,8 @@ h2 { margin: 0 0 4px; font-size: 24px; }
 .summary-grid.six { grid-template-columns: repeat(6, minmax(130px, 1fr)); }
 .summary.momentum { border-left: 4px solid #f56c6c; }
 .title-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.gate-label { color: #606266; font-size: 13px; font-weight: 600; margin-left: 6px; }
+.gate-tags { display: flex; gap: 4px; flex-wrap: wrap; }
 .backtest-note { margin-top: 4px; color: #8a6d3b; }
 .summary { cursor: pointer; }
 .summary :deep(.el-card__body) { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 16px; }
