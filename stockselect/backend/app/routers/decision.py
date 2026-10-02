@@ -40,12 +40,15 @@ def daily_decision(capital: float = 1_000_000, risk_per_trade_pct: float = 0.75,
                    min_amt: int = 20_000_000, recent: int = 3,
                    lookback: int = 5, expiry: int = 5,
                    eps_min: float | None = None, revenue_yoy_min: float | None = None,
-                   gross_margin_chg_min: float | None = None, limit: int = 200):
+                   gross_margin_chg_min: float | None = None, limit: int = 200,
+                   mode: str = decision_center.DEFAULT_MODE):
     """整合多方突破與多方裸 K，回傳最多 N 檔新倉及未入選原因。
 
     capital 是這次可投入資金；risk_per_trade_pct 是每檔最多承擔的總資金風險。
     現有持股只用來限制同產業檔數，不會從 capital 重複扣除。
+    mode=momentum（預設）：趨勢模板＋大盤濾網＋RS 排序、8% 停損 20 日到期；mode=classic：原始規則。
     """
+    mode = decision_center.normalize_mode(mode)
     scan = _cached_scan(
         min_amt=max(0, int(min_amt)), recent=max(1, min(int(recent), 25)),
         lookback=max(1, min(int(lookback), 10)), expiry=max(1, min(int(expiry), 10)),
@@ -53,10 +56,11 @@ def daily_decision(capital: float = 1_000_000, risk_per_trade_pct: float = 0.75,
         gross_margin_chg_min=gross_margin_chg_min)
     # 先結算舊觀察，再建立完整決策畫面；保存時連同入選原因與部位一起留下。
     settled = decision_center.settle_pending(scan.get("as_of"))
-    calibrations = decision_center.calibration_rows()
+    calibrations = decision_center.calibration_rows(mode)
     holdings = decision_center.current_holdings()
+    market = decision_center.market_regime(scan.get("as_of"))
     response = decision_center.build_decision_response(
-        scan, calibrations, holdings,
+        scan, calibrations, holdings, mode=mode, market=market,
         capital=max(1, float(capital)),
         risk_per_trade_pct=max(0.01, min(float(risk_per_trade_pct), 10)),
         max_new_positions=max(1, min(int(max_new_positions), 20)),
@@ -64,7 +68,7 @@ def daily_decision(capital: float = 1_000_000, risk_per_trade_pct: float = 0.75,
         max_position_pct=max(1, min(float(max_position_pct), 100)),
         lot_size=1 if int(lot_size) == 1 else 1000,
         limit=max(1, min(int(limit), 500)))
-    recorded = decision_center.record_candidates(scan, response)
+    recorded = decision_center.record_candidates(scan, response, mode)
     response["tracking"] = {"recorded": recorded, "settled": settled}
     return response
 
@@ -73,9 +77,10 @@ def daily_decision(capital: float = 1_000_000, risk_per_trade_pct: float = 0.75,
 def daily_decision_history(stock_id: str | None = None, strategy: str | None = None,
                            outcome_status: str | None = None,
                            date_from: date | None = None, date_to: date | None = None,
-                           selected_only: bool = False, limit: int = 500):
-    """依觀察日回看原始決策，並追蹤達標、停損、到期或目前 R。"""
+                           selected_only: bool = False, limit: int = 500,
+                           mode: str = decision_center.DEFAULT_MODE):
+    """依觀察日回看原始決策，並追蹤達標、停損、到期或目前 R；mode 決定讀哪一套規則的紀錄。"""
     return decision_center.decision_history(
         stock_id=stock_id, strategy=strategy, outcome_status=outcome_status,
         date_from=date_from, date_to=date_to, selected_only=selected_only,
-        limit=max(1, min(int(limit), 1000)))
+        limit=max(1, min(int(limit), 1000)), mode=mode)

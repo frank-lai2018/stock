@@ -1,5 +1,7 @@
 """每晚刷新快照後，保存今日決策候選並結算到期觀察。
 
+兩種模式（momentum 動能模式、classic 原始規則）都記錄，追蹤紀錄以 model_version 分開，方便實盤對照。
+
 可獨立執行：
   python capture_daily_decisions.py
   python capture_daily_decisions.py --dsn postgresql://...
@@ -26,13 +28,19 @@ def main():
 
     scan = decision_center.scan_market(min_amt=args.min_amt)
     settled = decision_center.settle_pending(scan.get("as_of"))
-    rows = decision_center.calibration_rows()
     holdings = decision_center.current_holdings()
-    response = decision_center.build_decision_response(
-        scan, rows, holdings, limit=500)
-    recorded = decision_center.record_candidates(scan, response)
+    market = decision_center.market_regime(scan.get("as_of"))
+    parts = []
+    for mode in decision_center.MODES:
+        rows = decision_center.calibration_rows(mode)
+        response = decision_center.build_decision_response(
+            scan, rows, holdings, limit=500, mode=mode, market=market)
+        recorded = decision_center.record_candidates(scan, response, mode)
+        parts.append(f"{mode}：入選 {response['summary']['selected']}、新增觀察 {recorded}")
+    above = market.get("above")
+    regime = "資料不足" if above is None else ("站上" if above else "跌破") + f" {market['ma_days']} 日線"
     print(f"今日決策中心：資料日 {scan.get('as_of') or '—'}｜掃描 {scan['scanned']} 檔｜"
-          f"候選 {len(scan['items'])}｜新增觀察 {recorded}｜結算 {settled}｜校準組 {len(rows)}")
+          f"候選 {len(scan['items'])}｜大盤{regime}｜{'｜'.join(parts)}｜結算 {settled}")
 
 
 if __name__ == "__main__":

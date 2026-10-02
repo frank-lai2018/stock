@@ -12,6 +12,8 @@ const view = ref('selected')
 const activeTab = ref('today')
 
 const form = reactive({
+  // momentum：趨勢模板＋大盤站上 60 日線＋RS 排序、8% 停損 20 日到期；classic：原始規則（保留對照）
+  mode: 'momentum',
   capital: 1000000,
   risk_per_trade_pct: 0.75,
   max_new_positions: 3,
@@ -32,8 +34,21 @@ const shown = computed(() => {
   const items = result.value.items || []
   if (view.value === 'selected') return items.filter((x) => x.selected)
   if (view.value === 'ready') return items.filter((x) => x.state === 'ready')
+  if (view.value === 'momentum') return items.filter((x) => x.state === 'ready' && x.momentum_ok)
   if (view.value === 'consensus') return items.filter((x) => x.consensus_count > 1)
   return items
+})
+
+// 依 backend/backtest_decision_center.py（2024-07～2026-09，已扣 0.6% 成本）；規則改了請重跑並更新這段
+const BACKTEST_NOTE = '回測 2024-07～2026-09：動能模式每筆平均淨報酬 +1.78%（勝率 38.5%），原始規則 −0.44%（勝率 31.4%）；相對大盤只多 0.35%、統計上不顯著，主要是避開原始規則的負期望值。'
+const isMomentum = computed(() => form.mode === 'momentum')
+// 大盤濾網：動能模式只在加權指數站上 60 日線時開新倉
+const market = computed(() => result.value.market || null)
+const marketAlert = computed(() => {
+  const m = market.value
+  if (!m || m.above == null) return { type: 'info', title: '大盤資料不足，暫不套用大盤濾網' }
+  if (m.above) return { type: 'success', title: `加權指數站上 ${m.ma_days} 日線：可開新倉` }
+  return { type: 'error', title: `加權指數跌破 ${m.ma_days} 日線：動能模式暫停開新倉` }
 })
 
 async function load() {
@@ -84,9 +99,16 @@ onMounted(load)
       <div class="title-row">
         <div>
           <h2>今日決策中心</h2>
-          <div class="muted">把突破與裸 K 合併成一張可執行清單；同時檢查持股產業重疊與單筆風險。</div>
+          <div v-if="isMomentum" class="muted">突破與裸 K 負責找買點，動能負責篩選與排序：趨勢模板成立、大盤站上 60 日線才開新倉，依 RS 挑最強的。</div>
+          <div v-else class="muted">把突破與裸 K 合併成一張可執行清單；同時檢查持股產業重疊與單筆風險。</div>
         </div>
-        <el-button type="primary" size="large" :loading="loading" @click="load">重新計算</el-button>
+        <div class="title-actions">
+          <el-radio-group v-model="form.mode" size="large" @change="load">
+            <el-radio-button value="momentum">動能模式</el-radio-button>
+            <el-radio-button value="classic">原始規則</el-radio-button>
+          </el-radio-group>
+          <el-button type="primary" size="large" :loading="loading" @click="load">重新計算</el-button>
+        </div>
       </div>
 
       <div class="filters">
@@ -131,12 +153,15 @@ onMounted(load)
       </div>
     </el-card>
 
-    <div class="summary-grid">
+    <div class="summary-grid" :class="{ six: isMomentum }">
       <el-card shadow="never" class="summary selected" @click="view = 'selected'">
         <span>本次入選</span><b>{{ result.summary?.selected ?? 0 }}</b>
       </el-card>
       <el-card shadow="never" class="summary ready" @click="view = 'ready'">
         <span>可執行候選</span><b>{{ result.summary?.ready ?? 0 }}</b>
+      </el-card>
+      <el-card v-if="isMomentum" shadow="never" class="summary momentum" @click="view = 'momentum'">
+        <span>通過動能篩選</span><b>{{ result.summary?.ready_momentum ?? 0 }}</b>
       </el-card>
       <el-card shadow="never" class="summary consensus" @click="view = 'consensus'">
         <span>雙策略共識</span><b>{{ result.summary?.consensus ?? 0 }}</b>
@@ -149,15 +174,32 @@ onMounted(load)
       </el-card>
     </div>
 
+    <el-alert v-if="isMomentum" :type="marketAlert.type" :closable="false" show-icon class="notice">
+      <template #title>{{ marketAlert.title }}</template>
+      <template v-if="market?.close != null">
+        加權指數 {{ money(market.close) }}｜{{ market.ma_days }} 日線 {{ money(market.ma) }}
+        <template v-if="market.gap_pct != null">（{{ market.gap_pct >= 0 ? '+' : '' }}{{ num(market.gap_pct, 2) }}%）</template>
+        ・資料日 {{ market.date }}
+      </template>
+    </el-alert>
+
     <el-alert type="warning" :closable="false" show-icon class="notice">
       <template #title>入選代表通過目前規則與資金限制，不是自動買進指令</template>
-      部位以進場到停損的價差反推；同產業上限會先計入交易帳中的未平倉持股。若分數校準未滿 30 筆，只顯示參考，不影響名次。
+      <template v-if="isMomentum">
+        動能模式：可執行訊號＋趨勢模板成立（多頭排列、RS ≥ 70）＋大盤站上 60 日線才開新倉，依 RS 評等排序；
+        停損為進場價下 8%、不設目標，第 20 個交易日收盤出場。部位以進場到停損的價差反推；同產業上限會先計入交易帳中的未平倉持股。
+        <div class="backtest-note">{{ BACKTEST_NOTE }}</div>
+      </template>
+      <template v-else>
+        部位以進場到停損的價差反推；同產業上限會先計入交易帳中的未平倉持股。若分數校準未滿 30 筆，只顯示參考，不影響名次。
+      </template>
     </el-alert>
 
     <div class="list-head">
       <el-radio-group v-model="view" size="small">
         <el-radio-button value="selected">本次入選</el-radio-button>
         <el-radio-button value="ready">全部可執行</el-radio-button>
+        <el-radio-button v-if="isMomentum" value="momentum">通過動能篩選</el-radio-button>
         <el-radio-button value="consensus">雙策略共識</el-radio-button>
         <el-radio-button value="all">全部候選</el-radio-button>
       </el-radio-group>
@@ -179,6 +221,8 @@ onMounted(load)
           <b>{{ row.stock_id }} {{ row.name }}</b>
           <div class="muted small">{{ row.industry }}</div>
           <div class="small">收 {{ num(row.close, 2) }}・RS {{ num(row.rs_rating, 0) }}</div>
+          <el-tag v-if="row.trend_template" size="small" type="danger" effect="plain">趨勢模板</el-tag>
+          <span v-else-if="isMomentum" class="muted small">趨勢模板未成立</span>
         </template>
       </el-table-column>
       <el-table-column label="策略共識" min-width="190">
@@ -221,8 +265,11 @@ onMounted(load)
           <template v-if="row.position_plan?.valid">
             <div>進場 {{ num(row.position_plan.entry, 2) }}</div>
             <div>停損 <b class="down">{{ num(row.position_plan.stop, 2) }}</b></div>
-            <div>目標 <b class="up">{{ num(row.position_plan.target, 2) }}</b></div>
-            <div>R/R {{ num(row.position_plan.rr, 2) }}</div>
+            <template v-if="row.position_plan.target != null">
+              <div>目標 <b class="up">{{ num(row.position_plan.target, 2) }}</b></div>
+              <div>R/R {{ num(row.position_plan.rr, 2) }}</div>
+            </template>
+            <div v-else class="small muted">不設目標・{{ row.position_plan.exit_rule }}</div>
           </template>
           <span v-else class="down">{{ row.position_plan?.reason }}</span>
         </template>
@@ -248,6 +295,7 @@ onMounted(load)
         <template #title><b>分數校準明細與目前持股限制</b></template>
         <el-alert type="info" :closable="false" class="notice">
           每個交易日只保存當日畫面上已觸發的候選；往後 20 個交易日以「先碰停損／先碰目標／到期收盤」結算，已扣 0.6% 來回成本。同根同碰時保守算停損。
+          動能模式與原始規則分開累積；動能模式不設目標，只會停損或到期，「先到目標」一欄會是 0。
         </el-alert>
         <el-table :data="result.calibration || []" size="small" border empty-text="尚無已到期的分數校準樣本；系統會從今天開始累積">
           <el-table-column label="策略" width="100"><template #default="{ row }">{{ calibrationName(row.strategy) }}</template></el-table-column>
@@ -273,7 +321,7 @@ onMounted(load)
     <div class="method">{{ result.method }}｜模型 {{ result.settings?.model_version || '—' }}</div>
       </el-tab-pane>
       <el-tab-pane label="決策追蹤／歷史紀錄" name="history" lazy>
-        <DecisionHistoryPanel />
+        <DecisionHistoryPanel :mode="form.mode" />
       </el-tab-pane>
     </el-tabs>
   </div>
@@ -293,6 +341,10 @@ h2 { margin: 0 0 4px; font-size: 24px; }
 .filters label { color: #606266; font-size: 13px; font-weight: 600; }
 .unit { color: #909399; font-size: 12px; margin-left: -5px; }
 .summary-grid { display: grid; grid-template-columns: repeat(5, minmax(140px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.summary-grid.six { grid-template-columns: repeat(6, minmax(130px, 1fr)); }
+.summary.momentum { border-left: 4px solid #f56c6c; }
+.title-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.backtest-note { margin-top: 4px; color: #8a6d3b; }
 .summary { cursor: pointer; }
 .summary :deep(.el-card__body) { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 16px; }
 .summary b { font-size: 24px; }

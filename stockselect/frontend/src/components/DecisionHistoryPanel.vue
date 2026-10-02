@@ -1,9 +1,11 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getDailyDecisionHistory } from '../api'
 
+// 兩種模式的追蹤紀錄分開存（model_version），跟著今日決策頁的模式切換
+const props = defineProps({ mode: { type: String, default: 'momentum' } })
 const router = useRouter()
 const loading = ref(false)
 const result = ref({ items: [], summary: {}, dates: [] })
@@ -19,7 +21,7 @@ const form = reactive({
 async function load() {
   loading.value = true
   try {
-    const params = { ...form }
+    const params = { ...form, mode: props.mode }
     for (const key of ['stock_id', 'strategy', 'outcome_status']) {
       if (!params[key]) delete params[key]
     }
@@ -59,7 +61,9 @@ const outcomeMeta = {
 
 const shownR = (row) => row.outcome_status === 'pending' ? row.current_r : row.outcome_r
 const rClass = (row) => Number(shownR(row)) >= 0 ? 'up' : 'down'
+const modeName = (m) => m === 'classic' ? '原始規則' : '動能模式'
 
+watch(() => props.mode, load)
 onMounted(load)
 </script>
 
@@ -68,8 +72,8 @@ onMounted(load)
     <el-card shadow="never" class="history-toolbar">
       <div class="history-title">
         <div>
-          <h2>決策追蹤／歷史紀錄</h2>
-          <div class="muted">保留訊號出現當天的進場、停損、目標與入選理由，往後追蹤最多 20 個交易日。</div>
+          <h2>決策追蹤／歷史紀錄 <el-tag size="small" effect="plain">{{ modeName(props.mode) }}</el-tag></h2>
+          <div class="muted">保留訊號出現當天的進場、停損、目標與入選理由，往後追蹤最多 20 個交易日；兩種模式的紀錄分開計算。</div>
         </div>
         <el-button type="primary" :loading="loading" @click="load">更新追蹤結果</el-button>
       </div>
@@ -103,7 +107,7 @@ onMounted(load)
     </div>
 
     <el-alert type="info" :closable="false" class="history-notice">
-      同一天同股票可能同時有「型態突破」與「裸 K」兩筆策略紀錄。觀察中 R 以最新收盤估算；正式結果採先碰停損、先碰目標或第 20 個交易日收盤，並扣除 0.6% 來回成本。
+      同一天同股票可能同時有「型態突破」與「裸 K」兩筆策略紀錄。觀察中 R 以最新收盤估算；正式結果採先碰停損、先碰目標或第 20 個交易日收盤，並扣除 0.6% 來回成本。動能模式不設目標，只會停損（進場價下 8%）或到期。
     </el-alert>
 
     <el-table v-loading="loading" :data="result.items || []" stripe border
@@ -136,7 +140,8 @@ onMounted(load)
         <template #default="{ row }">
           <div>進場 {{ num(row.entry, 2) }}</div>
           <div>停損 <b class="down">{{ num(row.stop, 2) }}</b></div>
-          <div>目標 <b class="up">{{ num(row.target, 2) }}</b></div>
+          <div v-if="row.target != null">目標 <b class="up">{{ num(row.target, 2) }}</b></div>
+          <div v-else class="small muted">不設目標・第 {{ row.horizon }} 日收盤出場</div>
           <div v-if="row.suggested_shares != null" class="small muted">
             {{ money(row.suggested_shares) }} 股・約 {{ money(row.position_value) }} 元
           </div>
