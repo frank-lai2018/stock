@@ -12,6 +12,7 @@ const route = useRoute()
         <el-menu-item index="/">首頁</el-menu-item>
         <el-menu-item index="/daily-decision">今日決策中心</el-menu-item>
         <el-menu-item index="/themes">族群熱度</el-menu-item>
+        <el-menu-item index="/us-themes">美台題材</el-menu-item>
         <el-menu-item index="/active-etf">主動ETF</el-menu-item>
         <el-menu-item index="/screener">選股器</el-menu-item>
         <el-menu-item index="/patterns">型態選股</el-menu-item>

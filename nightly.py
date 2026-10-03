@@ -40,6 +40,10 @@ r"""nightly.py — 排程大腦：每晚無腦執行這一支，由它依「今�
   tpexchain  每月第一個晚上跑 fetch_tpex_chain.py（櫃買產業價值鏈 → 族群 L2；約 1 分鐘，狀態檔防重）。
   theme      每晚固定跑 build_theme_daily.py（族群熱度 → theme_daily；約 10 秒，log 會印當天族群排行）。
                排在 tpexchain 之後，當月新成分當晚就生效。說明見 族群分類設計.md。
+  usprice    每晚固定跑 fetch_us_prices.py（美股日線 → us_price_daily；Yahoo 約 80 檔、40 秒）。
+               美股前一晚已收盤；台灣晚上 9 點半後執行時，盤中那根會自動丟掉。
+  ustheme    每晚固定跑 build_us_theme_daily.py（美股題材熱度 → us_theme_daily，log 印美台題材對照；幾秒）。
+               排在 theme 之後，對照才用得到當天的台股熱度。說明見 美台題材對照.md。
   renko      每晚固定跑 renko_etl.py（磚形圖/三線反轉狀態 → renko_state；全市場約 35 秒）。
                **必須排在 refresh 之前**，否則選股視圖 join 到的是昨天的狀態。
   refresh    以上跑完後，刷新選股物化視圖 mv_stock_snapshot（選股器同步最新；--skip-refresh 可略過）。
@@ -73,6 +77,8 @@ ACTIVEETF = os.path.join(HERE, "fetch_active_etf.py")         # 主動式 ETF �
 ETFBACKTEST = os.path.join(HERE, "backtest_etf_flow.py")      # 主動式 ETF 進出訊號回測
 TPEXCHAIN = os.path.join(HERE, "fetch_tpex_chain.py")          # 櫃買產業價值鏈 → 族群 L2
 THEME = os.path.join(HERE, "build_theme_daily.py")             # 族群熱度 → theme_daily
+USPRICE = os.path.join(HERE, "fetch_us_prices.py")             # 美股日線 → us_price_daily
+USTHEME = os.path.join(HERE, "build_us_theme_daily.py")        # 美股題材熱度 → us_theme_daily＋美台對照
 BACKTEST_DIR = os.path.join(HERE, "stockselect", "backend")   # 回測腳本在後端（需 import app）
 BACKTEST = os.path.join(BACKTEST_DIR, "backtest_patterns.py")
 RENKO = os.path.join(BACKTEST_DIR, "renko_etl.py")            # 磚形圖狀態（同樣需 import app）
@@ -100,7 +106,8 @@ def save_state(state):
 #   capreduction / dividend 各 1 資料集 ≈ 2,300 次 ≈ 4~5hr（兩者同日跑則共用額度，會接著排隊）
 # （季報原本 3 資料集 ≈ 6,900 次 ≈ 23hr，已改走 TWSE/櫃買 opendata，見 update_fundamentals_opendata.py）
 JOBS = ["daily", "holderdist", "revenue", "quarterly", "dividend",
-        "capreduction", "etfnav", "etfhold", "etfbacktest", "tpexchain", "theme", "renko", "backtest"]   # --only / --skip 可指定的工作名
+        "capreduction", "etfnav", "etfhold", "etfbacktest", "tpexchain", "theme", "usprice", "ustheme",
+        "renko", "backtest"]   # --only / --skip 可指定的工作名
 
 HEAVY_DAY = {"capreduction": 6, "dividend": 6}   # 6=週日（季報已改走 opendata，不再是重工作）
 HEAVY_NAME = {"capreduction": "減資", "dividend": "股利"}
@@ -257,6 +264,13 @@ def plan_jobs(d, state, only, skip=()):
     run = only in (None, "theme")
     jobs.append(("theme", "每晚固定（族群熱度 → theme_daily，約 10 秒）", run, {}))
 
+    # usprice／ustheme：美股日線＋美股題材熱度與美台對照（便宜、冪等）。ustheme 排在 theme 之後，
+    # 對照報表才用得到當天的台股熱度；usprice 失敗時 ustheme 照跑，用庫裡現有的美股資料。
+    run = only in (None, "usprice")
+    jobs.append(("usprice", "每晚固定（美股日線，Yahoo 約 80 檔、40 秒）", run, {}))
+    run = only in (None, "ustheme")
+    jobs.append(("ustheme", "每晚固定（美股題材熱度 → us_theme_daily，印美台對照）", run, {}))
+
     # renko：磚形圖/三線反轉狀態（全市場 ~35 秒，冪等）。要在 refresh 之前跑完，
     # 選股視圖才 join 得到今天的狀態。非交易日重跑結果相同，成本低就不特別擋。
     run = only in (None, "renko")
@@ -331,6 +345,10 @@ def build_cmd(job, d, dsn, extra):
         return [sys.executable, TPEXCHAIN, "--dsn", dsn]
     if job == "theme":
         return [sys.executable, THEME, "--dsn", dsn]
+    if job == "usprice":
+        return [sys.executable, USPRICE, "--dsn", dsn]
+    if job == "ustheme":
+        return [sys.executable, USTHEME, "--dsn", dsn]
     if job == "renko":
         return [sys.executable, RENKO]             # 同 backtest：cwd=BACKTEST_DIR 才 import 得到 app
     if job == "backtest":

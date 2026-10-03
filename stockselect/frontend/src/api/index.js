@@ -25,6 +25,7 @@ export const getThemeMembers = (code) => api.get('/themes/members', { params: { 
 export const getThemeToday = (top = 10) => api.get('/themes/today', { params: { top } }).then((r) => r.data)
 export const getStockThemes = (stock_id) => api.get('/themes/of', { params: { stock_id } }).then((r) => r.data)
 export const getThemeOptions = () => api.get('/themes/options').then((r) => r.data)
+export const getUsThemeCompare = () => api.get('/themes/us-compare').then((r) => r.data)
 // 主動式 ETF 每日進出（已扣全面等比例增減；見 主動ETF追蹤設計.md）
 export const getActiveEtfOverview = () => api.get('/active-etf/overview').then((r) => r.data)
 export const getActiveEtfConsensus = ({ date, days = 1, side = 'buy', limit = 50 } = {}) =>

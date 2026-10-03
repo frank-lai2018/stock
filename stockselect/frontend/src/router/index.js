@@ -8,6 +8,7 @@ export default createRouter({
     { path: '/daily-decision', name: 'daily-decision', component: () => import('../views/DailyDecisionView.vue') },
     { path: '/screener', name: 'screener', component: () => import('../views/ScreenerView.vue') },
     { path: '/themes', name: 'themes', component: () => import('../views/ThemeView.vue') },
+    { path: '/us-themes', name: 'us-themes', component: () => import('../views/UsThemeView.vue') },
     { path: '/active-etf', name: 'active-etf', component: () => import('../views/ActiveEtfView.vue') },
     { path: '/patterns', name: 'patterns', component: () => import('../views/PatternScreenerView.vue') },
     { path: '/breakout', name: 'breakout', component: () => import('../views/BreakoutView.vue') },

@@ -3,6 +3,9 @@
 資料來源：theme／stock_theme（fetch_tpex_chain.py、theme_candidates.py）、theme_daily（build_theme_daily.py 每晚產生）。
 成分直查 stock_theme，你在 CSV 確認／否決後立即生效，不必等 mv_stock_snapshot 刷新。說明見 族群分類設計.md。
 """
+from datetime import timedelta
+from statistics import median
+
 from fastapi import APIRouter, HTTPException, Query
 
 from .. import db
@@ -194,6 +197,114 @@ def today(top: int = Query(10, ge=1, le=20), picks: int = Query(3, ge=0, le=5)):
         })
     return {"as_of": r3["as_of"], "prev": r3["prev"], "rows": r3["rows"],
             "nodes": r2["rows"], "spotlight": spotlight}
+
+
+# ── 美台題材對照（說明見 美台題材對照.md）────────────────────────────────────────────
+# 資料：fetch_us_prices.py／build_us_theme_daily.py 每晚產生；跟隨度由 analyze_us_tw_themes.py 寫入 us_theme_follow。
+US_INDICATORS = [("SPY", "S&P 500"), ("QQQ", "Nasdaq 100"), ("^SOX", "費城半導體"), ("TSM", "台積電 ADR")]
+
+
+def _f(v):
+    return None if v is None else float(v)
+
+
+def _us_returns(symbols, as_of):
+    """{代號: {ret_1d, ret_5d, ret_20d}}：截至 as_of 的還原價報酬；最新一筆不是 as_of（那天沒抓到）就不算。"""
+    rows = db.query(
+        "SELECT symbol, max(trade_date) AS last, array_agg(adj_close ORDER BY trade_date DESC) AS c "
+        "FROM us_price_daily WHERE symbol = ANY(%(s)s) AND trade_date <= %(d)s AND trade_date > %(d)s::date - 45 "
+        "GROUP BY symbol", {"s": sorted(symbols), "d": as_of})
+    out = {}
+    for r in rows:
+        c = [float(v) for v in r["c"]] if r["last"] == as_of else []
+        ret = lambda k: c[0] / c[k] - 1 if len(c) > k and c[k] else None   # noqa: E731
+        out[r["symbol"]] = {"ret_1d": ret(1), "ret_5d": ret(5), "ret_20d": ret(20)}
+    return out
+
+
+@router.get("/us-compare")
+def us_compare():
+    """美台題材對照：美股最新一個交易日（台灣隔天清晨收盤）各題材籃子的漲跌、台股接著那個交易日的反應、
+    20 日強弱四象限（兩邊各以 20 日漲幅高於同日題材中位數＝強）與隔天跟隨度。"""
+    empty = {"us_date": None, "themes": [], "indicators": []}
+    if not db.query("SELECT to_regclass('public.us_theme_daily') AS t")[0]["t"]:
+        return empty
+    us_date = db.query("SELECT max(trade_date) AS d FROM us_theme_daily")[0]["d"]
+    ds = _dates(1)
+    if us_date is None or not ds:
+        return empty
+    tw_date = ds[0]
+    # 美股這一場之後的第一個台股交易日＝台股對它的反應；週末、連假或台股還沒收盤時是 None
+    react_date = db.query("SELECT min(trade_date) AS d FROM theme_daily WHERE trade_date > %(u)s",
+                          {"u": us_date})[0]["d"]
+    rows = db.query(
+        "SELECT t.theme_id, t.code, t.name, "
+        "       tw.heat_rank AS tw_rank, tw.ret_1d AS tw_ret_1d, tw.ret_5d AS tw_ret_5d, tw.ret_20d AS tw_ret_20d, "
+        "       r.ret_1d AS react_ret, u.heat_rank AS us_rank, u.n_members AS us_members, u.ret_1d AS us_ret_1d, "
+        "       u.ret_5d AS us_ret_5d, u.ret_20d AS us_ret_20d, u.ex_5d AS us_ex_5d, u.ex_20d AS us_ex_20d, "
+        "       f.label, f.corr_ex, f.t_partial_sox, f.up_next, f.down_next, f.up_win "
+        "FROM theme t "
+        "LEFT JOIN theme_daily tw ON tw.theme_id = t.theme_id AND tw.trade_date = %(tw)s "
+        "LEFT JOIN theme_daily r ON r.theme_id = t.theme_id AND r.trade_date = %(react)s "
+        "LEFT JOIN us_theme_daily u ON u.theme_id = t.theme_id AND u.trade_date = %(us)s "
+        "LEFT JOIN us_theme_follow f ON f.theme_id = t.theme_id "
+        "WHERE t.layer = 3 AND t.is_active ORDER BY t.code",
+        {"tw": tw_date, "react": react_date, "us": us_date})
+    members = db.query("SELECT theme_id, symbol, name FROM us_theme_member ORDER BY theme_id, symbol")
+    rets = _us_returns({m["symbol"] for m in members} | {s for s, _ in US_INDICATORS}, us_date)
+    spy_1d = (rets.get("SPY") or {}).get("ret_1d")
+
+    tw20 = [_f(r["tw_ret_20d"]) for r in rows if r["tw_ret_20d"] is not None]
+    us20 = [_f(r["us_ret_20d"]) for r in rows if r["us_ret_20d"] is not None]
+    tw_med, us_med = (median(tw20) if tw20 else None), (median(us20) if us20 else None)
+    react_market = None
+    if react_date:
+        twse = db.query("SELECT trade_date, close FROM market_index WHERE index_id = 'TWSE' AND trade_date <= %(d)s "
+                        "ORDER BY trade_date DESC LIMIT 2", {"d": react_date})
+        rr = [_f(r["react_ret"]) for r in rows if r["react_ret"] is not None]
+        react_market = {
+            "twse": (float(twse[0]["close"]) / float(twse[1]["close"]) - 1
+                     if len(twse) == 2 and twse[0]["trade_date"] == react_date else None),
+            "theme_median": median(rr) if rr else None,
+        }
+
+    by_theme = {}
+    for m in members:
+        by_theme.setdefault(m["theme_id"], []).append({"symbol": m["symbol"], "name": m["name"],
+                                                       **rets.get(m["symbol"], {})})
+    themes = []
+    for r in rows:
+        tw = None if r["tw_ret_20d"] is None else {
+            "rank": r["tw_rank"], "ret_1d": _f(r["tw_ret_1d"]), "ret_5d": _f(r["tw_ret_5d"]),
+            "ret_20d": _f(r["tw_ret_20d"])}
+        us = None if r["us_ret_20d"] is None else {
+            "rank": r["us_rank"], "n_members": r["us_members"], "ret_1d": _f(r["us_ret_1d"]),
+            "ex_1d": (_f(r["us_ret_1d"]) - spy_1d) if r["us_ret_1d"] is not None and spy_1d is not None else None,
+            "ret_5d": _f(r["us_ret_5d"]), "ret_20d": _f(r["us_ret_20d"]),
+            "ex_5d": _f(r["us_ex_5d"]), "ex_20d": _f(r["us_ex_20d"])}
+        if tw and us:
+            quadrant = ("美強" if us["ret_20d"] > us_med else "美弱") + ("台強" if tw["ret_20d"] > tw_med else "台弱")
+        else:
+            quadrant = "美股無對應" if tw else None
+        follow = None if r["label"] is None else {
+            "label": r["label"], "corr_ex": _f(r["corr_ex"]), "t_partial_sox": _f(r["t_partial_sox"]),
+            # 扣掉費半後專屬對照沒有多出資訊：看費半就夠
+            "sox_only": r["label"] != "幾乎不跟" and (_f(r["t_partial_sox"]) or 0) < 2,
+            "up_next": _f(r["up_next"]), "down_next": _f(r["down_next"]), "up_win": _f(r["up_win"])}
+        themes.append({"theme_id": r["theme_id"], "code": r["code"], "name": r["name"], "quadrant": quadrant,
+                       "tw": tw, "us": us, "react_ret": _f(r["react_ret"]), "follow": follow,
+                       "members": by_theme.get(r["theme_id"], [])})
+    meta = db.query("SELECT min(period_from) AS period_from, max(period_to) AS period_to, max(n_days) AS n_days, "
+                    "max(computed_at) AS computed_at FROM us_theme_follow")[0]
+    return {
+        "us_date": us_date.isoformat(), "us_close_tw": (us_date + timedelta(days=1)).isoformat(),
+        "tw_date": tw_date.isoformat(), "react_date": react_date.isoformat() if react_date else None,
+        "react_market": react_market,
+        "indicators": [{"symbol": s, "name": n, **rets.get(s, {})} for s, n in US_INDICATORS],
+        "medians": {"tw_20d": tw_med, "us_20d": us_med},
+        "follow_meta": meta if meta["computed_at"] else None,
+        "themes": themes,
+    }
 
 
 @router.get("/of")
