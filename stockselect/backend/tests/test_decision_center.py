@@ -142,6 +142,10 @@ class MomentumGateTest(unittest.TestCase):
         _, by_id = self.build("trend_template")
         self.assertIn("趨勢模板未成立", by_id["A"]["selection_reason"])
 
+    def test_total_counts_candidates_beyond_limit(self):
+        result, _ = self.build("trend_template", limit=1)
+        self.assertEqual((result["count"], result["total"]), (1, 3))
+
     def test_unknown_gate_falls_back_to_default(self):
         for gate in ("nope", "both"):
             result, _ = self.build(gate)

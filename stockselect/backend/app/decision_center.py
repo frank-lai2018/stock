@@ -806,6 +806,7 @@ def build_decision_response(scan, calibrations, holdings, capital=1_000_000,
             selected += 1
             industry_counts[item["industry"]] = industry_counts.get(item["industry"], 0) + 1
             remaining = max(0, remaining - item["position_plan"]["position_value"])
+    total = len(items)  # 截到 limit 之前的候選數；畫面表格只列前 limit 檔
     items = items[:max(1, min(int(limit), 500))]
     summary = {
         "selected": sum(1 for x in items if x["selected"]),
@@ -819,7 +820,7 @@ def build_decision_response(scan, calibrations, holdings, capital=1_000_000,
     }
     return {
         "as_of": scan.get("as_of"), "scanned": scan.get("scanned", 0),
-        "count": len(items), "summary": summary, "items": items,
+        "count": len(items), "total": total, "summary": summary, "items": items,
         "mode": mode, "market": market, "market_blocked": market_blocked,
         "gate": gate if momentum else None, "gate_label": GATES[gate] if momentum else None,
         "holdings": {"items": holdings.get("items", []),

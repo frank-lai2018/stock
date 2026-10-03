@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getDailyDecision } from '../api'
@@ -68,20 +68,34 @@ const marketAlert = computed(() => {
   return { type: 'error', title: `加權指數跌破 ${m.ma_days} 日線：動能模式暫停開新倉` }
 })
 
+let timer = null
+let seq = 0
 async function load() {
+  clearTimeout(timer)
+  const id = ++seq
   loading.value = true
   try {
     const params = { ...form }
     for (const key of ['eps_min', 'revenue_yoy_min', 'gross_margin_chg_min']) {
       if (params[key] == null || params[key] === '') delete params[key]
     }
-    result.value = await getDailyDecision(params)
+    const data = await getDailyDecision(params)
+    // 條件連續改時，較早送出的請求可能比較晚回來；只採用最後一次的結果
+    if (id === seq) result.value = data
   } catch (e) {
-    ElMessage.error('今日決策載入失敗：' + (e?.response?.data?.detail || e.message))
+    if (id === seq) ElMessage.error('今日決策載入失敗：' + (e?.response?.data?.detail || e.message))
   } finally {
-    loading.value = false
+    if (id === seq) loading.value = false
   }
 }
+
+// 任何條件一改就重算：模式、篩選條件立刻算；其他欄位等停手 0.7 秒（打字、連按 +/− 只算最後一次）
+watch(() => ({ ...form }), (now, before) => {
+  clearTimeout(timer)
+  const immediate = now.mode !== before.mode || now.gate !== before.gate
+  timer = setTimeout(load, immediate ? 0 : 700)
+})
+onBeforeUnmount(() => clearTimeout(timer))
 
 const money = (v) => v == null ? '—' : Math.round(Number(v)).toLocaleString('en-US')
 const num = (v, d = 1) => v == null ? '—' : Number(v).toFixed(d)
@@ -120,13 +134,13 @@ onMounted(load)
           <div v-else class="muted">把突破與裸 K 合併成一張可執行清單；同時檢查持股產業重疊與單筆風險。</div>
         </div>
         <div class="title-actions">
-          <el-radio-group v-model="form.mode" size="large" @change="load">
+          <el-radio-group v-model="form.mode" size="large">
             <el-radio-button value="momentum">動能模式</el-radio-button>
             <el-radio-button value="classic">原始規則</el-radio-button>
           </el-radio-group>
           <template v-if="isMomentum">
             <span class="gate-label">篩選條件</span>
-            <el-radio-group v-model="form.gate" size="large" @change="load">
+            <el-radio-group v-model="form.gate" size="large">
               <el-radio-button v-for="g in GATES" :key="g.value" :value="g.value">{{ g.label }}</el-radio-button>
             </el-radio-group>
           </template>
@@ -190,7 +204,7 @@ onMounted(load)
         <span>雙策略共識</span><b>{{ result.summary?.consensus ?? 0 }}</b>
       </el-card>
       <el-card shadow="never" class="summary" @click="view = 'all'">
-        <span>全部候選</span><b>{{ result.count ?? 0 }}</b>
+        <span>全部候選</span><b>{{ result.total ?? result.count ?? 0 }}</b>
       </el-card>
       <el-card shadow="never" class="summary meta">
         <span>剩餘可用資金</span><b class="money">{{ money(result.summary?.remaining_capital) }}</b>
@@ -226,7 +240,10 @@ onMounted(load)
         <el-radio-button value="consensus">雙策略共識</el-radio-button>
         <el-radio-button value="all">全部候選</el-radio-button>
       </el-radio-group>
-      <span class="muted">資料日 {{ result.as_of || '—' }}｜掃描 {{ result.scanned || 0 }} 檔｜顯示 {{ shown.length }} 檔</span>
+      <span class="muted">
+        資料日 {{ result.as_of || '—' }}｜掃描 {{ result.scanned || 0 }} 檔｜顯示 {{ shown.length }} 檔
+        <template v-if="result.total > result.count">（候選共 {{ result.total }} 檔，表格只列前 {{ result.count }} 檔）</template>
+      </span>
     </div>
 
     <el-table v-loading="loading" :data="shown" stripe border height="calc(100vh - 470px)"
