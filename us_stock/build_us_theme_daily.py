@@ -14,10 +14,10 @@ r"""build_us_theme_daily.py — 算每日美股題材熱度 → us_theme_daily�
   嚴格的時間對齊（美股 t 日 → 台股 t+1 日）在 v_us_tw_theme 與 analyze_us_tw_themes.py。
 前置：schema_us.sql、fetch_us_prices.py、build_theme_daily.py。
 
-用法：
-  python build_us_theme_daily.py                # 算近 60 個美股交易日 → 寫入 us_theme_daily → 印對照
-  python build_us_theme_daily.py --days 600     # 回補 600 個交易日
-  python build_us_theme_daily.py --report-only  # 照樣計算、只印對照，不寫入 DB
+用法（在專案根目錄）：
+  python us_stock/build_us_theme_daily.py                # 算近 60 個美股交易日 → 寫入 us_theme_daily → 印對照
+  python us_stock/build_us_theme_daily.py --days 600     # 回補 600 個交易日
+  python us_stock/build_us_theme_daily.py --report-only  # 照樣計算、只印對照，不寫入 DB
 """
 import argparse
 import os

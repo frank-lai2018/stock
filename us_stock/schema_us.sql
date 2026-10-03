@@ -2,7 +2,7 @@
 -- 設計說明見 美台題材對照.md；對照名單在 us_theme_defs.py
 --
 -- 重跑方式（全部 IF NOT EXISTS / OR REPLACE，可安全重複執行）：
---   psql -U postgres -d twstock -f schema_us.sql
+--   psql -U postgres -d twstock -f us_stock/schema_us.sql
 -- 前置：schema_theme.sql 已建好（theme、theme_daily）。
 -- theme_id 不設外鍵：後端帳號（frank）沒有 theme 的 REFERENCES 權限，這樣用後端帳號也建得起來；
 -- 題材停用或刪除時，build_us_theme_daily.py 每次重新同步籃子，v_us_tw_theme 也只 join 現有題材。

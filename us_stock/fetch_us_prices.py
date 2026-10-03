@@ -7,10 +7,10 @@ r"""fetch_us_prices.py — 抓美股日線（Yahoo Finance）→ us_price_daily�
 未收盤：台灣晚上 9 點半後美股開盤，這時執行會抓到盤中的 K 棒；最後一根還沒收盤就丟掉，只存已收盤的。
 前置：schema_us.sql。
 
-用法：
-  python fetch_us_prices.py                      # 每晚：抓近 1 個月，對不上的整檔重抓
-  python fetch_us_prices.py --range 5y           # 第一次：回補 5 年（整檔換掉）
-  python fetch_us_prices.py --symbols NVDA,^SOX  # 只抓指定代號
+用法（在專案根目錄）：
+  python us_stock/fetch_us_prices.py                      # 每晚：抓近 1 個月，對不上的整檔重抓
+  python us_stock/fetch_us_prices.py --range 5y           # 第一次：回補 5 年（整檔換掉）
+  python us_stock/fetch_us_prices.py --symbols NVDA,^SOX  # 只抓指定代號
 """
 import argparse
 import json

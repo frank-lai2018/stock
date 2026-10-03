@@ -1,0 +1,3326 @@
+{
+ "generated_at": "2026-10-03T17:21:44",
+ "follow_period": [
+  "2024-09-10",
+  "2026-10-02"
+ ],
+ "themes": {
+  "ai_power": {
+   "name": "AI 電源（電源供應器／BBU）",
+   "follow": {
+    "label": "有一點",
+    "corr_ex": 0.156,
+    "up_next": 0.0047,
+    "down_next": -0.0043,
+    "up_win": 0.6531,
+    "sox_only": true
+   },
+   "tw": [
+    {
+     "id": "2301",
+     "name": "光寶科",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2308",
+     "name": "台達電",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2457",
+     "name": "飛宏",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3015",
+     "name": "全漢",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3211",
+     "name": "順達",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "3323",
+     "name": "加百裕",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "3617",
+     "name": "碩天",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "4931",
+     "name": "新盛力",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6121",
+     "name": "新普",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "6282",
+     "name": "康舒",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "6409",
+     "name": "旭隼",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6412",
+     "name": "群電",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "6781",
+     "name": "AES-KY",
+     "market": "上市",
+     "role": "核心"
+    }
+   ]
+  },
+  "ai_server": {
+   "name": "AI 伺服器（ODM／組裝）",
+   "follow": {
+    "label": "有一點",
+    "corr_ex": 0.219,
+    "up_next": 0.0039,
+    "down_next": -0.0021,
+    "up_win": 0.6327,
+    "sox_only": false
+   },
+   "tw": [
+    {
+     "id": "2301",
+     "name": "光寶科",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2308",
+     "name": "台達電",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2317",
+     "name": "鴻海",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2324",
+     "name": "仁寶",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2352",
+     "name": "佳世達",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2353",
+     "name": "宏",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2356",
+     "name": "英業達",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "2357",
+     "name": "華碩",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2371",
+     "name": "大同",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2376",
+     "name": "技嘉",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "2377",
+     "name": "微星",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2382",
+     "name": "廣達",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2425",
+     "name": "承啟",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2480",
+     "name": "敦陽科",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2495",
+     "name": "普安",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3029",
+     "name": "零壹",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3147",
+     "name": "大綜",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3231",
+     "name": "緯創",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3515",
+     "name": "華擎",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3693",
+     "name": "營邦",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3706",
+     "name": "神達",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3709",
+     "name": "鑫聯大投控",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6112",
+     "name": "邁達特",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6140",
+     "name": "訊達",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6218",
+     "name": "豪勉",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6221",
+     "name": "晉泰",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6263",
+     "name": "普萊德",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6669",
+     "name": "緯穎",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "7711",
+     "name": "永擎",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "7805",
+     "name": "威聯通",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "8099",
+     "name": "大世科",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "8210",
+     "name": "勤誠",
+     "market": "上市",
+     "role": null
+    }
+   ]
+  },
+  "asic_ip": {
+   "name": "ASIC／矽智財",
+   "follow": {
+    "label": "明顯跟隨",
+    "corr_ex": 0.342,
+    "up_next": 0.0073,
+    "down_next": -0.0079,
+    "up_win": 0.7551,
+    "sox_only": false
+   },
+   "tw": [
+    {
+     "id": "2363",
+     "name": "矽統",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2365",
+     "name": "昆盈",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2401",
+     "name": "凌陽",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2406",
+     "name": "國碩",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2449",
+     "name": "京元電子",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2454",
+     "name": "聯發科",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2476",
+     "name": "鉅祥",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3035",
+     "name": "智原",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3131",
+     "name": "弘塑",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3289",
+     "name": "宜特",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3339",
+     "name": "泰谷",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3443",
+     "name": "創意",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3529",
+     "name": "力旺",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "3550",
+     "name": "聯穎",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3581",
+     "name": "博磊",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3661",
+     "name": "世芯-KY",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3711",
+     "name": "日月光投控",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "4749",
+     "name": "新應材",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "4919",
+     "name": "新唐",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "4953",
+     "name": "緯軟",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "5222",
+     "name": "全訊",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "5439",
+     "name": "高技",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6188",
+     "name": "廣明",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6438",
+     "name": "迅得",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6526",
+     "name": "達發",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6533",
+     "name": "晶心科",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6643",
+     "name": "M31",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "6695",
+     "name": "芯鼎",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "8054",
+     "name": "安國",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "8227",
+     "name": "巨有科技",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "8299",
+     "name": "群聯",
+     "market": "上櫃",
+     "role": null
+    }
+   ]
+  },
+  "chip_test": {
+   "name": "AI 晶片測試（探針卡／測試座）",
+   "follow": {
+    "label": "明顯跟隨",
+    "corr_ex": 0.313,
+    "up_next": 0.0108,
+    "down_next": -0.0073,
+    "up_win": 0.6735,
+    "sox_only": false
+   },
+   "tw": [
+    {
+     "id": "2360",
+     "name": "致茂",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "2449",
+     "name": "京元電子",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3264",
+     "name": "欣銓",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "3289",
+     "name": "宜特",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "3587",
+     "name": "閎康",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "6217",
+     "name": "中探針",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6223",
+     "name": "旺矽",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6257",
+     "name": "矽格",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6510",
+     "name": "精測",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6515",
+     "name": "穎崴",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "6683",
+     "name": "雍智科技",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6830",
+     "name": "汎銓",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "7769",
+     "name": "鴻勁",
+     "market": "上市",
+     "role": "核心"
+    }
+   ]
+  },
+  "cooling": {
+   "name": "散熱／液冷",
+   "follow": {
+    "label": "明顯跟隨",
+    "corr_ex": 0.323,
+    "up_next": 0.0041,
+    "down_next": -0.0063,
+    "up_win": 0.6735,
+    "sox_only": false
+   },
+   "tw": [
+    {
+     "id": "2301",
+     "name": "光寶科",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2308",
+     "name": "台達電",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2354",
+     "name": "鴻準",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2355",
+     "name": "敬鵬",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2376",
+     "name": "技嘉",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2421",
+     "name": "建準",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "2472",
+     "name": "立隆電",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3013",
+     "name": "晟銘電",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3017",
+     "name": "奇鋐",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3305",
+     "name": "昇貿",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3324",
+     "name": "雙鴻",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "3338",
+     "name": "泰碩",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3483",
+     "name": "力致",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3581",
+     "name": "博磊",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3653",
+     "name": "健策",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3709",
+     "name": "鑫聯大投控",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "4912",
+     "name": "聯德控股-KY",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "5228",
+     "name": "鈺鎧",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "5230",
+     "name": "雷笛克光學",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "5457",
+     "name": "宣德",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "5536",
+     "name": "聖暉*",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6197",
+     "name": "佳必琪",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6230",
+     "name": "尼得科超眾",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6275",
+     "name": "元山",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6419",
+     "name": "京晨科",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6735",
+     "name": "美達科技",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6831",
+     "name": "邁科",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "8155",
+     "name": "博智",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "8210",
+     "name": "勤誠",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "8240",
+     "name": "華宏",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "8996",
+     "name": "高力",
+     "market": "上市",
+     "role": "受惠"
+    }
+   ]
+  },
+  "cpo": {
+   "name": "CPO／矽光子／光通訊",
+   "follow": {
+    "label": "明顯跟隨",
+    "corr_ex": 0.389,
+    "up_next": 0.0127,
+    "down_next": -0.0081,
+    "up_win": 0.7755,
+    "sox_only": false
+   },
+   "tw": [
+    {
+     "id": "1608",
+     "name": "華榮",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "1618",
+     "name": "合機",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2308",
+     "name": "台達電",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2352",
+     "name": "佳世達",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2413",
+     "name": "環科",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2455",
+     "name": "全新",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "2483",
+     "name": "百容",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2485",
+     "name": "兆赫",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3081",
+     "name": "聯亞",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "3105",
+     "name": "穩懋",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3163",
+     "name": "波若威",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "3234",
+     "name": "光環",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3363",
+     "name": "上詮",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "3450",
+     "name": "聯鈞",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3669",
+     "name": "圓展",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3704",
+     "name": "合勤控",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "4903",
+     "name": "聯光通",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "4908",
+     "name": "前鼎",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "4971",
+     "name": "IET-KY",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "4977",
+     "name": "眾達-KY",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "4979",
+     "name": "華星光",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "4991",
+     "name": "環宇-KY",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "5468",
+     "name": "凱鈺",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6143",
+     "name": "振曜",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6163",
+     "name": "華電網",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6263",
+     "name": "普萊德",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6426",
+     "name": "統新",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6442",
+     "name": "光聖",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6451",
+     "name": "訊芯-KY",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6486",
+     "name": "互動",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6568",
+     "name": "宏觀",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "7717",
+     "name": "萊德光電-KY",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "8011",
+     "name": "台通",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "8045",
+     "name": "達運光電",
+     "market": "上市",
+     "role": null
+    }
+   ]
+  },
+  "defense": {
+   "name": "國防／無人機",
+   "follow": {
+    "label": "幾乎不跟",
+    "corr_ex": 0.024,
+    "up_next": 0.0004,
+    "down_next": -0.0004,
+    "up_win": 0.4286,
+    "sox_only": false
+   },
+   "tw": [
+    {
+     "id": "2208",
+     "name": "台船",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2630",
+     "name": "亞航",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "2634",
+     "name": "漢翔",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2645",
+     "name": "長榮航太",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3004",
+     "name": "豐達科",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "4541",
+     "name": "晟田",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "5222",
+     "name": "全訊",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "5371",
+     "name": "中光電",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6753",
+     "name": "龍德造船",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "6829",
+     "name": "千附精密",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "8033",
+     "name": "雷虎",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "8222",
+     "name": "寶一",
+     "market": "上市",
+     "role": "核心"
+    }
+   ]
+  },
+  "edge_ai": {
+   "name": "邊緣 AI／工業電腦",
+   "follow": {
+    "label": "有一點",
+    "corr_ex": 0.12,
+    "up_next": 0.004,
+    "down_next": -0.0016,
+    "up_win": 0.551,
+    "sox_only": true
+   },
+   "tw": [
+    {
+     "id": "2395",
+     "name": "研華",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3022",
+     "name": "威強電",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3088",
+     "name": "艾訊",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "3479",
+     "name": "安勤",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "4916",
+     "name": "事欣科",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "5289",
+     "name": "宜鼎",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6166",
+     "name": "凌華",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "6206",
+     "name": "飛捷",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6414",
+     "name": "樺漢",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "8050",
+     "name": "廣積",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "8114",
+     "name": "振樺電",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "8234",
+     "name": "新漢",
+     "market": "上櫃",
+     "role": "核心"
+    }
+   ]
+  },
+  "ev_tesla": {
+   "name": "電動車／特斯拉供應鏈",
+   "follow": {
+    "label": "有一點",
+    "corr_ex": 0.183,
+    "up_next": 0.0019,
+    "down_next": -0.0024,
+    "up_win": 0.5714,
+    "sox_only": true
+   },
+   "tw": [
+    {
+     "id": "1503",
+     "name": "士電",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "1504",
+     "name": "東元",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "1519",
+     "name": "華城",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "1533",
+     "name": "車王電",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "1536",
+     "name": "和大",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "1605",
+     "name": "華新",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "1611",
+     "name": "中電",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2301",
+     "name": "光寶科",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2308",
+     "name": "台達電",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "2317",
+     "name": "鴻海",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2360",
+     "name": "致茂",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2371",
+     "name": "大同",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2401",
+     "name": "凌陽",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2457",
+     "name": "飛宏",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3003",
+     "name": "健和興",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3015",
+     "name": "全漢",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3665",
+     "name": "貿聯-KY",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "4739",
+     "name": "康普",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "4952",
+     "name": "凌通",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "5234",
+     "name": "達興材料",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "5439",
+     "name": "高技",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "5457",
+     "name": "宣德",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6278",
+     "name": "台表科",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6282",
+     "name": "康舒",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6509",
+     "name": "聚和",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "8183",
+     "name": "精星",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "8215",
+     "name": "明基材",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "8255",
+     "name": "朋程",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "8358",
+     "name": "金居",
+     "market": "上櫃",
+     "role": null
+    }
+   ]
+  },
+  "foplp": {
+   "name": "FOPLP／玻璃基板",
+   "follow": {
+    "label": "有一點",
+    "corr_ex": 0.195,
+    "up_next": 0.0067,
+    "down_next": -0.0031,
+    "up_win": 0.6122,
+    "sox_only": true
+   },
+   "tw": [
+    {
+     "id": "2467",
+     "name": "志聖",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3149",
+     "name": "正達",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3481",
+     "name": "群創",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3535",
+     "name": "晶彩科",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3580",
+     "name": "友威科",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6239",
+     "name": "力成",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6664",
+     "name": "群翊",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "8027",
+     "name": "鈦昇",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "8064",
+     "name": "東捷",
+     "market": "上櫃",
+     "role": "核心"
+    }
+   ]
+  },
+  "leo_sat": {
+   "name": "低軌衛星",
+   "follow": {
+    "label": "有一點",
+    "corr_ex": 0.228,
+    "up_next": 0.0039,
+    "down_next": -0.0038,
+    "up_win": 0.551,
+    "sox_only": false
+   },
+   "tw": [
+    {
+     "id": "2301",
+     "name": "光寶科",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2308",
+     "name": "台達電",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2312",
+     "name": "金寶",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2313",
+     "name": "華通",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "2314",
+     "name": "台揚",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2317",
+     "name": "鴻海",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2324",
+     "name": "仁寶",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2352",
+     "name": "佳世達",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2483",
+     "name": "百容",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2485",
+     "name": "兆赫",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2498",
+     "name": "宏達電",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3062",
+     "name": "建漢",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3105",
+     "name": "穩懋",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3152",
+     "name": "璟德",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3178",
+     "name": "公準",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3227",
+     "name": "原相",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3380",
+     "name": "明泰",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3491",
+     "name": "昇達科",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "3704",
+     "name": "合勤控",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3706",
+     "name": "神達",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "4909",
+     "name": "新復興",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "4938",
+     "name": "和碩",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "5457",
+     "name": "宣德",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6143",
+     "name": "振曜",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6163",
+     "name": "華電網",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6263",
+     "name": "普萊德",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6271",
+     "name": "同欣電",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6285",
+     "name": "啟",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6417",
+     "name": "韋僑",
+     "market": "上櫃",
+     "role": null
+    }
+   ]
+  },
+  "memory": {
+   "name": "記憶體（DRAM／NAND／HBM）",
+   "follow": {
+    "label": "明顯跟隨",
+    "corr_ex": 0.36,
+    "up_next": 0.0115,
+    "down_next": -0.0095,
+    "up_win": 0.6939,
+    "sox_only": false
+   },
+   "tw": [
+    {
+     "id": "1582",
+     "name": "信錦",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2329",
+     "name": "華泰",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2337",
+     "name": "旺宏",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2344",
+     "name": "華邦電",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2365",
+     "name": "昆盈",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2367",
+     "name": "燿華",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2405",
+     "name": "輔信",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2408",
+     "name": "南亞科",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2451",
+     "name": "創見",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2485",
+     "name": "兆赫",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3006",
+     "name": "晶豪科",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3059",
+     "name": "華晶科",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3135",
+     "name": "凌航",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3260",
+     "name": "威剛",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "3535",
+     "name": "晶彩科",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3707",
+     "name": "漢磊",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3709",
+     "name": "鑫聯大投控",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "4967",
+     "name": "十銓",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "4973",
+     "name": "廣穎",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "5243",
+     "name": "乙盛-KY",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "5351",
+     "name": "鈺創",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "5386",
+     "name": "青雲",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6239",
+     "name": "力成",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6265",
+     "name": "方土昶",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6419",
+     "name": "京晨科",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6485",
+     "name": "點序",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6531",
+     "name": "愛普*",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6770",
+     "name": "力積電",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "8084",
+     "name": "巨虹",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "8088",
+     "name": "品安",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "8096",
+     "name": "擎亞",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "8131",
+     "name": "福懋科",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "8271",
+     "name": "宇瞻",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "8299",
+     "name": "群聯",
+     "market": "上櫃",
+     "role": "核心"
+    }
+   ]
+  },
+  "optics": {
+   "name": "光學鏡頭",
+   "follow": {
+    "label": "幾乎不跟",
+    "corr_ex": 0.062,
+    "up_next": 0.002,
+    "down_next": -0.0021,
+    "up_win": 0.4898,
+    "sox_only": false
+   },
+   "tw": [
+    {
+     "id": "3008",
+     "name": "大立光",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3019",
+     "name": "亞光",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3362",
+     "name": "先進光",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "3406",
+     "name": "玉晶光",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3504",
+     "name": "揚明光",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3630",
+     "name": "新鉅科",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "4976",
+     "name": "佳凌",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6209",
+     "name": "今國光",
+     "market": "上市",
+     "role": "核心"
+    }
+   ]
+  },
+  "passive": {
+   "name": "被動元件（MLCC／電阻／電感／石英）",
+   "follow": {
+    "label": "幾乎不跟",
+    "corr_ex": 0.076,
+    "up_next": 0.0065,
+    "down_next": -0.0008,
+    "up_win": 0.6327,
+    "sox_only": false
+   },
+   "tw": [
+    {
+     "id": "2327",
+     "name": "國巨*",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2375",
+     "name": "凱美",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2428",
+     "name": "興勤",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "2472",
+     "name": "立隆電",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2478",
+     "name": "大毅",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2484",
+     "name": "希華",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2492",
+     "name": "華新科",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3026",
+     "name": "禾伸堂",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3042",
+     "name": "晶技",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3090",
+     "name": "日電貿",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3221",
+     "name": "台嘉碩",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "3236",
+     "name": "千如",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "3357",
+     "name": "臺慶科",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "3624",
+     "name": "光頡",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "4760",
+     "name": "勤凱",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "5228",
+     "name": "鈺鎧",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6127",
+     "name": "九豪",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "6155",
+     "name": "鈞寶",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "6173",
+     "name": "信昌電",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6174",
+     "name": "安",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6175",
+     "name": "立敦",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "6207",
+     "name": "雷科",
+     "market": "上櫃",
+     "role": "沾邊"
+    },
+    {
+     "id": "6224",
+     "name": "聚鼎",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6284",
+     "name": "佳邦",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6432",
+     "name": "今展科",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "6449",
+     "name": "鈺邦",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "6834",
+     "name": "天二科技",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "8042",
+     "name": "金山電",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "8043",
+     "name": "蜜望實",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "8121",
+     "name": "越峰",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "8182",
+     "name": "加高",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "8289",
+     "name": "泰藝",
+     "market": "上櫃",
+     "role": "核心"
+    }
+   ]
+  },
+  "pcb": {
+   "name": "AI PCB／CCL／載板",
+   "follow": {
+    "label": "明顯跟隨",
+    "corr_ex": 0.299,
+    "up_next": 0.0096,
+    "down_next": -0.0058,
+    "up_win": 0.7143,
+    "sox_only": false
+   },
+   "tw": [
+    {
+     "id": "2313",
+     "name": "華通",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2316",
+     "name": "楠梓電",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "2355",
+     "name": "敬鵬",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "2367",
+     "name": "燿華",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "2368",
+     "name": "金像電",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2383",
+     "name": "台光電",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2467",
+     "name": "志聖",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "2493",
+     "name": "揚博",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3037",
+     "name": "欣興",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3044",
+     "name": "健鼎",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3167",
+     "name": "大量",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3189",
+     "name": "景碩",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3563",
+     "name": "牧德",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3715",
+     "name": "定穎投控",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "4577",
+     "name": "達航科技",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "4927",
+     "name": "泰鼎-KY",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "4958",
+     "name": "臻鼎-KY",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "5469",
+     "name": "瀚宇博",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6191",
+     "name": "精成科",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6213",
+     "name": "聯茂",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "6274",
+     "name": "台燿",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6658",
+     "name": "聯策",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6672",
+     "name": "騰輝電子-KY",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6727",
+     "name": "亞泰金屬",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "8039",
+     "name": "台虹",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "8046",
+     "name": "南電",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "8155",
+     "name": "博智",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "8213",
+     "name": "志超",
+     "market": "上市",
+     "role": "受惠"
+    }
+   ]
+  },
+  "pcb_material": {
+   "name": "PCB 上游材料（玻纖布／銅箔／鑽針）",
+   "follow": {
+    "label": "有一點",
+    "corr_ex": 0.101,
+    "up_next": 0.0054,
+    "down_next": -0.0023,
+    "up_win": 0.5918,
+    "sox_only": true
+   },
+   "tw": [
+    {
+     "id": "1303",
+     "name": "南亞",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "1717",
+     "name": "長興",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "1802",
+     "name": "台玻",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "1815",
+     "name": "富喬",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "4989",
+     "name": "榮科",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "5340",
+     "name": "建榮",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "5475",
+     "name": "德宏",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "8021",
+     "name": "尖點",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "8358",
+     "name": "金居",
+     "market": "上櫃",
+     "role": "核心"
+    }
+   ]
+  },
+  "power_grid": {
+   "name": "重電／電網",
+   "follow": {
+    "label": "有一點",
+    "corr_ex": 0.164,
+    "up_next": 0.0019,
+    "down_next": -0.003,
+    "up_win": 0.5918,
+    "sox_only": true
+   },
+   "tw": [
+    {
+     "id": "1503",
+     "name": "士電",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "1504",
+     "name": "東元",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "1513",
+     "name": "中興電",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "1514",
+     "name": "亞力",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "1519",
+     "name": "華城",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "1605",
+     "name": "華新",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "1609",
+     "name": "大亞",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "1612",
+     "name": "宏泰",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "1618",
+     "name": "合機",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "1623",
+     "name": "大東電",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2301",
+     "name": "光寶科",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2308",
+     "name": "台達電",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2352",
+     "name": "佳世達",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2360",
+     "name": "致茂",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2371",
+     "name": "大同",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2395",
+     "name": "研華",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3622",
+     "name": "洋華",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "5309",
+     "name": "系統電",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "5381",
+     "name": "光譜",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "5457",
+     "name": "宣德",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "5483",
+     "name": "中美晶",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6163",
+     "name": "華電網",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6278",
+     "name": "台表科",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6282",
+     "name": "康舒",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6441",
+     "name": "廣錠",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6869",
+     "name": "雲豹能源",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6873",
+     "name": "泓德能源",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6994",
+     "name": "富威電力",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "8099",
+     "name": "大世科",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "8374",
+     "name": "羅昇",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "8926",
+     "name": "台汽電",
+     "market": "上市",
+     "role": null
+    }
+   ]
+  },
+  "power_semi": {
+   "name": "功率半導體（MOSFET／二極體）",
+   "follow": {
+    "label": "明顯跟隨",
+    "corr_ex": 0.282,
+    "up_next": 0.0095,
+    "down_next": -0.0076,
+    "up_win": 0.7347,
+    "sox_only": false
+   },
+   "tw": [
+    {
+     "id": "2481",
+     "name": "強茂",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3317",
+     "name": "尼克森",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "3675",
+     "name": "德微",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "3707",
+     "name": "漢磊",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "5299",
+     "name": "杰力",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "5425",
+     "name": "台半",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6138",
+     "name": "茂達",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "6291",
+     "name": "沛亨",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "6415",
+     "name": "矽力*-KY",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6435",
+     "name": "大中",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "8081",
+     "name": "致新",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "8255",
+     "name": "朋程",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "8261",
+     "name": "富鼎",
+     "market": "上市",
+     "role": "核心"
+    }
+   ]
+  },
+  "robot": {
+   "name": "機器人／人型機器人",
+   "follow": {
+    "label": "幾乎不跟",
+    "corr_ex": 0.07,
+    "up_next": 0.0022,
+    "down_next": -0.0008,
+    "up_win": 0.6122,
+    "sox_only": false
+   },
+   "tw": [
+    {
+     "id": "1590",
+     "name": "亞德客-KY",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "1597",
+     "name": "直得",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2049",
+     "name": "上銀",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2313",
+     "name": "華通",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2328",
+     "name": "廣宇",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2340",
+     "name": "台亞",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2355",
+     "name": "敬鵬",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2359",
+     "name": "所羅門",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "2374",
+     "name": "佳能",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2457",
+     "name": "飛宏",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2485",
+     "name": "兆赫",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3013",
+     "name": "晟銘電",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3163",
+     "name": "波若威",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3588",
+     "name": "通嘉",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "4540",
+     "name": "全球傳動",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "4555",
+     "name": "氣立",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "4571",
+     "name": "鈞興-KY",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "4576",
+     "name": "大銀微系統",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "4583",
+     "name": "台灣精銳",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "4906",
+     "name": "正文",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "5243",
+     "name": "乙盛-KY",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "5392",
+     "name": "能率",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "5439",
+     "name": "高技",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6188",
+     "name": "廣明",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6215",
+     "name": "和椿",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6269",
+     "name": "台郡",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6285",
+     "name": "啟",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6438",
+     "name": "迅得",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6739",
+     "name": "竹陞科技",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6781",
+     "name": "AES-KY",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "8374",
+     "name": "羅昇",
+     "market": "上市",
+     "role": "受惠"
+    }
+   ]
+  },
+  "semi_material": {
+   "name": "半導體材料／特用化學",
+   "follow": {
+    "label": "有一點",
+    "corr_ex": 0.154,
+    "up_next": 0.0047,
+    "down_next": -0.0005,
+    "up_win": 0.6122,
+    "sox_only": true
+   },
+   "tw": [
+    {
+     "id": "1711",
+     "name": "永光",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "1717",
+     "name": "長興",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "1727",
+     "name": "中華化",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "1785",
+     "name": "光洋科",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "4722",
+     "name": "國精化",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "4749",
+     "name": "新應材",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "4755",
+     "name": "三福化",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "4768",
+     "name": "晶呈科技",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "5234",
+     "name": "達興材料",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "5434",
+     "name": "崇越",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6667",
+     "name": "信紘科",
+     "market": "上櫃",
+     "role": "核心"
+    }
+   ]
+  },
+  "server_parts": {
+   "name": "AI 伺服器零組件（滑軌／機殼／BMC）",
+   "follow": {
+    "label": "有一點",
+    "corr_ex": 0.172,
+    "up_next": 0.0047,
+    "down_next": -0.0043,
+    "up_win": 0.6327,
+    "sox_only": true
+   },
+   "tw": [
+    {
+     "id": "2059",
+     "name": "川湖",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3013",
+     "name": "晟銘電",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3217",
+     "name": "優群",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "3533",
+     "name": "嘉澤",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3605",
+     "name": "宏致",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3665",
+     "name": "貿聯-KY",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3693",
+     "name": "營邦",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "5274",
+     "name": "信驊",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6117",
+     "name": "迎廣",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "6584",
+     "name": "南俊國際",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "8210",
+     "name": "勤誠",
+     "market": "上市",
+     "role": "核心"
+    }
+   ]
+  },
+  "si_wafer": {
+   "name": "矽晶圓",
+   "follow": null,
+   "tw": [
+    {
+     "id": "3016",
+     "name": "嘉晶",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3532",
+     "name": "台勝科",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "5483",
+     "name": "中美晶",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6182",
+     "name": "合晶",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6488",
+     "name": "環球晶",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "8028",
+     "name": "昇陽半導體",
+     "market": "上市",
+     "role": "受惠"
+    }
+   ]
+  },
+  "solar": {
+   "name": "太陽能／綠能",
+   "follow": {
+    "label": "有一點",
+    "corr_ex": 0.098,
+    "up_next": 0.0029,
+    "down_next": -0.001,
+    "up_win": 0.551,
+    "sox_only": false
+   },
+   "tw": [
+    {
+     "id": "3576",
+     "name": "聯合再生",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "3691",
+     "name": "碩禾",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "3708",
+     "name": "上緯投控",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "6244",
+     "name": "茂迪",
+     "market": "上櫃",
+     "role": "核心"
+    },
+    {
+     "id": "6409",
+     "name": "旭隼",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6443",
+     "name": "元晶",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "6477",
+     "name": "安集",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "6869",
+     "name": "雲豹能源",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6873",
+     "name": "泓德能源",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "9958",
+     "name": "世紀鋼",
+     "market": "上市",
+     "role": "核心"
+    }
+   ]
+  },
+  "tsmc": {
+   "name": "台積電概念／CoWoS 供應鏈",
+   "follow": {
+    "label": "明顯跟隨",
+    "corr_ex": 0.359,
+    "up_next": 0.0063,
+    "down_next": -0.009,
+    "up_win": 0.7347,
+    "sox_only": true
+   },
+   "tw": [
+    {
+     "id": "1513",
+     "name": "中興電",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2329",
+     "name": "華泰",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2330",
+     "name": "台積電",
+     "market": "上市",
+     "role": "核心"
+    },
+    {
+     "id": "2345",
+     "name": "智邦",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2365",
+     "name": "昆盈",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2404",
+     "name": "漢唐",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "2441",
+     "name": "超豐",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "2449",
+     "name": "京元電子",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3013",
+     "name": "晟銘電",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3131",
+     "name": "弘塑",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "3402",
+     "name": "漢科",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3535",
+     "name": "晶彩科",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3551",
+     "name": "世禾",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3563",
+     "name": "牧德",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "3583",
+     "name": "辛耘",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "3615",
+     "name": "安可",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "3680",
+     "name": "家登",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "3711",
+     "name": "日月光投控",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "4919",
+     "name": "新唐",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "5243",
+     "name": "乙盛-KY",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6127",
+     "name": "九豪",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6139",
+     "name": "亞翔",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6187",
+     "name": "萬潤",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "6196",
+     "name": "帆宣",
+     "market": "上市",
+     "role": "受惠"
+    },
+    {
+     "id": "6239",
+     "name": "力成",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6438",
+     "name": "迅得",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6640",
+     "name": "均華",
+     "market": "上櫃",
+     "role": "受惠"
+    },
+    {
+     "id": "6725",
+     "name": "矽科宏晟",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6788",
+     "name": "華景電",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "6789",
+     "name": "采鈺",
+     "market": "上市",
+     "role": null
+    },
+    {
+     "id": "6903",
+     "name": "巨漢",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "8027",
+     "name": "鈦昇",
+     "market": "上櫃",
+     "role": null
+    },
+    {
+     "id": "8074",
+     "name": "鉅橡",
+     "market": "上櫃",
+     "role": null
+    }
+   ]
+  }
+ }
+}

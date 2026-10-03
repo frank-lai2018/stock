@@ -15,12 +15,13 @@ r"""analyze_us_tw_themes.py — 美股題材隔夜漲跌，台股同題材隔天
 限制：台股題材報酬用 build_theme_daily.py 同一套算法（in_universe 成分股等權），但成分是「目前」的
       （2026-09／10 才定、偏向近期贏家），所以只看相對關係，不看絕對報酬。美股籃子也是今天挑的。
 
-結果寫入 us_theme_follow（整批換掉），「美台題材」頁的跟隨度標籤讀這張表；建議每季、或改了 us_theme_defs.py 後重跑。
+結果寫入 us_theme_follow（整批換掉），「美台題材」頁的跟隨度標籤讀這張表；建議每季、或改了 us_theme_defs.py 後重跑，
+跑完再用 morning_us_hot.py --export 更新早上那支的快照。
 
-用法：
-  python analyze_us_tw_themes.py                     # 近 500 個台股交易日（約兩年）→ 寫入 us_theme_follow
-  python analyze_us_tw_themes.py --report-only       # 只印結果，不寫 DB
-  python analyze_us_tw_themes.py --days 250 --csv 跟隨度.csv
+用法（在專案根目錄）：
+  python us_stock/analyze_us_tw_themes.py                 # 近 500 個台股交易日（約兩年）→ 寫入 us_theme_follow
+  python us_stock/analyze_us_tw_themes.py --report-only   # 只印結果，不寫 DB
+  python us_stock/analyze_us_tw_themes.py --days 250 --csv 跟隨度.csv
 """
 import argparse
 import os
@@ -31,8 +32,10 @@ from datetime import timedelta
 import numpy as np
 import pandas as pd
 
-import build_theme_daily as btd
 from us_theme_defs import BENCHMARK, US_THEMES
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # 專案根目錄的 build_theme_daily.py
+import build_theme_daily as btd  # noqa: E402
 
 HORIZON = 20
 
