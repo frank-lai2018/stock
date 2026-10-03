@@ -1,34 +1,26 @@
-"""今日決策中心：合併突破與裸 K、追蹤分數成效、產生部位與組合篩選。
+"""今日決策中心：盤後訊號、隔日成交與分開保存的策略實驗。
 
-設計原則：
-- 規則分數只負責排序，不把型態平均績效冒充成「此分數的勝率」。
-- pattern_backtest 是立即可用的型態先驗；decision_signal_log 則從每天實際候選累積
-  分數區間的前瞻結果，兩者在 API 中分開呈現。
-- 同一批 K 棒只查一次，同時跑突破與裸 K，避免兩個既有端點各掃一次全市場。
-
-兩種模式（2026-10 依 2024-07～2026-09 回測改版，結果見 動能分析設計.md §9）：
-- momentum（預設）：通過篩選條件（gate）＋加權指數站上 60 日線才開新倉，依 RS 評等排序；
-  出場一律進場價下 8% 停損、不設目標、第 20 個交易日收盤到期。篩選條件可切換（GATES）：
-  trend_template（預設）＝可執行訊號＋趨勢模板成立，裸 K 只在趨勢模板股上當進場時機；
-  breakout＝型態突破可執行（不看趨勢模板，裸 K 不單獨入選）。
-- classic：原始規則（共識 → 決策分排序，出場用各策略自己的停損／目標），保留對照。
-兩種模式的追蹤紀錄以 model_version 分開，互不混算；動能模式各篩選條件的訊號與結算相同，
-只有入選與否不同，存在同一筆紀錄的 gate_selection（見 record_candidates）。
+momentum 是 20 日基準；trend_hold 是跌破 50 日線隔日出場、最長 60 日的實驗。
+整理突破使用獨立進場條件與追價上限。classic 保留策略原本的停損／目標。
+各模式使用 v3 版本與 execution 共用成交引擎；舊版紀錄封存保留。
+型態先驗只供參考，不影響決策中心突破評分。分數校準與型態先驗分開呈現。
 """
 from __future__ import annotations
 
 import json
 import math
 from copy import deepcopy
-from datetime import date
+from datetime import date, timedelta
 
-from . import db, ledger, price_action, swings
+from . import consolidation, db, execution, ledger, price_action, swings
 from .breakout_rank import score_breakout
 
 
-MODEL_VERSION = "decision-center-v1"            # 原始規則（classic）
-MOMENTUM_VERSION = "decision-center-v2-momentum"
-MODES = {"classic": MODEL_VERSION, "momentum": MOMENTUM_VERSION}
+LEGACY_MODES = {"classic": "decision-center-v1", "momentum": "decision-center-v2-momentum"}
+MODEL_VERSION = "decision-center-v3-classic"
+MOMENTUM_VERSION = "decision-center-v3-momentum"
+MODES = {"classic": MODEL_VERSION, "momentum": MOMENTUM_VERSION,
+         "trend_hold": "decision-center-v3-hold"}
 DEFAULT_MODE = "momentum"
 HORIZON = 20
 ROUND_TRIP_COST = 0.006
@@ -39,10 +31,11 @@ MARKET_MA_DAYS = 60
 # 「兩者都要」回測與 breakout 幾乎相同（521 檔次有 520 檔相同，可執行的突破 98% 已有趨勢模板），未列入。
 PRIMARY_GATE = "trend_template"
 DEFAULT_GATE = "trend_template"
-GATES = {"trend_template": "趨勢模板", "breakout": "型態突破"}
+GATES = {"trend_template": "趨勢模板", "breakout": "型態突破", "consolidation": "整理突破（實驗）"}
 GATE_RULES = {
     "trend_template": "可執行訊號＋趨勢模板成立（多頭排列、RS ≥ 70）",
     "breakout": "型態突破可執行（量比 ≥ 1.5、離頸線 5% 內、RS ≥ 70）",
+    "consolidation": "趨勢模板＋整理量縮、振幅收縮後突破 20 日高，成交額 ≥1.5 倍；隔日追價上限為平台＋1 ATR",
 }
 
 _ensured = False
@@ -114,7 +107,9 @@ def ensure_tables():
         "ADD COLUMN IF NOT EXISTS suggested_shares NUMERIC,"
         "ADD COLUMN IF NOT EXISTS position_value NUMERIC,"
         "ADD COLUMN IF NOT EXISTS snapshot JSONB,"
-        "ADD COLUMN IF NOT EXISTS gate_selection JSONB")
+        "ADD COLUMN IF NOT EXISTS gate_selection JSONB,"
+        "ADD COLUMN IF NOT EXISTS execution_spec JSONB,"
+        "ADD COLUMN IF NOT EXISTS execution_result JSONB")
     db.execute(
         "CREATE INDEX IF NOT EXISTS idx_decision_signal_observed "
         "ON decision_signal_log(observed_date DESC,stock_id)")
@@ -134,8 +129,7 @@ def _pattern_backtests():
 def market_regime(as_of=None):
     """加權指數與 60 日均線的相對位置；動能模式只在指數站上 60 日線時開新倉。
 
-    回測期間跌破 60 日線時開新倉的突破訊號，20 日超額為 0、平均 −0.87R；站上時 +2.30%。
-    資料不足時 above=None（不擋），由呼叫端顯示「大盤資料不足」。
+    資料不足或未更新到 as_of 時 above=None，阻擋新倉。
     """
     params = {"id": MARKET_INDEX, "n": MARKET_MA_DAYS}
     cond = ""
@@ -148,6 +142,9 @@ def market_regime(as_of=None):
     if not rows:
         return {**base, "date": None, "close": None, "ma": None, "above": None, "gap_pct": None}
     close = float(rows[0]["close"])
+    if as_of and _iso(rows[0]["trade_date"]) != _iso(as_of):
+        return {**base, "date": _iso(rows[0]["trade_date"]), "close": round(close, 2),
+                "ma": None, "above": None, "gap_pct": None, "reason": "大盤資料未更新到選股日"}
     if len(rows) < MARKET_MA_DAYS:
         return {**base, "date": _iso(rows[0]["trade_date"]), "close": round(close, 2),
                 "ma": None, "above": None, "gap_pct": None}
@@ -175,7 +172,8 @@ def _breakout_strategy(snapshot, bars, recent, backtests):
         breakout["atr14"] = _atr14(bars)
         breakout["current_adj_close"] = round(float(bars[-1]["close"]), 4)
         row = {**snapshot, "breakout": breakout, "pattern": key}
-        decision = score_breakout(row, backtests.get(key))
+        # 先驗只作資訊；不能把整段歷史回測結果混入當時的入選門檻。
+        decision = score_breakout(row)
         if decision["status"] == "skip":
             return None
         prior = backtests.get(key)
@@ -233,6 +231,9 @@ def _candidate(snapshot, strategies, current_close=None):
         "industry": snapshot.get("industry") or "其他",
         # 停損／目標都由還原 K 線產生，進場基準必須使用同一價格座標。
         "close": _f(current_close, _f(snapshot.get("close"))),
+        "raw_close": _f(snapshot.get("raw_close"), _f(snapshot.get("close"))),
+        "price_factor": _f(snapshot.get("price_factor"), 1.0),
+        "price_date": _iso(snapshot.get("price_date")),
         "amt20": _f(snapshot.get("amt20")), "rs_rating": _f(snapshot.get("rs_rating")),
         "eps": _f(snapshot.get("eps")), "eps_ttm": _f(snapshot.get("eps_ttm")),
         "eps_yoy": _f(snapshot.get("eps_yoy")), "rev_yoy": _f(snapshot.get("rev_yoy")),
@@ -258,14 +259,16 @@ def scan_market(min_amt=20_000_000, recent=3, lookback=5, expiry=5,
         cond.append("rev_yoy >= %(rev)s"); params["rev"] = float(revenue_yoy_min)
     if gross_margin_chg_min is not None:
         cond.append("gross_margin_chg >= %(gm)s"); params["gm"] = float(gross_margin_chg_min)
+    latest = db.query("SELECT max(trade_date) AS d FROM price_daily")[0]["d"]
     rows = db.query(f"SELECT * FROM mv_stock_snapshot WHERE {' AND '.join(cond)}", params)
     snapshots = {r["stock_id"]: dict(r) for r in rows}
     if not snapshots:
-        return {"as_of": None, "items": [], "scanned": 0}
+        return {"as_of": _iso(latest), "items": [], "scanned": 0,
+                "data_health": {"healthy": bool(latest), "stale_prices": 0}}
     bars_rows = db.query(
         "SELECT stock_id,trade_date,adj_open AS open,adj_high AS high,adj_low AS low,"
-        " adj_close AS close,volume FROM ("
-        " SELECT stock_id,trade_date,adj_open,adj_high,adj_low,adj_close,volume,"
+        " adj_close AS close,raw_close,volume,amount FROM ("
+        " SELECT stock_id,trade_date,adj_open,adj_high,adj_low,adj_close,close AS raw_close,volume,amount,"
         " row_number() OVER (PARTITION BY stock_id ORDER BY trade_date DESC) rn"
         " FROM price_daily WHERE stock_id=ANY(%(ids)s)) z"
         " WHERE rn<=150 ORDER BY stock_id,trade_date", {"ids": list(snapshots)})
@@ -274,10 +277,16 @@ def scan_market(min_amt=20_000_000, recent=3, lookback=5, expiry=5,
         grouped.setdefault(row["stock_id"], []).append(row)
     backtests = _pattern_backtests()
     out = []
+    stale = 0
     for sid, bars in grouped.items():
         if len(bars) < 30:
             continue
+        if bars[-1]["trade_date"] != latest:
+            stale += 1
+            continue
         snap = snapshots[sid]
+        snap.update(raw_close=bars[-1]["raw_close"], price_date=bars[-1]["trade_date"],
+                    price_factor=float(bars[-1]["close"]) / float(bars[-1]["raw_close"]))
         strategies = []
         breakout = _breakout_strategy(snap, bars, max(1, min(int(recent), 25)), backtests)
         if breakout:
@@ -286,76 +295,81 @@ def scan_market(min_amt=20_000_000, recent=3, lookback=5, expiry=5,
                                     max(1, min(int(expiry), 10)))
         if pa:
             strategies.append(pa)
+        setup = consolidation.analyze(bars)
+        if setup:
+            strategies.append(setup)
         if strategies:
             out.append(_candidate(snap, strategies, bars[-1].get("close")))
     out.sort(key=lambda x: (x["state"] == "ready", x["consensus_count"],
                             x["decision_score"], x.get("amt20") or 0), reverse=True)
     as_of = next((r.get("as_of_date") for r in rows if r.get("as_of_date")), None)
-    return {"as_of": _iso(as_of), "items": out, "scanned": len(snapshots)}
+    healthy = latest is not None and as_of == latest
+    return {"as_of": _iso(latest), "items": out, "scanned": len(snapshots),
+            "data_health": {"healthy": healthy, "snapshot_date": _iso(as_of), "stale_prices": stale,
+                            "reason": None if healthy else "選股快照尚未更新到最新行情"}}
+
+
+def execution_spec(item, strategy, mode=DEFAULT_MODE):
+    """保存觀察日原始價格計畫；成交時另依實際開盤重算停損與部位。"""
+    momentum = mode != "classic"
+    factor = _f(item.get("price_factor"), 1.0) or 1.0
+    entry = _f(item.get("raw_close"), _f(item.get("close")))
+    return {
+        "observed_date": None, "entry": entry,
+        "stop": entry * (1 - MOMENTUM_STOP_PCT) if momentum else _f(strategy.get("stop"), 0) / factor,
+        "target": None if momentum else _f(strategy.get("target"), 0) / factor,
+        "stop_pct": MOMENTUM_STOP_PCT if momentum else None,
+        "horizon": 60 if mode == "trend_hold" else HORIZON,
+        "exit_ma": 50 if mode == "trend_hold" else 0,
+        "max_entry": _f(strategy.get("max_entry"), 0) / factor if strategy["key"] == "consolidation" else None,
+        "cost_pct": ROUND_TRIP_COST, "slippage": execution.SLIPPAGE,
+        "execution_version": execution.EXECUTION_VERSION,
+    }
 
 
 def settle_pending(as_of=None):
-    """用觀察日後最多 20 根 K 棒結算；同根同碰目標與停損時保守算停損。
-
-    兩種模式一起結算（每筆有自己的 entry／stop／target／horizon）；target 為 NULL（動能模式）
-    時沒有「先達目標」，只會停損或到期。
-    """
+    """新版共用隔日成交模型；舊版紀錄保留原結果，不混入新版校準。"""
     ensure_tables()
     pending = db.query(
-        "SELECT strategy,stock_id,observed_date,model_version,entry,stop,target,horizon,cost_pct "
-        "FROM decision_signal_log WHERE outcome_status='pending'")
+        "SELECT strategy,stock_id,observed_date,model_version,execution_spec "
+        "FROM decision_signal_log WHERE outcome_status='pending' AND model_version=ANY(%(versions)s)",
+        {"versions": list(MODES.values())})
     if not pending:
         return 0
-    cutoff = date.fromisoformat(as_of) if isinstance(as_of, str) else as_of
+    cutoff = execution.day(as_of) if as_of else db.query("SELECT max(trade_date) AS d FROM price_daily")[0]["d"]
+    since = min(r["observed_date"] for r in pending) - timedelta(days=250)
     ids = sorted({r["stock_id"] for r in pending})
-    since = min(r["observed_date"] for r in pending)
     bars = db.query(
-        "SELECT stock_id,trade_date,adj_high AS high,adj_low AS low,adj_close AS close "
-        "FROM price_daily WHERE stock_id=ANY(%(ids)s) AND trade_date>%(since)s "
-        "ORDER BY stock_id,trade_date", {"ids": ids, "since": since})
+        "SELECT stock_id,trade_date,open AS raw_open,high AS raw_high,low AS raw_low,close AS raw_close,"
+        "adj_open AS open,adj_high AS high,adj_low AS low,adj_close AS close,volume,amount "
+        "FROM price_daily WHERE stock_id=ANY(%(ids)s) AND trade_date>=%(since)s AND trade_date<=%(until)s "
+        "ORDER BY stock_id,trade_date", {"ids": ids, "since": since, "until": cutoff})
+    calendar = [r["trade_date"] for r in db.query(
+        "SELECT DISTINCT trade_date FROM price_daily WHERE trade_date>=%(since)s AND trade_date<=%(until)s "
+        "ORDER BY trade_date", {"since": since, "until": cutoff})]
     by = {}
     for bar in bars:
-        if cutoff and bar["trade_date"] > cutoff:
-            continue
         by.setdefault(bar["stock_id"], []).append(bar)
-    updates = []
-    for signal in pending:
-        future = [b for b in by.get(signal["stock_id"], []) if b["trade_date"] > signal["observed_date"]]
-        horizon = int(signal["horizon"] or HORIZON)
-        entry, stop = float(signal["entry"]), float(signal["stop"])
-        target = _f(signal["target"])
-        unit = entry - stop
-        if unit <= 0:
+    updates, settled = [], 0
+    for row in pending:
+        spec = row.get("execution_spec")
+        if isinstance(spec, str):
+            spec = json.loads(spec)
+        if not spec:
             continue
-        outcome = None
-        for i, bar in enumerate(future[:horizon], 1):
-            # 同一根無法知道先後，固定採較保守的停損。
-            if float(bar["low"]) <= stop:
-                outcome = ("loss", bar["trade_date"], stop, i); break
-            if target is not None and float(bar["high"]) >= target:
-                outcome = ("win", bar["trade_date"], target, i); break
-        if outcome is None and len(future) >= horizon:
-            bar = future[horizon - 1]
-            outcome = ("timeout", bar["trade_date"], float(bar["close"]), horizon)
-        if outcome is None:
-            continue
-        status, out_date, exit_price, days = outcome
-        cost = float(signal.get("cost_pct") or ROUND_TRIP_COST)
-        net_return = exit_price / entry - 1 - cost
-        risk_pct = unit / entry
-        outcome_r = net_return / risk_pct
-        updates.append((status, out_date, round(outcome_r, 4), days,
-                        signal["strategy"], signal["stock_id"], signal["observed_date"], signal["model_version"]))
+        result = execution.simulate(by.get(row["stock_id"], []), spec, calendar, cutoff)
+        settled += result["status"] != "pending"
+        updates.append((result["status"], result["exit_date"], result["outcome_r"], result["days"],
+                        json.dumps(result, ensure_ascii=False, default=_iso),
+                        row["strategy"], row["stock_id"], row["observed_date"], row["model_version"]))
     if updates:
         db.execute_many(
             "UPDATE decision_signal_log AS d SET outcome_status=v.status,outcome_date=v.outcome_date,"
-            " outcome_r=v.outcome_r,outcome_days=v.outcome_days,updated_at=now() FROM (VALUES %s) "
-            "AS v(status,outcome_date,outcome_r,outcome_days,strategy,stock_id,observed_date,model_version) "
-            "WHERE d.strategy=v.strategy AND d.stock_id=v.stock_id AND d.observed_date=v.observed_date "
-            "AND d.model_version=v.model_version",
-            updates,
-            template="(%s,%s::date,%s::numeric,%s::int,%s,%s,%s::date,%s)")
-    return len(updates)
+            "outcome_r=v.outcome_r,outcome_days=v.outcome_days,execution_result=v.result,updated_at=now() "
+            "FROM (VALUES %s) AS v(status,outcome_date,outcome_r,outcome_days,result,strategy,stock_id,observed_date,model_version) "
+            "WHERE d.strategy=v.strategy AND d.stock_id=v.stock_id AND d.observed_date=v.observed_date AND d.model_version=v.model_version",
+            updates, template="(%s,%s::date,%s::numeric,%s::int,%s::jsonb,%s,%s,%s::date,%s)")
+    return settled
 
 
 def record_candidates(scan, response=None, mode=DEFAULT_MODE, gate=DEFAULT_GATE):
@@ -364,8 +378,8 @@ def record_candidates(scan, response=None, mode=DEFAULT_MODE, gate=DEFAULT_GATE)
     scan 保留全市場候選，用於策略校準；response 是套用資金、持股與產業限制後
     的畫面結果，用於保存「當時為何入選／未入選」及建議部位。舊呼叫端只傳
     scan 仍可正常累積訊號，只是沒有完整的畫面快照。
-    mode=momentum 時每筆一律記成「進場價下 8% 停損、不設目標、20 日到期」，與畫面上的交易計畫一致。
-    動能模式各篩選條件的訊號與結算完全相同，只有入選與否不同：trend_template 寫主要欄位與快照，
+    動能類模式以實際隔日成交價下 8% 停損；trend_hold 最長 60 日，其餘 20 日。
+    trend_template 寫主要欄位與快照；整理突破另保存追價限制與成交結果。
     其他條件只把入選、理由、部位寫進 gate_selection[gate]，同一筆紀錄先寫先贏。
     """
     ensure_tables()
@@ -375,11 +389,11 @@ def record_candidates(scan, response=None, mode=DEFAULT_MODE, gate=DEFAULT_GATE)
     mode = normalize_mode(mode)
     gate = normalize_gate(gate)
     version = MODES[mode]
-    primary = mode != "momentum" or gate == PRIMARY_GATE
+    primary = mode == "classic" or gate == PRIMARY_GATE
     rendered = {item["stock_id"]: item for item in (response or {}).get("items", [])}
     values = []
     for item in scan.get("items", []):
-        current = _f(item.get("close"))
+        current = _f(item.get("raw_close"), _f(item.get("close")))
         shown = rendered.get(item["stock_id"], item)
         plan = shown.get("position_plan") or {}
         selection = (shown.get("selected"), shown.get("selection_reason"),
@@ -390,27 +404,37 @@ def record_candidates(scan, response=None, mode=DEFAULT_MODE, gate=DEFAULT_GATE)
         else:
             # 超出畫面 limit 的候選沒有入選結果；不寫，留給之後完整的一次（每晚 limit=500）補上。
             if item["stock_id"] in rendered:
+                gate_detail = dict(zip(("selected", "reason", "shares", "value"), selection))
+                gate_detail.update(decision_score=shown.get("decision_score"),
+                                   candidate_state=shown.get("state"), consensus_count=shown.get("consensus_count"),
+                                   lead_strategy=shown.get("lead_strategy"))
                 gate_selection = json.dumps(
-                    {gate: dict(zip(("selected", "reason", "shares", "value"), selection))}, ensure_ascii=False)
+                    {gate: gate_detail}, ensure_ascii=False)
             selection = (None, None, None, None)
         for strategy in item.get("strategies", []):
             if strategy.get("signal_state") != "triggered" or strategy.get("status") not in ("priority", "watch"):
                 continue
-            if mode == "momentum":
-                stop = round(current * (1 - MOMENTUM_STOP_PCT), 4) if current else None
-                target = None
-                if not current or not stop or not (0 < stop < current):
-                    continue
-            else:
-                stop, target = _f(strategy.get("stop")), _f(strategy.get("target"))
-                if not current or not stop or not target or not (0 < stop < current < target):
-                    continue
+            if mode == "classic" and strategy["key"] == "consolidation":
+                continue
+            spec = execution_spec(item, strategy, mode)
+            spec["observed_date"] = observed
+            stop, target = spec["stop"], spec["target"]
+            if not current or not stop or not 0 < stop < current or (target is not None and target <= current):
+                continue
+            # 整理突破有獨立的追價上限與成交結果，只在它自己的條件下標示入選。
+            strategy_selection = selection
+            strategy_gate_selection = gate_selection
+            if (strategy["key"] == "consolidation") != (gate == "consolidation"):
+                strategy_selection = (False, "此策略未用於本篩選條件", None, None) if primary else (None, None, None, None)
+                if strategy_gate_selection:
+                    strategy_gate_selection = json.dumps({gate: {"selected": False, "reason": "此策略未用於本篩選條件"}})
             values.append((strategy["key"], item["stock_id"], observed, version,
                            strategy["status"], strategy["score"], score_bucket(strategy["score"]),
-                           strategy.get("pattern"), current, stop, target, HORIZON, ROUND_TRIP_COST,
+                           strategy.get("pattern"), current, stop, target, spec["horizon"], ROUND_TRIP_COST,
                            shown.get("state"), shown.get("decision_score"),
                            shown.get("consensus_count"), shown.get("lead_strategy"),
-                           *selection, gate_selection, snapshot))
+                           *strategy_selection, strategy_gate_selection, snapshot,
+                           json.dumps(spec, ensure_ascii=False, default=_iso)))
     if not values:
         return 0
     before = db.query(
@@ -422,7 +446,7 @@ def record_candidates(scan, response=None, mode=DEFAULT_MODE, gate=DEFAULT_GATE)
         "(strategy,stock_id,observed_date,model_version,decision_status,score,score_bucket,pattern,"
         " entry,stop,target,horizon,cost_pct,candidate_state,decision_score,consensus_count,"
         " lead_strategy,is_selected,selection_reason,suggested_shares,position_value,"
-        " gate_selection,snapshot) "
+        " gate_selection,snapshot,execution_spec) "
         "VALUES %s ON CONFLICT (strategy,stock_id,observed_date,model_version) DO UPDATE SET "
         " candidate_state=COALESCE(decision_signal_log.candidate_state,EXCLUDED.candidate_state),"
         " decision_score=COALESCE(decision_signal_log.decision_score,EXCLUDED.decision_score),"
@@ -435,10 +459,11 @@ def record_candidates(scan, response=None, mode=DEFAULT_MODE, gate=DEFAULT_GATE)
         # jsonb || 右邊的鍵優先：已存在的篩選條件結果不被覆寫，新的條件補進去。
         " gate_selection=NULLIF(COALESCE(EXCLUDED.gate_selection,'{}'::jsonb)"
         "||COALESCE(decision_signal_log.gate_selection,'{}'::jsonb),'{}'::jsonb),"
-        " snapshot=COALESCE(decision_signal_log.snapshot,EXCLUDED.snapshot),updated_at=now()",
+        " snapshot=COALESCE(decision_signal_log.snapshot,EXCLUDED.snapshot),"
+        " execution_spec=COALESCE(decision_signal_log.execution_spec,EXCLUDED.execution_spec),updated_at=now()",
         values,
         template="(%s,%s,%s::date,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-                 "%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb)")
+                 "%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb)")
     after = db.query(
         "SELECT count(*)::int AS n FROM decision_signal_log "
         "WHERE observed_date=%(d)s AND model_version=%(v)s",
@@ -448,7 +473,7 @@ def record_candidates(scan, response=None, mode=DEFAULT_MODE, gate=DEFAULT_GATE)
 
 def decision_history(stock_id=None, strategy=None, outcome_status=None,
                      date_from=None, date_to=None, selected_only=False, limit=500, mode=DEFAULT_MODE,
-                     gate=DEFAULT_GATE):
+                     gate=DEFAULT_GATE, legacy=False):
     """讀取決策歷史，並用最新收盤估算尚未結算訊號的目前 R。
 
     動能模式的 gate 只決定「當時是否入選」與理由、部位從哪裡讀；訊號與結算各條件共用。
@@ -456,12 +481,15 @@ def decision_history(stock_id=None, strategy=None, outcome_status=None,
     ensure_tables()
     mode = normalize_mode(mode)
     gate = normalize_gate(gate)
-    version = MODES[mode]
-    primary = mode != "momentum" or gate == PRIMARY_GATE
+    version = LEGACY_MODES.get(mode, "no-legacy") if legacy else MODES[mode]
+    primary = mode == "classic" or gate == PRIMARY_GATE
     latest = db.query("SELECT max(trade_date) AS d FROM price_daily")[0]["d"]
     settle_pending(latest)
 
     cond = ["d.model_version=%(version)s"]
+    if not legacy:
+        cond.append("d.strategy='consolidation'" if gate == "consolidation" and mode != "classic"
+                    else "d.strategy<>'consolidation'")
     params = {"version": version, "limit": max(1, min(int(limit), 1000))}
     if primary:
         sel = {"is_selected": "d.is_selected", "selection_reason": "d.selection_reason",
@@ -474,10 +502,10 @@ def decision_history(stock_id=None, strategy=None, outcome_status=None,
     if stock_id:
         cond.append("d.stock_id=%(stock_id)s")
         params["stock_id"] = str(stock_id).strip()
-    if strategy in ("breakout", "price_action"):
+    if strategy in ("breakout", "price_action", "consolidation"):
         cond.append("d.strategy=%(strategy)s")
         params["strategy"] = strategy
-    if outcome_status in ("pending", "win", "loss", "timeout"):
+    if outcome_status in ("pending", "win", "loss", "timeout", "trend", "skipped"):
         cond.append("d.outcome_status=%(outcome)s")
         params["outcome"] = outcome_status
     if date_from:
@@ -496,6 +524,8 @@ def decision_history(stock_id=None, strategy=None, outcome_status=None,
         " count(*) FILTER (WHERE outcome_status='win')::int AS win,"
         " count(*) FILTER (WHERE outcome_status='loss')::int AS loss,"
         " count(*) FILTER (WHERE outcome_status='timeout')::int AS timeout,"
+        " count(*) FILTER (WHERE outcome_status='trend')::int AS trend,"
+        " count(*) FILTER (WHERE outcome_status='skipped')::int AS skipped,"
         f" count(*) FILTER (WHERE {sel['is_selected']} IS TRUE)::int AS selected,"
         " avg(outcome_r) FILTER (WHERE outcome_status<>'pending') AS avg_r "
         f"FROM decision_signal_log d WHERE {where}", params)[0]
@@ -505,7 +535,7 @@ def decision_history(stock_id=None, strategy=None, outcome_status=None,
         "d.outcome_status,d.outcome_date,d.outcome_r,d.outcome_days,d.candidate_state,"
         "d.decision_score,d.consensus_count,d.lead_strategy,"
         + ",".join(f"{expr} AS {name}" for name, expr in sel.items()) +
-        ",d.snapshot,d.created_at "
+        ",d.snapshot,d.execution_result,d.gate_selection,d.created_at "
         f"FROM decision_signal_log d WHERE {where} "
         f"ORDER BY d.observed_date DESC,{sel['is_selected']} DESC NULLS LAST,d.decision_score DESC NULLS LAST,"
         "d.score DESC,d.stock_id,d.strategy LIMIT %(limit)s", params)
@@ -516,7 +546,7 @@ def decision_history(stock_id=None, strategy=None, outcome_status=None,
     bars_by_stock = {}
     if ids:
         for row in db.query(
-                "SELECT DISTINCT ON (stock_id) stock_id,trade_date,adj_close AS close "
+                "SELECT DISTINCT ON (stock_id) stock_id,trade_date,close "
                 "FROM price_daily WHERE stock_id=ANY(%(ids)s) "
                 "ORDER BY stock_id,trade_date DESC", {"ids": ids}):
             latest_by_stock[row["stock_id"]] = row
@@ -535,6 +565,15 @@ def decision_history(stock_id=None, strategy=None, outcome_status=None,
     items = []
     for raw in rows:
         row = dict(raw)
+        gate_detail = row.pop("gate_selection", None) or {}
+        if isinstance(gate_detail, str):
+            gate_detail = json.loads(gate_detail)
+        if not primary:
+            for key in ("decision_score", "candidate_state", "consensus_count", "lead_strategy"):
+                row[key] = gate_detail.get(gate, {}).get(key)
+        replay = row.pop("execution_result", None) or {}
+        if isinstance(replay, str):
+            replay = json.loads(replay)
         snap = row.pop("snapshot", None) or {}
         if isinstance(snap, str):
             try:
@@ -549,9 +588,8 @@ def decision_history(stock_id=None, strategy=None, outcome_status=None,
         entry, stop = _f(row.get("entry")), _f(row.get("stop"))
         unit = entry - stop if entry is not None and stop is not None else None
         current_r = None
-        if latest_close is not None and entry and unit and unit > 0:
-            net_return = latest_close / entry - 1 - _f(row.get("cost_pct"), ROUND_TRIP_COST)
-            current_r = round(net_return / (unit / entry), 2)
+        if not legacy and replay.get("current_r") is not None:
+            current_r = round(float(replay["current_r"]), 2)
         progress_days = sum(
             1 for bar in bars_by_stock.get(row["stock_id"], [])
             if bar["trade_date"] > row["observed_date"])
@@ -562,9 +600,9 @@ def decision_history(stock_id=None, strategy=None, outcome_status=None,
             "name": snap.get("name") or meta.get("name") or row["stock_id"],
             "industry": snap.get("industry") or meta.get("industry") or "其他",
             "pattern_name": strategy_snap.get("pattern_name") or row.get("pattern"),
-            "candidate_state": row.get("candidate_state") or snap.get("state"),
-            "decision_score": _f(row.get("decision_score"), _f(snap.get("decision_score"))),
-            "consensus_count": row.get("consensus_count") or snap.get("consensus_count"),
+            "candidate_state": row.get("candidate_state") or fallback.get("state"),
+            "decision_score": _f(row.get("decision_score"), _f(fallback.get("decision_score"))),
+            "consensus_count": row.get("consensus_count") if row.get("consensus_count") is not None else fallback.get("consensus_count"),
             "is_selected": row.get("is_selected") if row.get("is_selected") is not None else fallback.get("selected"),
             "selection_reason": row.get("selection_reason") or fallback.get("selection_reason"),
             "suggested_shares": _f(row.get("suggested_shares"), _f((fallback.get("position_plan") or {}).get("suggested_shares"))),
@@ -572,7 +610,10 @@ def decision_history(stock_id=None, strategy=None, outcome_status=None,
             "latest_date": _iso(latest_row.get("trade_date")),
             "latest_close": latest_close,
             "current_r": current_r,
-            "progress_days": min(progress_days, int(row.get("horizon") or HORIZON)),
+            "progress_days": replay.get("days", min(progress_days, int(row.get("horizon") or HORIZON))),
+            "actual_entry": replay.get("actual_entry_raw"), "entry_date": replay.get("entry_date"),
+            "actual_exit": replay.get("exit_price_raw"), "net_return": replay.get("net_return"),
+            "execution_state": replay.get("execution_state"), "execution_reason": replay.get("reason"),
         })
 
     dates = db.query(
@@ -589,6 +630,7 @@ def decision_history(stock_id=None, strategy=None, outcome_status=None,
             "win": int(summary.get("win") or 0),
             "loss": int(summary.get("loss") or 0),
             "timeout": int(summary.get("timeout") or 0),
+            "trend": int(summary.get("trend") or 0), "skipped": int(summary.get("skipped") or 0),
             "selected": int(summary.get("selected") or 0),
             "avg_r": round(_f(summary.get("avg_r"), 0), 2) if summary.get("avg_r") is not None else None,
         },
@@ -596,7 +638,8 @@ def decision_history(stock_id=None, strategy=None, outcome_status=None,
         "items": items,
         "model_version": version,
         "mode": mode,
-        "gate": gate if mode == "momentum" else None,
+        "gate": gate if mode != "classic" else None,
+        "legacy": legacy,
     }
 
 
@@ -609,7 +652,7 @@ def calibration_rows(mode=DEFAULT_MODE):
         " sum((outcome_r>0)::int)::int AS positive_n,"
         " avg(outcome_r) AS avg_r,avg(outcome_days) AS avg_days,"
         " min(observed_date) AS first_date,max(observed_date) AS last_date "
-        "FROM decision_signal_log WHERE model_version=%(v)s AND outcome_status<>'pending' "
+        "FROM decision_signal_log WHERE model_version=%(v)s AND outcome_status IN ('win','loss','timeout','trend') "
         "GROUP BY strategy,score_bucket ORDER BY strategy,score_bucket",
         {"v": version})
     out = []
@@ -657,7 +700,9 @@ def current_holdings():
             "shares": pos["net_shares"], "close": close,
             "market_value": close * pos["net_shares"] if close is not None else None,
         })
-    return {"items": items, "stock_ids": set(open_positions), "industry_counts": counts}
+    return {"items": items, "stock_ids": set(open_positions), "industry_counts": counts,
+            "risk_amount": sum((x["market_value"] or 0) * MOMENTUM_STOP_PCT for x in items),
+            "risk_estimated": True}
 
 
 def _position_plan(entry, stop, target, capital, risk_per_trade_pct, max_position_pct,
@@ -672,6 +717,8 @@ def _position_plan(entry, stop, target, capital, risk_per_trade_pct, max_positio
                     available_capital if available_capital is not None else capital)
     by_risk = math.floor(risk_budget / unit_risk)
     by_capital = math.floor(cap_limit / entry)
+    if available_capital is not None:
+        by_capital = min(by_capital, math.floor(available_capital / (entry * (1 + ROUND_TRIP_COST / 2))))
     odd_lot = max(0, min(by_risk, by_capital))
     size = max(1, int(lot_size))
     suggested = (odd_lot // size) * size
@@ -692,6 +739,7 @@ def _position_plan(entry, stop, target, capital, risk_per_trade_pct, max_positio
         "suggested_shares": suggested, "board_lot_shares": (odd_lot // 1000) * 1000,
         "odd_lot_capacity": odd_lot, "order_mode": mode,
         "position_value": round(value), "capital_pct": round(value / capital * 100, 1),
+        "estimated_entry_cost": round(value * ROUND_TRIP_COST / 2, 2),
         "risk_amount": round(risk_amount), "actual_risk_pct": round(risk_amount / capital * 100, 2),
     }
 
@@ -705,10 +753,17 @@ def _gate_ok(item, gate):
     """動能模式的篩選條件；breakout 可執行本身就是可執行訊號，trend_template 另需任一策略可執行（呼叫端檢查）。"""
     if gate == "breakout":
         return bool(item.get("breakout_ready"))
+    if gate == "consolidation":
+        return bool(item.get("trend_template")) and any(
+            s["key"] == "consolidation" and s["status"] == "priority" for s in item["strategies"])
     return bool(item.get("trend_template"))
 
 
 def _gate_reason(item, gate):
+    if gate == "consolidation":
+        setup = next((s for s in item["strategies"] if s["key"] == "consolidation"), None)
+        return ("趨勢模板未成立" if not item.get("trend_template") else
+                (setup.get("blockers") or ["整理突破尚未確認"])[0] if setup else "沒有整理突破訊號")
     if gate == "breakout":
         bk = next((s for s in item["strategies"] if s["key"] == "breakout"), None)
         if not bk:
@@ -719,16 +774,18 @@ def _gate_reason(item, gate):
 
 
 def method_text(mode, gate=DEFAULT_GATE):
-    if mode != "momentum":
+    if mode == "classic":
         return "原始規則：多策略共識 + 可執行狀態 + 現有持股產業上限 + 固定風險部位；分數校準滿 30 筆才影響名次"
+    exit_text = "跌破 50 日線後隔日開盤出場，最長 60 日" if mode == "trend_hold" else f"第 {HORIZON} 個交易日收盤出場"
     return (f"動能模式（篩選：{GATES[gate]}）：{GATE_RULES[gate]}＋加權指數站上 {MARKET_MA_DAYS} 日線才開新倉，"
-            f"依 RS 評等排序；停損進場價下 {int(MOMENTUM_STOP_PCT * 100)}%、不設目標、第 {HORIZON} 個交易日收盤出場")
+            f"依 RS 評等排序；隔日開盤進場、停損實際進場價下 {int(MOMENTUM_STOP_PCT * 100)}%、不設目標，{exit_text}")
 
 
 def build_decision_response(scan, calibrations, holdings, capital=1_000_000,
                             risk_per_trade_pct=0.75, max_new_positions=3,
                             max_industry_positions=2, max_position_pct=25,
-                            lot_size=1000, limit=200, mode=DEFAULT_MODE, market=None, gate=DEFAULT_GATE):
+                            lot_size=1000, limit=200, mode=DEFAULT_MODE, market=None, gate=DEFAULT_GATE,
+                            available_capital=None, max_total_positions=10, max_total_risk_pct=4):
     """套用模式規則、持股產業上限與資金限制，挑出本次新倉。
 
     momentum：ready 且通過篩選條件（gate）者才可入選，加權指數跌破 60 日線時不開新倉，
@@ -739,10 +796,19 @@ def build_decision_response(scan, calibrations, holdings, capital=1_000_000,
     """
     mode = normalize_mode(mode)
     gate = normalize_gate(gate)
-    momentum = mode == "momentum"
+    momentum = mode != "classic"
     items = deepcopy(scan.get("items", []))
     cmap = {(r["strategy"], r["score_bucket"]): r for r in calibrations}
     for item in items:
+        active = [s for s in item["strategies"] if (s["key"] == "consolidation") == (momentum and gate == "consolidation")]
+        item["strategies"] = active
+        item["consensus_count"] = len(active)
+        item["consensus_bonus"] = 6 if len(active) > 1 else 0
+        item["base_score"] = max((s["score"] for s in active), default=0)
+        lead = max(active, key=lambda s: (s["status"] == "priority", s["score"]), default=None)
+        item["lead_strategy"] = lead["key"] if lead else None
+        item["state"] = ("ready" if any(s["status"] == "priority" for s in active) else
+                         "waiting" if any(s["status"] == "waiting" for s in active) else "watch")
         best_live = None
         for strategy in item["strategies"]:
             live = cmap.get((strategy["key"], score_bucket(strategy["score"])))
@@ -767,35 +833,48 @@ def build_decision_response(scan, calibrations, holdings, capital=1_000_000,
     else:
         items.sort(key=lambda x: (x["state"] == "ready", x["consensus_count"],
                                   x["decision_score"], x.get("amt20") or 0), reverse=True)
-    market_blocked = momentum and bool(market) and market.get("above") is False
-    exit_rule = f"第 {HORIZON} 個交易日收盤出場" if momentum else None
+    market_blocked = momentum and (not market or market.get("above") is not True)
+    data_blocked = scan.get("data_health", {}).get("healthy") is False
+    exit_rule = ("跌破 50 日線後隔日開盤出場，最長 60 日" if mode == "trend_hold" else
+                 f"第 {HORIZON} 個交易日收盤出場") if momentum else None
     held_ids = set(holdings.get("stock_ids", set()))
     industry_counts = dict(holdings.get("industry_counts", {}))
     selected = 0
-    remaining = max(0, float(capital))
+    remaining = max(0, min(float(capital), float(available_capital))) if available_capital is not None else max(0, float(capital))
+    risk_remaining = max(0, float(capital) * max_total_risk_pct / 100 - float(holdings.get("risk_amount") or 0))
     for item in items:
-        lead = next(x for x in item["strategies"] if x["key"] == item["lead_strategy"])
-        entry = _f(item.get("close")) or _f(lead.get("entry"))
+        lead = next((x for x in item["strategies"] if x["key"] == item["lead_strategy"]), {})
+        entry = _f(item.get("raw_close"), _f(item.get("close"))) or _f(lead.get("entry"))
         if momentum:
             stop = entry * (1 - MOMENTUM_STOP_PCT) if entry else None
             target = None
         else:
-            stop, target = lead.get("stop"), lead.get("target")
+            factor = _f(item.get("price_factor"), 1) or 1
+            stop = _f(lead.get("stop"), 0) / factor
+            target = _f(lead.get("target"), 0) / factor
         item["position_plan"] = _position_plan(
-            entry, stop, target, max(1, float(capital)), max(0.01, float(risk_per_trade_pct)),
+            entry, stop, target, max(1, float(capital)), max(0, min(float(risk_per_trade_pct), risk_remaining / max(1, float(capital)) * 100)),
             max(1, min(100, float(max_position_pct))), lot_size, remaining, exit_rule)
+        if momentum and gate == "consolidation" and lead:
+            item["position_plan"]["max_entry"] = round(lead["max_entry"] / (_f(item.get("price_factor"), 1) or 1), 2)
+        item["position_plan"]["entry_rule"] = "次交易日開盤；成交後重算停損與股數"
         item["held"] = item["stock_id"] in held_ids
         item["selected"] = False
-        if item["held"]:
+        if data_blocked:
+            item["selection_reason"] = scan["data_health"].get("reason") or "必要資料未更新，暫停入選"
+        elif item["held"]:
             item["selection_reason"] = "目前已持有，列為持股管理而非新倉"
         elif item["state"] != "ready":
             item["selection_reason"] = "訊號仍在等待／觀察，尚未列入可執行名單"
         elif momentum and not item["momentum_ok"]:
             item["selection_reason"] = _gate_reason(item, gate)
         elif market_blocked:
-            item["selection_reason"] = f"加權指數在 {MARKET_MA_DAYS} 日線下，動能模式暫停開新倉"
+            item["selection_reason"] = (f"加權指數在 {MARKET_MA_DAYS} 日線下，暫停開新倉"
+                                        if market and market.get("above") is False else "大盤資料不足或過期，暫停開新倉")
         elif industry_counts.get(item["industry"], 0) >= max(1, int(max_industry_positions)):
             item["selection_reason"] = f"{item['industry']}持股已達產業上限"
+        elif len(held_ids) + selected >= max(1, int(max_total_positions)):
+            item["selection_reason"] = "已達帳戶總持股上限"
         elif selected >= max(1, int(max_new_positions)):
             item["selection_reason"] = "已達本次新增部位上限"
         elif not item["position_plan"].get("valid"):
@@ -805,7 +884,8 @@ def build_decision_response(scan, calibrations, holdings, capital=1_000_000,
             item["selection_reason"] = "通過訊號、產業與部位風險限制"
             selected += 1
             industry_counts[item["industry"]] = industry_counts.get(item["industry"], 0) + 1
-            remaining = max(0, remaining - item["position_plan"]["position_value"])
+            remaining = max(0, remaining - item["position_plan"]["position_value"] - item["position_plan"]["estimated_entry_cost"])
+            risk_remaining = max(0, risk_remaining - item["position_plan"]["risk_amount"])
     total = len(items)  # 截到 limit 之前的候選數；畫面表格只列前 limit 檔
     items = items[:max(1, min(int(limit), 500))]
     summary = {
@@ -817,25 +897,31 @@ def build_decision_response(scan, calibrations, holdings, capital=1_000_000,
         "consensus": sum(1 for x in items if x["consensus_count"] > 1),
         "held": len(holdings.get("items", [])),
         "remaining_capital": round(remaining),
+        "remaining_risk_budget": round(risk_remaining),
     }
     return {
         "as_of": scan.get("as_of"), "scanned": scan.get("scanned", 0),
         "count": len(items), "total": total, "summary": summary, "items": items,
         "mode": mode, "market": market, "market_blocked": market_blocked,
+        "data_health": scan.get("data_health", {}),
         "gate": gate if momentum else None, "gate_label": GATES[gate] if momentum else None,
         "holdings": {"items": holdings.get("items", []),
                      "industry_counts": holdings.get("industry_counts", {})},
         "calibration": calibrations,
         "settings": {
             "capital": float(capital), "risk_per_trade_pct": float(risk_per_trade_pct),
+            "available_capital": float(available_capital) if available_capital is not None else float(capital),
+            "max_total_positions": int(max_total_positions), "max_total_risk_pct": float(max_total_risk_pct),
             "max_new_positions": int(max_new_positions),
             "max_industry_positions": int(max_industry_positions),
             "max_position_pct": float(max_position_pct), "lot_size": int(lot_size),
-            "model_version": MODES[mode], "horizon": HORIZON,
+            "model_version": MODES[mode], "horizon": 60 if mode == "trend_hold" else HORIZON,
             "round_trip_cost_pct": ROUND_TRIP_COST * 100,
             "stop_pct": MOMENTUM_STOP_PCT * 100 if momentum else None,
             "market_ma_days": MARKET_MA_DAYS if momentum else None,
             "gate": gate if momentum else None,
+            "execution_version": execution.EXECUTION_VERSION, "slippage_pct_per_side": execution.SLIPPAGE * 100,
         },
+        "validation": {"status": "unvalidated", "message": "新版隔日成交／公司行動模型；舊版績效不適用。實驗條件需以同版本回測與前瞻結果驗證。"},
         "method": method_text(mode, gate),
     }

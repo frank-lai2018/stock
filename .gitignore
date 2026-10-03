@@ -19,3 +19,8 @@ __pycache__/
 
 # 族群候選清單（theme_candidates.py 產生、人工勾選的工作檔，勿進版控）
 族群候選_*.csv
+
+# 策略研究的本機備份與大型逐筆明細；摘要 JSON 保留供頁面讀取
+stockselect/backend/research/local_backup/
+stockselect/backend/research/smoke_v3.json
+stockselect/backend/research/decision_picks_v3.csv

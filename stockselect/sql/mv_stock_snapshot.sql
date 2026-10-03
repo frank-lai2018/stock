@@ -64,6 +64,7 @@ FROM (
             ),
             px AS (
                 SELECT stock_id,
+                    max(trade_date) AS last_price_date,
                     max(close)     FILTER (WHERE rn = 1)   AS close,
                     max(adj_close) FILTER (WHERE rn = 1)   AS c0,
                     max(adj_close) FILTER (WHERE rn = 21)  AS c1m,
@@ -127,17 +128,17 @@ FROM (
                 FROM vpasig GROUP BY stock_id
             ),
             idx AS (
-                SELECT max(close) FILTER (WHERE rn = 1)   AS i0,
+                SELECT max(close) FILTER (WHERE rn = 1 AND trade_date = (SELECT td FROM d)) AS i0,
                        max(close) FILTER (WHERE rn = 126) AS i6m
-                FROM (SELECT mi.close, row_number() OVER (ORDER BY mi.trade_date DESC) AS rn
+                FROM (SELECT mi.close, mi.trade_date, row_number() OVER (ORDER BY mi.trade_date DESC) AS rn
                       FROM market_index mi CROSS JOIN d
-                      WHERE mi.index_id = 'TAIEX' AND mi.trade_date > d.td - 400) z
+                      WHERE mi.index_id = 'TWSE' AND mi.trade_date > d.td - 400 AND mi.trade_date <= d.td) z
             ),
             -- 近 8 季財報（新→舊）：算三率、EPS 季增/年增與「盈餘加速」
             fqs AS (
                 SELECT stock_id, roe, eps, gross_margin, op_margin, net_margin, debt_ratio,
                        row_number() OVER (PARTITION BY stock_id ORDER BY period_date DESC) AS rn
-                FROM fundamentals_quarterly
+                FROM fundamentals_quarterly CROSS JOIN d WHERE available_date <= d.td
             ),
             fq AS (
                 SELECT stock_id,
@@ -157,7 +158,8 @@ FROM (
                 FROM fqs WHERE rn <= 8 GROUP BY stock_id
             ),
             rev AS (SELECT DISTINCT ON (stock_id) stock_id, yoy_pct AS rev_yoy, mom_pct AS rev_mom
-                    FROM monthly_revenue ORDER BY stock_id, revenue_month DESC),
+                    FROM monthly_revenue CROSS JOIN d WHERE available_date <= d.td
+                    ORDER BY stock_id, revenue_month DESC),
             val AS (SELECT DISTINCT ON (stock_id) stock_id, per, pbr, dividend_yield
                     FROM valuation_daily ORDER BY stock_id, trade_date DESC),
             -- 本益比在近 3 年的位置（0=史上最便宜、100=史上最貴）＋分位帶（河流圖用）
@@ -230,6 +232,7 @@ FROM (
             SELECT
                 s.stock_id, s.name, s.market, s.industry, s.security_type,
                 (SELECT td FROM d)                              AS as_of_date,
+                px.last_price_date,
                 px.close, round(px.c0, 4)                       AS adj_close,
                 -- 動能
                 px.c0 / NULLIF(px.c1m,0)  - 1                   AS ret_1m,
@@ -288,7 +291,7 @@ FROM (
                 round(ret.retail_pct, 4) AS retail_pct, round(ret.retail_chg, 4) AS retail_chg,
                 rk.renko_dir, rk.renko_run, rk.renko_flip_days, rk.brick AS renko_brick,
                 rk.tlb_dir, rk.tlb_run, rk.tlb_flip_days,
-                (px.trading_days >= 60 AND px.amt20 >= 5000000) AS in_universe
+                (px.trading_days >= 60 AND px.amt20 >= 5000000 AND px.last_price_date = (SELECT td FROM d)) AS in_universe
             FROM stock s
             JOIN px            ON px.stock_id = s.stock_id
             LEFT JOIN vpa      ON vpa.stock_id = s.stock_id

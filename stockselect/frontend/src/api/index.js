@@ -52,6 +52,8 @@ export const getDailyDecision = (params = {}) =>
   api.get('/screen/daily-decision', { params }).then((r) => r.data)
 export const getDailyDecisionHistory = (params = {}) =>
   api.get('/screen/daily-decision/history', { params }).then((r) => r.data)
+export const getDecisionResearch = () =>
+  api.get('/screen/daily-decision/research').then((r) => r.data)
 export const getPriceActionDecisions = (params = {}) =>
   api.get('/screen/price-action', { params }).then((r) => r.data)
 export const getBreakoutPatterns = (group = 'bottom') =>

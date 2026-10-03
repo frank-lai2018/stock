@@ -1,0 +1,7 @@
+2026-10-03
+44 unit tests passed, including next-open fills, gap stops, dividend/split normalization, missing/locked bars, cross-day portfolio caps and no future-price effects on past equity.
+Frontend production build passed.
+Live HTTP: 5 profile pairs plus legacy history, zero cash, and configured-equity selection passed.
+Snapshot rebuilt transactionally: 2293 rows; no stale price in universe.
+All v3 tracking rows have execution specs; legacy rows preserved.
+Full historical research completed: 489 signal days, 7 variants, through 2026-10-02. Code fingerprint and live research API verified; all portfolio curves have nonnegative cash and at most 10 positions.

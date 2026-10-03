@@ -107,7 +107,7 @@ class DecisionCenterTest(unittest.TestCase):
         self.assertEqual(values[0][3], decision_center.MODEL_VERSION)
         self.assertEqual((values[0][9], values[0][10]), (95, 115))  # 原始規則用策略自己的停損／目標
         self.assertTrue(values[0][17])  # is_selected
-        snapshot = json.loads(values[0][-1])
+        snapshot = json.loads(values[0][22])
         self.assertTrue(snapshot["selected"])
         self.assertEqual(snapshot["position_plan"]["entry"], 100)
 

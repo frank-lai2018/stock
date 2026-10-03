@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getDailyDecision } from '../api'
 import DecisionHistoryPanel from '../components/DecisionHistoryPanel.vue'
+import DecisionResearchPanel from '../components/DecisionResearchPanel.vue'
 
 const router = useRouter()
 const loading = ref(false)
@@ -17,6 +18,9 @@ const form = reactive({
   // 動能模式的篩選條件：trend_template（預設）／breakout，對應後端 decision_center.GATES
   gate: 'trend_template',
   capital: 1000000,
+  available_capital: 1000000,
+  max_total_positions: 10,
+  max_total_risk_pct: 4,
   risk_per_trade_pct: 0.75,
   max_new_positions: 3,
   max_industry_positions: 2,
@@ -46,24 +50,21 @@ const GATES = [
     rule: '可執行訊號＋趨勢模板成立（多頭排列、RS ≥ 70）' },
   { value: 'breakout', label: '型態突破', short: '型態突破可執行',
     rule: '型態突破可執行（量比 ≥ 1.5、離頸線 5% 內、RS ≥ 70）' },
+  { value: 'consolidation', label: '整理突破（實驗）', short: '整理突破＋趨勢模板',
+    rule: '振幅收斂、量縮後放量突破前 20 日高點，並限制追價' },
 ]
-// 依 backend/backtest_decision_center.py（2024-07～2026-09，已扣 0.6% 成本）；規則改了請重跑並更新這段
-const BACKTEST_NOTES = {
-  trend_template: '回測 2024-07～2026-09：每筆平均淨報酬 +1.78%（勝率 38.5%），原始規則 −0.44%（勝率 31.4%）；相對大盤只多 0.35%、統計上不顯著，主要是避開原始規則的負期望值。',
-  breakout: '回測 2024-07～2026-09：每筆平均淨報酬 +1.27%（勝率 36.9%），低於趨勢模板的 +1.78%；相對大盤只多 0.16%、統計上不顯著。可執行的突破較少，529 天裡 286 天有選股（趨勢模板 403 天）。',
-}
-const isMomentum = computed(() => form.mode === 'momentum')
+const isMomentum = computed(() => form.mode !== 'classic')
 const gateInfo = computed(() => GATES.find((g) => g.value === form.gate) || GATES[0])
 // 表格依「這批資料」算出時的篩選條件判斷，避免切換後、資料還沒回來前顯示錯的原因
 const activeGate = computed(() => result.value.gate || form.gate)
-const gateMiss = (row) => activeGate.value === 'breakout'
+const gateMiss = (row) => activeGate.value === 'consolidation' ? '整理突破或趨勢模板未成立' : activeGate.value === 'breakout'
   ? (row.breakout_ready ? '' : '型態突破未達可執行')
   : (row.trend_template ? '' : '趨勢模板未成立')
 // 大盤濾網：動能模式只在加權指數站上 60 日線時開新倉
 const market = computed(() => result.value.market || null)
 const marketAlert = computed(() => {
   const m = market.value
-  if (!m || m.above == null) return { type: 'info', title: '大盤資料不足，暫不套用大盤濾網' }
+  if (!m || m.above == null) return { type: 'warning', title: '大盤資料不足或過期，暫停開新倉' }
   if (m.above) return { type: 'success', title: `加權指數站上 ${m.ma_days} 日線：可開新倉` }
   return { type: 'error', title: `加權指數跌破 ${m.ma_days} 日線：動能模式暫停開新倉` }
 })
@@ -117,7 +118,7 @@ function historicalText(row) {
   return `分數校準 n=${h.n}｜先到目標 ${pct(h.target_hit_rate)}｜期望 ${h.avg_r >= 0 ? '+' : ''}${num(h.avg_r, 2)}R`
 }
 
-function calibrationName(key) { return key === 'breakout' ? '型態突破' : '裸 K' }
+function calibrationName(key) { return { breakout: '型態突破', price_action: '裸 K', consolidation: '整理突破' }[key] || key }
 
 onMounted(load)
 </script>
@@ -130,12 +131,13 @@ onMounted(load)
       <div class="title-row">
         <div>
           <h2>今日決策中心</h2>
-          <div v-if="isMomentum" class="muted">突破與裸 K 負責找買點，動能負責篩選與排序：{{ gateInfo.short }}、大盤站上 60 日線才開新倉，依 RS 挑最強的。</div>
+          <div v-if="isMomentum" class="muted">{{ gateInfo.short }}、大盤站上 60 日線才開新倉，依 RS 排序。實驗規則與基準分開追蹤。</div>
           <div v-else class="muted">把突破與裸 K 合併成一張可執行清單；同時檢查持股產業重疊與單筆風險。</div>
         </div>
         <div class="title-actions">
           <el-radio-group v-model="form.mode" size="large">
             <el-radio-button value="momentum">動能模式</el-radio-button>
+            <el-radio-button value="trend_hold">趨勢持有（實驗）</el-radio-button>
             <el-radio-button value="classic">原始規則</el-radio-button>
           </el-radio-group>
           <template v-if="isMomentum">
@@ -149,13 +151,20 @@ onMounted(load)
       </div>
 
       <div class="filters">
-        <label>可投入資金</label>
+        <label>帳戶淨值</label>
         <el-input-number v-model="form.capital" :min="10000" :step="100000" controls-position="right" />
+        <label>可用現金</label>
+        <el-input-number v-model="form.available_capital" :min="0" :step="100000" controls-position="right" />
         <label>每檔風險</label>
         <el-input-number v-model="form.risk_per_trade_pct" :min="0.1" :max="5" :step="0.1" :precision="2" controls-position="right" style="width: 120px" />
         <span class="unit">%</span>
         <label>最多新倉</label>
         <el-input-number v-model="form.max_new_positions" :min="1" :max="10" controls-position="right" style="width: 100px" />
+        <label>總持股上限</label>
+        <el-input-number v-model="form.max_total_positions" :min="1" :max="50" controls-position="right" style="width: 100px" />
+        <label>總停損風險</label>
+        <el-input-number v-model="form.max_total_risk_pct" :min="0.1" :max="20" :step="0.5" controls-position="right" style="width: 105px" />
+        <span class="unit">%</span>
         <label>同產業上限</label>
         <el-input-number v-model="form.max_industry_positions" :min="1" :max="10" controls-position="right" style="width: 100px" />
         <label>單檔資金上限</label>
@@ -222,14 +231,17 @@ onMounted(load)
 
     <el-alert type="warning" :closable="false" show-icon class="notice">
       <template #title>入選代表通過目前規則與資金限制，不是自動買進指令</template>
-      <template v-if="isMomentum">
-        動能模式（篩選：{{ gateInfo.label }}）：{{ gateInfo.rule }}＋大盤站上 60 日線才開新倉，依 RS 評等排序；
-        停損為進場價下 8%、不設目標，第 20 個交易日收盤出場。部位以進場到停損的價差反推；同產業上限會先計入交易帳中的未平倉持股。
-        <div class="backtest-note">{{ BACKTEST_NOTES[gateInfo.value] }}</div>
-      </template>
-      <template v-else>
-        部位以進場到停損的價差反推；同產業上限會先計入交易帳中的未平倉持股。若分數校準未滿 30 筆，只顯示參考，不影響名次。
-      </template>
+      {{ result.method }}
+      <div class="backtest-note">{{ result.validation?.message }} 比較數據請見「策略研究」，實驗尚未證明樣本外有效。</div>
+      <div>現有交易帳沒有停損欄位，總風險暫以持股市值的 8% 估計；隔日成交時須重新核對股數與風險。</div>
+    </el-alert>
+    <el-alert v-if="result.data_health && (!result.data_health.healthy || result.data_health.stale_prices)"
+              :type="result.data_health.healthy ? 'info' : 'error'" :closable="false" class="notice">
+      {{ result.data_health.reason || `已排除 ${result.data_health.stale_prices} 檔過期行情` }}
+    </el-alert>
+    <el-alert v-if="result.holdings?.items?.length && result.summary?.remaining_risk_budget === 0"
+              type="warning" :closable="false" class="notice">
+      現有持股的估計停損風險已用盡總額度，暫不新增部位。帳戶淨值與可用現金請填入實際金額；現有持股風險暫估市值的 8%。
     </el-alert>
 
     <div class="list-head">
@@ -306,7 +318,9 @@ onMounted(load)
       <el-table-column label="交易計畫" width="170">
         <template #default="{ row }">
           <template v-if="row.position_plan?.valid">
-            <div>進場 {{ num(row.position_plan.entry, 2) }}</div>
+            <div>參考進場 {{ num(row.position_plan.entry, 2) }}</div>
+            <div v-if="row.position_plan.max_entry" class="small">追價上限 {{ num(row.position_plan.max_entry, 2) }}</div>
+            <div class="small muted">{{ row.position_plan.entry_rule }}</div>
             <div>停損 <b class="down">{{ num(row.position_plan.stop, 2) }}</b></div>
             <template v-if="row.position_plan.target != null">
               <div>目標 <b class="up">{{ num(row.position_plan.target, 2) }}</b></div>
@@ -337,8 +351,8 @@ onMounted(load)
       <el-collapse-item name="calibration">
         <template #title><b>分數校準明細與目前持股限制</b></template>
         <el-alert type="info" :closable="false" class="notice">
-          每個交易日只保存當日畫面上已觸發的候選；往後 20 個交易日以「先碰停損／先碰目標／到期收盤」結算，已扣 0.6% 來回成本。同根同碰時保守算停損。
-          動能模式與原始規則分開累積；動能模式不設目標，只會停損或到期，「先到目標」一欄會是 0。動能模式的兩種篩選條件共用同一批訊號紀錄，校準數字相同。
+          盤後訊號採隔日開盤，扣 0.6% 來回成本與每邊 0.1% 滑價。跳空停損依開盤價，一價鎖停則跳過買進或延後賣出。
+          20 日模式到期收盤；趨勢持有跌破 50 日線後隔日出場，最多 60 日。相近日期訊號互相關聯，樣本數與區間不能直接當成飆股機率。
         </el-alert>
         <el-table :data="result.calibration || []" size="small" border empty-text="尚無已到期的分數校準樣本；系統會從今天開始累積">
           <el-table-column label="策略" width="100"><template #default="{ row }">{{ calibrationName(row.strategy) }}</template></el-table-column>
@@ -365,6 +379,9 @@ onMounted(load)
       </el-tab-pane>
       <el-tab-pane label="決策追蹤／歷史紀錄" name="history" lazy>
         <DecisionHistoryPanel :mode="form.mode" :gate="form.gate" />
+      </el-tab-pane>
+      <el-tab-pane label="策略研究" name="research" lazy>
+        <DecisionResearchPanel />
       </el-tab-pane>
     </el-tabs>
   </div>

@@ -444,11 +444,15 @@ def main():
         ok, err = refresh_snapshot(args.dsn)
         results.append(("refresh", ok))
         print("    → " + ("已刷新 ✓" if ok else f"刷新失敗（{err}）；若尚未建視圖請先跑 stockselect/sql/mv_stock_snapshot.sql"))
-        if ok:
+        prerequisites_ok = all(success for job, success in results if job in ("daily", "quarterly", "revenue"))
+        if ok and prerequisites_ok:
             print("\n----- daily decision capture -----")
             rc = run_cmd([sys.executable, DECISION_CAPTURE, "--dsn", args.dsn], cwd=BACKTEST_DIR)
             results.append(("decision", rc == 0))
             print(f"    → {'成功' if rc == 0 else f'失敗 (rc={rc})'}")
+        elif ok:
+            results.append(("decision", False))
+            print("    → 必要上游資料更新失敗，跳過決策保存；既有結果可供查閱")
 
     print("\n=== nightly 完成 ===")
     for job, ok in results:

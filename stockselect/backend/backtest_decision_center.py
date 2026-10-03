@@ -1,24 +1,19 @@
-r"""backtest_decision_center.py — 今日決策中心歷史回測（原始規則與動能模式各篩選條件並排比較）。
+r"""決策中心 v3 歷史研究：7 組進場／出場條件與連續資金組合。
 
-每個交易日只用「當天以前看得到」的資料，呼叫 decision_center 本身的突破／裸 K 函式產生候選，
-再交給 build_decision_response 依 classic（原始規則）與 momentum（動能模式）的每個篩選條件
-（GATES：趨勢模板／型態突破）各挑新倉，最後照 settle_pending 的規則結算 20 個交易日後的結果。
-改了決策中心的規則之後重跑這支，就能確認新規則在歷史上是否真的比較好（結果與方法見 動能分析設計.md §9）。
-候選掃描與模式無關只跑一次；scan_candidates／evaluate 可單獨 import，用同一批候選比較其他規則。
+每個訊號日只用當日可見資料重算 RS、趨勢模板、財報及成交條件。
+突破評分不使用目前型態回測表的績效先驗，分數校準為空。
+全部模式採同一批完整 60 日標籤，隔日開盤、日 K 可交易近似、每邊 0.1% 滑價及 0.6% 成本。
+事件研究允許訊號重疊；連續組合另限制現金、跨日持股、產業與總停損風險。
+每筆等權母體超額只是診斷（母體採出場日收盤，盤中出場時間未匹配）。
+組合另對照含 ETF 成本的 0050；報酬均為還原價股利再投資口徑。
 
-點時間（point-in-time）處理：
-- K 棒：t 以前 150 根還原 K（同 scan_market）。
-- RS 評等、趨勢模板、ret_12_1、tight_recent、amt20、in_universe：逐日橫斷面重算（定義同 mv_stock_snapshot.sql）。
-- 財報只用 available_date ≤ t 的季報；月營收用 available_date ≤ t 的最新月份；本益比百分位用 t 以前 1100 天。
-- 法人 20 日淨買用 t 以前 20 個交易日。千張大戶 2026-07 才有資料，回測期間視為缺值（同系統缺值時 0 分）。
-- pattern_backtest 先驗用現在的表（含回測期間，屬輕微前視，最多影響突破分數 5 分）。
-- 沒有交易帳持股（產業上限只算當天新倉）；分數校準為空（歷史上當時也還沒有）。
-限制：資料庫沒有下市股（存活者偏差）；超額＝每筆淨報酬 − 同日掃描母體 20 日等權報酬。
+限制：目前主檔的存活者偏差、近似公告日、未保留歷史財報修訂、日 K 委託佇列近似。
+此歷史已參與設計，分段結果不能當作真正樣本外證據。
 
-用法（在 stockselect/backend 下，需可讀 .env 的 DATABASE_URL）：
-  python backtest_decision_center.py                        # 2024-07-01 起、8 個程序
-  python backtest_decision_center.py --start 2025-01-01 --workers 4
-  python backtest_decision_center.py --out picks.csv        # 另存每天入選明細
+在 backend 目錄執行：
+  python backtest_decision_center.py --workers 4
+  python backtest_decision_center.py --start 2025-01-01 --lot-size 1000
+  python backtest_decision_center.py --out research/decision_picks_v3.csv
 """
 import argparse
 import multiprocessing as mp
@@ -56,14 +51,16 @@ def load_all(sig_start):
     meta = {r["stock_id"]: r for r in db.query(
         "SELECT stock_id, name, industry FROM stock WHERE security_type='stock'")}
     px = pd.DataFrame(db.query(
-        "SELECT p.stock_id, p.trade_date, p.adj_open, p.adj_high, p.adj_low, p.adj_close, p.volume, p.amount "
+        "SELECT p.stock_id, p.trade_date, p.adj_open, p.adj_high, p.adj_low, p.adj_close, p.volume, p.amount,"
+        "p.open AS raw_open,p.high AS raw_high,p.low AS raw_low,p.close AS raw_close "
         "FROM price_daily p JOIN stock s USING (stock_id) WHERE s.security_type='stock' AND p.trade_date >= %(d)s "
         "ORDER BY p.stock_id, p.trade_date", {"d": load_start}))
-    for c in ("adj_open", "adj_high", "adj_low", "adj_close", "volume", "amount"):
+    for c in ("adj_open", "adj_high", "adj_low", "adj_close", "volume", "amount", "raw_open", "raw_high", "raw_low", "raw_close"):
         px[c] = px[c].astype(float)
     print(f"價格 {len(px):,} 列（{time.time()-t0:.0f}s）", flush=True)
 
     A = px.pivot(index="trade_date", columns="stock_id", values="adj_close").sort_index()
+    O = px.pivot(index="trade_date", columns="stock_id", values="adj_open").reindex_like(A)
     AMT = px.pivot(index="trade_date", columns="stock_id", values="amount").reindex_like(A)
     dates = list(A.index)
     c1m, c3m, c6m, c12m = A.shift(20), A.shift(62), A.shift(125), A.shift(251)
@@ -98,7 +95,7 @@ def load_all(sig_start):
     inst20 = (inst.pivot(index="trade_date", columns="stock_id", values="net")
               .reindex(index=A.index, columns=A.columns).fillna(0.0).rolling(20, min_periods=1).sum())
 
-    last_ok = len(dates) - 1 - HORIZON                              # 之後要有滿 20 根才能結算
+    last_ok = len(dates) - 1 - 60                                  # 各模式同一批完整 60 日觀察窗口
     sig_idx = [i for i, d in enumerate(dates) if d >= sig_start and i <= last_ok]
     scan = in_univ & (amt20 >= MIN_AMT)
     bench = fwd20.where(scan).mean(axis=1)
@@ -125,6 +122,8 @@ def load_all(sig_start):
         v["per"] = v["per"].astype(float)
         for sid, g in v.groupby("stock_id"):
             per[sid] = ([d.toordinal() for d in g["trade_date"]], g["per"].to_numpy())
+    if not sig_idx:
+        raise SystemExit("沒有完整 60 日可結算的訊號窗口")
     print(f"特徵與財報載入完成（{time.time()-t0:.0f}s）；訊號日 {len(sig_idx)} 天 "
           f"{dates[sig_idx[0]]} ~ {dates[sig_idx[-1]]}", flush=True)
 
@@ -138,7 +137,10 @@ def load_all(sig_start):
         market[d] = {"index": decision_center.MARKET_INDEX, "date": d.isoformat(), "ma_days": decision_center.MARKET_MA_DAYS,
                      "close": float(c) if c is not None else None, "ma": float(m) if ok else None,
                      "above": bool(c > m) if ok else None}
+    forward60 = A.shift(-60) / O.shift(-1) - 1
+    labels = forward60.where(scan).rank(axis=1, pct=True)
     return dict(meta=meta, px=px, dates=dates, sig_idx=sig_idx, feats=feats, bench=bench, market=market,
+                close_panel=A, open_panel=O, winner_rank=labels, forward60=forward60,
                 fq=fq, rev=rev, per=per, backtests=decision_center._pattern_backtests())
 
 
@@ -175,14 +177,14 @@ def per_pct_at(series, t):
 
 
 def run_chunk(payload):
-    from app import decision_center, swings
+    from app import consolidation, decision_center, swings
     G = payload
     dates, feats, meta = G["dates"], G["feats"], G["meta"]
     sig_set = {dates[i] for i in G["sig_idx"]}
     pos_market = {d: i for i, d in enumerate(dates)}
     out = []
     for sid, g in G["bars"].items():
-        bars = [{"trade_date": d, "open": o, "high": h, "low": l, "close": c, "volume": v} for d, o, h, l, c, v in g]
+        bars = g
         m = meta.get(sid, {})
         for j, bar in enumerate(bars):
             t = bar["trade_date"]
@@ -194,6 +196,7 @@ def run_chunk(payload):
             win = bars[max(0, j - 149): j + 1]
             snap = {"stock_id": sid, "name": m.get("name"), "industry": m.get("industry"), "security_type": "stock",
                     "close": bar["close"], "rs_rating": _nn(feats["rs_rating"][sid][mi]),
+                    "raw_close": bar["raw_close"], "price_factor": bar["close"] / bar["raw_close"], "price_date": t,
                     "ret_12_1": _nn(feats["ret_12_1"][sid][mi]), "tight_recent": _nn(feats["tight_recent"][sid][mi]),
                     "trend_template": bool(feats["trend_template"][sid][mi]), "amt20": _nn(feats["amt20"][sid][mi]),
                     "inst_net_20d": _nn(feats["inst20"][sid][mi]), "big1000_chg": None}
@@ -208,25 +211,15 @@ def run_chunk(payload):
             pa = decision_center._price_action_strategy(win, 5, 5)
             if pa:
                 strategies.append(pa)
+            setup = consolidation.analyze(win)
+            if setup:
+                strategies.append(setup)
             if strategies:
                 out.append((t, decision_center._candidate(snap, strategies, bar["close"])))
     return out
 
 
 # ───────────────────────── 結算與統計 ─────────────────────────
-def settle(bars, i, entry, stop, target):
-    """同 settle_pending：20 根內先碰停損（同根同碰算停損）或目標，否則第 20 根收盤到期。回傳淨報酬。"""
-    H, L, C = bars
-    if i + HORIZON >= len(C):
-        return None, None
-    for j in range(i + 1, i + HORIZON + 1):
-        if L[j] <= stop:
-            return stop / entry - 1 - COST, "loss"
-        if target is not None and H[j] >= target:
-            return target / entry - 1 - COST, "win"
-    return C[i + HORIZON] / entry - 1 - COST, "timeout"
-
-
 def nw_t(x, lag=HORIZON):
     """日均超額序列的 Newey-West t 值（持有 20 天，相鄰日重疊）。"""
     import numpy as np
@@ -242,19 +235,18 @@ def nw_t(x, lag=HORIZON):
 def variants():
     """要比較的規則組合：原始規則＋動能模式的每個篩選條件。"""
     from app import decision_center
-    return [("classic", None)] + [("momentum", gate) for gate in decision_center.GATES]
+    return [("classic", None)] + [(mode, gate) for mode in ("momentum", "trend_hold") for gate in decision_center.GATES]
 
 
 def variant_name(mode, gate):
     from app import decision_center
-    return "原始規則" if mode == "classic" else f"動能・{decision_center.GATES.get(gate, gate)}"
+    return "原始規則（成交修正）" if mode == "classic" else f"{'趨勢持有60日' if mode == 'trend_hold' else '動能20日'}・{decision_center.GATES.get(gate, gate)}"
 
 
 def scan_candidates(D, workers):
     """多程序逐檔逐日跑突破／裸 K，回傳 {日期: [候選]}（與模式無關，只跑一次）。"""
     px = D["px"]
-    bars = {sid: list(zip(g["trade_date"], g["adj_open"], g["adj_high"], g["adj_low"], g["adj_close"], g["volume"]))
-            for sid, g in px.groupby("stock_id")}
+    bars = price_bars(px)
     feats = {k: {sid: v[sid].to_numpy() for sid in v.columns} for k, v in D["feats"].items()}
     lo, hi = D["sig_idx"][0], D["sig_idx"][-1] + 1
     ever = [sid for sid in feats["scan"] if feats["scan"][sid][lo:hi].any() and sid in bars]
@@ -274,35 +266,51 @@ def scan_candidates(D, workers):
     return by_date
 
 
+def price_bars(px):
+    cols = {"adj_open": "open", "adj_high": "high", "adj_low": "low", "adj_close": "close"}
+    return {sid: g.drop(columns=["stock_id"]).rename(columns=cols).to_dict("records")
+            for sid, g in px.groupby("stock_id")}
+
+
 def evaluate(D, by_date, combos):
-    """每天把候選交給 build_decision_response，依每個 (mode, gate) 挑新倉並結算；回傳入選明細。"""
+    """同一成交引擎的事件研究；與連續組合績效分開呈現。"""
     import numpy as np
     import pandas as pd
-    from app import decision_center
-
-    px = D["px"]
-    hlc = {sid: (g["adj_high"].to_numpy(), g["adj_low"].to_numpy(), g["adj_close"].to_numpy()) for sid, g in px.groupby("stock_id")}
-    pos = {sid: {d: i for i, d in enumerate(g["trade_date"])} for sid, g in px.groupby("stock_id")}
+    from app import decision_center, execution
+    bars = price_bars(D["px"])
     empty = {"items": [], "stock_ids": set(), "industry_counts": {}}
-    picks = []
+    picks, bench_cache = [], {}
     for d in sorted(by_date):
         scan = {"as_of": d.isoformat(), "items": by_date[d], "scanned": len(by_date[d])}
         for mode, gate in combos:
             resp = decision_center.build_decision_response(scan, [], empty, mode=mode, market=D["market"].get(d),
-                                                           limit=500, gate=gate or decision_center.DEFAULT_GATE)
+                                                           lot_size=1, limit=500, gate=gate or decision_center.DEFAULT_GATE)
             for it in resp["items"]:
                 if not it["selected"]:
                     continue
-                p = it["position_plan"]
-                i = pos[it["stock_id"]].get(d)
-                ret, outcome = settle(hlc[it["stock_id"]], i, p["entry"], p["stop"], p["target"]) if i is not None else (None, None)
+                strategy = next(s for s in it["strategies"] if s["key"] == it["lead_strategy"])
+                spec = decision_center.execution_spec(it, strategy, mode)
+                spec["observed_date"] = d
+                fill = execution.simulate(bars[it["stock_id"]], spec, D["dates"])
+                key = (d, fill["entry_date"], fill["exit_date"])
+                benchmark = np.nan
+                if fill["net_return"] is not None:
+                    if key not in bench_cache:
+                        cohort = D["feats"]["scan"].loc[d]
+                        entry = D["open_panel"].loc[fill["entry_date"]]
+                        exit_ = D["close_panel"].loc[fill["exit_date"]]
+                        bench_cache[key] = (exit_ / entry - 1).where(cohort).mean()
+                    benchmark = bench_cache[key]
+                sid = it["stock_id"]
                 picks.append({"variant": variant_name(mode, gate), "mode": mode, "gate": gate, "date": d,
-                              "stock_id": it["stock_id"], "name": it["name"],
-                              "industry": it["industry"], "lead": it["lead_strategy"], "rs": it.get("rs_rating"),
-                              "trend_template": it.get("trend_template"), "breakout_ready": it.get("breakout_ready"),
-                              "entry": p["entry"], "stop": p["stop"],
-                              "target": p["target"], "ret": ret, "outcome": outcome,
-                              "excess": None if ret is None else ret - D["bench"].get(d, np.nan)})
+                              "stock_id": sid, "name": it["name"], "industry": it["industry"],
+                              "lead": it["lead_strategy"], "rs": it.get("rs_rating"),
+                              "entry": fill["actual_entry_raw"], "entry_date": fill["entry_date"],
+                              "stop": fill["actual_stop"], "target": spec["target"],
+                              "ret": fill["net_return"], "outcome": fill["status"],
+                              "excess": fill["net_return"] - benchmark if fill["net_return"] is not None else None,
+                              "top10_60d": bool(D["winner_rank"].at[d, sid] >= 0.9),
+                              "up30_60d": bool(D["forward60"].at[d, sid] >= 0.3)})
     return pd.DataFrame(picks)
 
 
@@ -311,8 +319,8 @@ def report(P, D, by_date, combos):
     import pandas as pd
 
     days = len(by_date)
-    print(f"\n回測期間 {min(by_date)} ~ {max(by_date)}（{days} 個交易日）；每筆淨報酬已扣 {COST*100:.1f}% 來回成本；"
-          f"超額＝減同日掃描母體 20 日等權報酬（母體平均 {D['bench'].reindex(sorted(by_date)).mean()*100:.2f}%）")
+    print(f"\n回測期間 {min(by_date)} ~ {max(by_date)}（{days} 個交易日）；每筆淨報酬已扣 {COST*100:.1f}% 來回成本與每邊 0.1% 滑價；"
+          f"超額＝同日母體在實際進場日至出場日的等權報酬（不同持有期不得直接視為同一超額）")
     rows = []
     order = [variant_name(m, g) for m, g in combos]
     for name in order:
@@ -326,7 +334,7 @@ def report(P, D, by_date, combos):
         rows.append({"規則": name, "有選股天數": g["date"].nunique(), "檔次": len(g),
                      "每筆淨報酬%": round(g["ret"].mean() * 100, 2), "勝率%": round((g["ret"] > 0).mean() * 100, 1),
                      "停損%": round((g["outcome"] == "loss").mean() * 100, 1),
-                     "超額%": round(g["excess"].mean() * 100, 2), "NW t": round(nw_t(daily.to_numpy()), 2),
+                     "超額%": round(g["excess"].mean() * 100, 2), "NW t": round(nw_t(daily.to_numpy(), lag=60), 2),
                      "超額為負的半年": f"{int((hx < 0).sum())}/{len(hx)}", "最差%": round(g["ret"].min() * 100, 1)})
     pd.set_option("display.width", 250); pd.set_option("display.unicode.east_asian_width", True)
     print(pd.DataFrame(rows).set_index("規則").to_string())
@@ -340,16 +348,28 @@ def report(P, D, by_date, combos):
 def main():
     ap = argparse.ArgumentParser(description="今日決策中心歷史回測（原始規則 vs 動能模式各篩選條件）")
     ap.add_argument("--start", default="2024-07-01", help="訊號起日（預設 2024-07-01）")
-    ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--end", default="", help="訊號截止日；仍載入其後資料結算")
+    ap.add_argument("--lot-size", type=int, choices=[1, 1000], default=1)
+    ap.add_argument("--capital", type=float, default=1_000_000)
+    ap.add_argument("--report-json", default="research/decision_backtest_v3.json")
     ap.add_argument("--out", default="", help="另存入選明細 CSV")
     args = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
     D = load_all(date.fromisoformat(args.start))
-    by_date = scan_candidates(D, args.workers)
+    if args.end:
+        end = date.fromisoformat(args.end)
+        D["sig_idx"] = [i for i in D["sig_idx"] if D["dates"][i] <= end]
+    if not D["sig_idx"]:
+        raise SystemExit("沒有完整 60 日可結算的訊號窗口")
+    by_date = scan_candidates(D, max(1, args.workers))
     combos = variants()
     P = evaluate(D, by_date, combos)
     report(P, D, by_date, combos)
+    from app import research_results
+    result = research_results.build_report(D, by_date, combos, P, args.capital, args.lot_size)
+    research_results.save_report(result, args.report_json)
     if args.out:
         P.to_csv(args.out, index=False, encoding="utf-8-sig")
         print(f"入選明細 → {args.out}")
