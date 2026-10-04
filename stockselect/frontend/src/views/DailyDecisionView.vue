@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import * as XLSX from 'xlsx'
 import { getDailyDecision } from '../api'
 import DecisionHistoryPanel from '../components/DecisionHistoryPanel.vue'
 import DecisionResearchPanel from '../components/DecisionResearchPanel.vue'
@@ -42,6 +43,7 @@ const shown = computed(() => {
   if (view.value === 'ready') return items.filter((x) => x.state === 'ready')
   if (view.value === 'momentum') return items.filter((x) => x.state === 'ready' && x.momentum_ok)
   if (view.value === 'consensus') return items.filter((x) => x.consensus_count > 1)
+  if (view.value === 'waiting') return items.filter((x) => x.state === 'waiting')
   return items
 })
 
@@ -74,6 +76,7 @@ const marketAlert = computed(() => {
 
 let timer = null
 let seq = 0
+const loadedParams = ref({ ...form })   // 目前這批結果用的條件（下載 Excel 時寫進「條件與摘要」）
 async function load() {
   clearTimeout(timer)
   const id = ++seq
@@ -85,7 +88,10 @@ async function load() {
     }
     const data = await getDailyDecision(params)
     // 條件連續改時，較早送出的請求可能比較晚回來；只採用最後一次的結果
-    if (id === seq) result.value = data
+    if (id === seq) {
+      result.value = data
+      loadedParams.value = params
+    }
   } catch (e) {
     if (id === seq) ElMessage.error('今日決策載入失敗：' + (e?.response?.data?.detail || e.message))
   } finally {
@@ -122,6 +128,148 @@ function historicalText(row) {
 }
 
 function calibrationName(key) { return { breakout: '型態突破', price_action: '裸 K', consolidation: '整理突破', weekly: '週線突破' }[key] || key }
+
+const MODE_LABELS = { momentum: '動能模式', trend_hold: '趨勢持有', classic: '原始規則' }
+const VIEW_LABELS = { selected: '本次入選', ready: '全部可執行', momentum: '通過動能篩選', consensus: '雙策略共識',
+  waiting: '等待確認', all: '全部候選' }
+// 進場條件（後端 entry_conditions）：等待確認的訊號要發生什麼事才會變成可執行
+const firstCond = (x) => (x.entry_conditions || [])[0] || {}
+const condText = (x) => (x.entry_conditions || []).map((c) => `${c.label}：${c.lines.join('；')}`).join('｜')
+const xnum = (v, d = 2) => (v == null || v === '' || Number.isNaN(Number(v)) ? '' : Number(Number(v).toFixed(d)))
+
+// 下載 Excel：「決策清單」＝目前表格（依上方檢視），「條件與摘要」＝這批結果的條件、大盤與統計，有持股時加「目前持股」
+function downloadXlsx() {
+  const rows = shown.value
+  if (!rows.length) return ElMessage.warning('目前檢視沒有資料，可以切到「全部候選」再下載')
+  const r = result.value
+  const p = loadedParams.value
+  const momentum = r.mode !== 'classic'
+  // 價位：有算出來就列（資金不足時畫面不顯示，但價位仍有參考價值）；股數、金額只在部位有效時列
+  const price = (x) => x.position_plan || {}
+  const plan = (x) => (x.position_plan?.valid ? x.position_plan : {})
+  const yes = (v) => (v ? '是' : '否')
+  const PRICE = '0.00'
+  const MONEY = '#,##0'
+  // [欄名, 取值, 欄寬, 數字格式]
+  const cols = [
+    ['決策', (x) => (x.selected ? '本次入選' : stateMeta[x.state]?.label), 9],
+    ['目前持有', (x) => (x.held ? '是' : ''), 8],
+    ['代號', (x) => x.stock_id, 8],
+    ['名稱', (x) => x.name, 12],
+    ['產業', (x) => x.industry, 12],
+    ['收盤', (x) => xnum(x.close), 9, PRICE],
+    ['RS', (x) => xnum(x.rs_rating, 0), 6],
+    ['趨勢模板', (x) => yes(x.trend_template), 8],
+    ['突破可執行', (x) => yes(x.breakout_ready), 9],
+    ...(momentum ? [['通過篩選', (x) => yes(x.momentum_ok), 8],
+                    ['未通過原因', (x) => (x.momentum_ok ? '' : gateMiss(x)), 22]] : []),
+    ['策略', (x) => x.strategies.map((s) => `${s.label} ${xnum(s.score, 1)} ${s.pattern_name || ''}`.trim()).join('；'), 34],
+    ['策略提醒', (x) => x.strategies.filter((s) => s.blockers?.length).map((s) => `${s.label}：${s.blockers.join('、')}`).join('；'), 44],
+    ['共識數', (x) => x.consensus_count, 7],
+    ['決策分', (x) => xnum(x.decision_score, 1), 7],
+    ['校準調整', (x) => xnum(x.calibration_adjustment, 1), 8],
+    ['歷史依據', (x) => historicalText(x), 36],
+    ['單季EPS', (x) => xnum(x.eps), 8],
+    ['EPS YoY%', (x) => xnum(x.eps_yoy, 1), 9],
+    ['營收YoY%', (x) => xnum(x.rev_yoy, 1), 9],
+    ['毛利率季增(百分點)', (x) => xnum(x.gross_margin_chg, 1), 10],
+    ['參考進場', (x) => xnum(price(x).entry), 9, PRICE],
+    ['追價上限', (x) => xnum(price(x).max_entry), 9, PRICE],
+    ['停損', (x) => xnum(price(x).stop), 9, PRICE],
+    ['目標', (x) => xnum(price(x).target), 9, PRICE],
+    ['R/R', (x) => xnum(price(x).rr), 6],
+    ['出場規則', (x) => price(x).exit_rule || '', 26],
+    ['建議股數', (x) => plan(x).suggested_shares ?? '', 9, MONEY],
+    ['下單方式', (x) => plan(x).order_mode || '', 8],
+    ['部位金額', (x) => plan(x).position_value ?? '', 11, MONEY],
+    ['占淨值%', (x) => xnum(plan(x).capital_pct, 1), 8],
+    ['停損風險金額', (x) => plan(x).risk_amount ?? '', 11, MONEY],
+    ['實際風險%', (x) => xnum(plan(x).actual_risk_pct), 9],
+    ['部位說明', (x) => (x.position_plan?.valid ? '' : x.position_plan?.reason || ''), 22],
+    ['進場條件', (x) => condText(x), 60],
+    ['觸發價', (x) => xnum(firstCond(x).trigger_low), 9, PRICE],
+    ['買點上限', (x) => xnum(firstCond(x).trigger_high), 9, PRICE],
+    ['作廢價', (x) => xnum(firstCond(x).invalid_below), 9, PRICE],
+    ['條件期限', (x) => firstCond(x).deadline || '', 14],
+    ['取捨理由', (x) => x.selection_reason, 40],
+  ]
+  // formats：第幾欄用什麼數字格式；只套用在數字儲存格（標題列與空白不動）
+  const sheet = (aoa, widths, formats = {}) => {
+    const ws = XLSX.utils.aoa_to_sheet(aoa)
+    ws['!cols'] = widths.map((w) => ({ wch: w }))
+    for (let r = 1; r < aoa.length; r++) {
+      aoa[r].forEach((_, c) => {
+        const cell = ws[XLSX.utils.encode_cell({ r, c })]
+        const z = typeof formats === 'function' ? formats(cell?.v, r, c) : formats[c]
+        if (cell?.t === 'n' && z) cell.z = z
+      })
+    }
+    return ws
+  }
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, sheet(
+    [cols.map((c) => c[0]), ...rows.map((x) => cols.map((c) => c[1](x) ?? ''))], cols.map((c) => c[2]),
+    Object.fromEntries(cols.map((c, i) => [i, c[3]]).filter(([, z]) => z))), '決策清單')
+
+  const s = r.settings || {}
+  const m = r.market || {}
+  const sm = r.summary || {}
+  const gateName = momentum ? (GATES.find((g) => g.value === r.gate)?.label || r.gate_label || '') : '—'
+  const above = m.above === true ? '站上' : m.above === false ? '跌破' : '資料不足或過期'
+  const info = [
+    ['項目', '內容'],
+    ['資料日', r.as_of || ''],
+    ['下載時間', new Date().toLocaleString('zh-TW', { hour12: false })],
+    ['模式', MODE_LABELS[r.mode] || r.mode],
+    ['篩選條件', gateName],
+    ['檢視', VIEW_LABELS[view.value]],
+    ['匯出筆數', rows.length],
+    ['全部候選', r.total ?? r.count ?? ''],
+    ...((r.total || 0) > (r.count || 0)
+      ? [['備註', `候選共 ${r.total} 檔，頁面只載入前 ${r.count} 檔，這份檔案只含頁面上的資料`]] : []),
+    ['掃描檔數', r.scanned ?? ''],
+    ['本次入選', sm.selected ?? 0],
+    ['可執行候選', sm.ready ?? 0],
+    ...(momentum ? [['通過動能篩選', sm.ready_momentum ?? 0]] : []),
+    ['等待確認', sm.waiting ?? 0],
+    ['雙策略共識', sm.consensus ?? 0],
+    ['剩餘可用資金', sm.remaining_capital ?? ''],
+    ['剩餘總風險額度', sm.remaining_risk_budget ?? ''],
+    ...(momentum ? [['大盤濾網', m.close == null ? '大盤資料不足或過期'
+      : `加權指數 ${m.close}｜${m.ma_days} 日線 ${m.ma ?? '—'}｜${above}（資料日 ${m.date || '—'}）`]] : []),
+    ['帳戶淨值', s.capital ?? p.capital],
+    ['可用現金', s.available_capital ?? p.available_capital],
+    ['每檔風險 %', s.risk_per_trade_pct ?? p.risk_per_trade_pct],
+    ['最多新倉', s.max_new_positions ?? p.max_new_positions],
+    ['總持股上限', s.max_total_positions ?? p.max_total_positions],
+    ['總停損風險 %', s.max_total_risk_pct ?? p.max_total_risk_pct],
+    ['同產業上限', s.max_industry_positions ?? p.max_industry_positions],
+    ['單檔資金上限 %', s.max_position_pct ?? p.max_position_pct],
+    ['交易單位', (s.lot_size ?? p.lot_size) === 1 ? '可用零股' : '整張優先'],
+    ['流動性（20 日均額 ≥ 元）', p.min_amt],
+    ['單季 EPS ≥', p.eps_min ?? '不限'],
+    ['營收 YoY ≥ %', p.revenue_yoy_min ?? '不限'],
+    ['毛利率季增 ≥ 百分點', p.gross_margin_chg_min ?? '不限'],
+    ['突破觀察', `近 ${p.recent} 日`],
+    ['模型版本', s.model_version || ''],
+    ['方法', r.method || ''],
+    ['提醒', '入選代表通過目前規則與資金限制，不是自動買進指令；隔日成交時須重新核對股數、停損、產業與總風險。'],
+  ]
+  // 金額、張數這類大整數加千分位；0.75 這種比例不套，免得被四捨五入成 1
+  XLSX.utils.book_append_sheet(wb, sheet(info, [22, 100],
+    (v) => (Number.isInteger(v) && Math.abs(v) >= 1000 ? MONEY : null)), '條件與摘要')
+
+  const held = r.holdings?.items || []
+  if (held.length) {
+    XLSX.utils.book_append_sheet(wb, sheet([
+      ['代號', '名稱', '產業', '股數', '收盤', '市值'],
+      ...held.map((h) => [h.stock_id, h.name, h.industry, h.shares, xnum(h.close), xnum(h.market_value, 0)]),
+    ], [8, 12, 14, 10, 10, 14], { 3: MONEY, 4: PRICE, 5: MONEY }), '目前持股')
+  }
+  const stamp = (r.as_of || '').replace(/-/g, '') || 'result'
+  const gatePart = momentum ? `_${gateName.replace('（實驗）', '')}` : ''
+  XLSX.writeFile(wb, `今日決策_${stamp}_${MODE_LABELS[r.mode] || r.mode}${gatePart}_${VIEW_LABELS[view.value]}.xlsx`)
+}
 
 onMounted(load)
 </script>
@@ -248,13 +396,19 @@ onMounted(load)
     </el-alert>
 
     <div class="list-head">
-      <el-radio-group v-model="view" size="small">
-        <el-radio-button value="selected">本次入選</el-radio-button>
-        <el-radio-button value="ready">全部可執行</el-radio-button>
-        <el-radio-button v-if="isMomentum" value="momentum">通過動能篩選</el-radio-button>
-        <el-radio-button value="consensus">雙策略共識</el-radio-button>
-        <el-radio-button value="all">全部候選</el-radio-button>
-      </el-radio-group>
+      <div class="list-actions">
+        <el-radio-group v-model="view" size="small">
+          <el-radio-button value="selected">本次入選</el-radio-button>
+          <el-radio-button value="ready">全部可執行</el-radio-button>
+          <el-radio-button v-if="isMomentum" value="momentum">通過動能篩選</el-radio-button>
+          <el-radio-button value="consensus">雙策略共識</el-radio-button>
+          <el-radio-button value="waiting">等待確認</el-radio-button>
+          <el-radio-button value="all">全部候選</el-radio-button>
+        </el-radio-group>
+        <el-button size="small" type="success" :disabled="loading || !shown.length"
+                   :title="shown.length ? '下載目前表格，另附條件與摘要' : '目前檢視沒有資料，可以切到「全部候選」'"
+                   @click="downloadXlsx">⬇ 下載 Excel</el-button>
+      </div>
       <span class="muted">
         資料日 {{ result.as_of || '—' }}｜掃描 {{ result.scanned || 0 }} 檔｜顯示 {{ shown.length }} 檔
         <template v-if="result.total > result.count">（候選共 {{ result.total }} 檔，表格只列前 {{ result.count }} 檔）</template>
@@ -343,6 +497,17 @@ onMounted(load)
           </template>
         </template>
       </el-table-column>
+      <el-table-column label="進場條件" min-width="300">
+        <template #default="{ row }">
+          <div v-for="c in row.entry_conditions || []" :key="c.strategy" class="cond">
+            <div class="cond-head">
+              <el-tag size="small" :type="strategyType(c.strategy)" effect="plain">{{ c.label }}</el-tag>
+              <span v-if="c.deadline" class="small muted">{{ c.deadline }}</span>
+            </div>
+            <div v-for="line in c.lines" :key="line" class="small cond-line">• {{ line }}</div>
+          </div>
+        </template>
+      </el-table-column>
       <el-table-column label="取捨理由" min-width="220">
         <template #default="{ row }">
           <span :class="row.selected ? 'up' : 'muted'">{{ row.selection_reason }}</span>
@@ -420,8 +585,12 @@ h2 { margin: 0 0 4px; font-size: 24px; }
 .summary.meta { border-left: 4px solid #606266; cursor: default; }
 .notice { margin-bottom: 10px; }
 .list-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 10px 0; flex-wrap: wrap; }
+.list-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .strategy-line { display: grid; grid-template-columns: 72px 38px 1fr; align-items: center; gap: 5px; margin: 3px 0; }
 .consensus-text { color: #e6a23c; font-size: 12px; margin-top: 4px; }
+.cond + .cond { margin-top: 8px; }
+.cond-head { display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }
+.cond-line { color: #606266; line-height: 1.5; }
 .big-score { font-size: 21px; font-weight: 750; }
 .held { color: #e6a23c; font-size: 11px; margin-top: 4px; }
 .up { color: #EA4C4C; }

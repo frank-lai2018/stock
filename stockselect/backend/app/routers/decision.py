@@ -6,7 +6,7 @@ from datetime import date
 
 from fastapi import APIRouter
 
-from .. import decision_center, research_results
+from .. import decision_center, entry_conditions, research_results
 
 
 router = APIRouter(prefix="/api", tags=["decision"])
@@ -58,9 +58,10 @@ def daily_decision(capital: float = 1_000_000, risk_per_trade_pct: float = 0.75,
     """
     mode = decision_center.normalize_mode(mode)
     gate = decision_center.normalize_gate(gate)
+    lookback, expiry = max(1, min(int(lookback), 10)), max(1, min(int(expiry), 10))
     scan = _cached_scan(
         min_amt=max(0, int(min_amt)), recent=max(1, min(int(recent), 25)),
-        lookback=max(1, min(int(lookback), 10)), expiry=max(1, min(int(expiry), 10)),
+        lookback=lookback, expiry=expiry,
         eps_min=eps_min, revenue_yoy_min=revenue_yoy_min,
         gross_margin_chg_min=gross_margin_chg_min)
     # 先結算舊觀察，再建立完整決策畫面；保存時連同入選原因與部位一起留下。
@@ -80,6 +81,8 @@ def daily_decision(capital: float = 1_000_000, risk_per_trade_pct: float = 0.75,
         max_total_positions=max(1, min(int(max_total_positions), 50)),
         max_total_risk_pct=max(0, min(float(max_total_risk_pct), 100)),
         limit=max(1, min(int(limit), 500)))
+    # 等待確認的訊號附上進場條件（只做說明，不影響入選）；放在記錄前，追蹤快照也看得到
+    entry_conditions.attach(response, lookback=lookback, expiry=expiry)
     recorded = decision_center.record_candidates(scan, response, mode, gate)
     response["tracking"] = {"recorded": recorded, "settled": settled}
     return response

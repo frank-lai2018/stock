@@ -1,6 +1,7 @@
 """每晚刷新快照後，保存今日決策候選並結算到期觀察。
 
-v3 的 classic、momentum、trend_hold 分開記錄；動能類各 3 個進場條件合計 7 組。
+v3 的 classic、momentum、trend_hold 分開記錄；動能類各 4 個進場條件合計 9 組。
+快照附上等待確認訊號的進場條件（entry_conditions），和頁面看到的一樣。
 預設帳戶 100 萬、現金 100 萬與交易帳持股，用於規則對照；不是個人券商帳戶快照。
 
 可獨立執行：
@@ -25,7 +26,7 @@ def main():
         os.environ["DATABASE_URL"] = args.dsn
 
     # 設好 DATABASE_URL 後才載入 app.config。
-    from app import decision_center
+    from app import decision_center, entry_conditions
 
     scan = decision_center.scan_market(min_amt=args.min_amt)
     settled = decision_center.settle_pending(scan.get("as_of"))
@@ -38,6 +39,7 @@ def main():
         for gate in (decision_center.GATES if mode != "classic" else [decision_center.DEFAULT_GATE]):
             response = decision_center.build_decision_response(
                 scan, rows, holdings, limit=500, mode=mode, market=market, gate=gate)
+            entry_conditions.attach(response)          # scan_market 用預設 lookback／expiry（5／5）
             recorded = decision_center.record_candidates(scan, response, mode, gate)
             name = f"{mode}/{gate}" if mode != "classic" else mode
             parts.append(f"{name}：入選 {response['summary']['selected']}、新增觀察 {recorded}")
