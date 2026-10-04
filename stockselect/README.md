@@ -12,10 +12,11 @@
 把「散在各表的台股資料」變成一套**可互動選股**的網頁工具：
 
 - **選股器**：用動能 / 基本面 / 估值 / 籌碼條件篩選，結果依分數排名。
-- **今日決策中心 v3**：盤後訊號採隔日開盤模擬成交，修正跳空停損與除權息價格座標；資料過期或動能大盤資料不足會阻擋新倉。預設仍是動能 20 日版，另有「整理突破」進場與「趨勢持有」出場實驗，合計 7 組對照。帳戶淨值與現金分開輸入，限制產業、總持股與總停損風險。頁內「決策追蹤」保留新舊版本，「策略研究」讀取同版本回測、0050 對照及飆股捕捉率。詳見 [策略實驗與驗證](策略實驗與驗證.md)；舊 `動能分析設計.md` 績效使用舊成交假設，不能代表新版。
+- **今日決策中心 v3**：盤後訊號採隔日開盤模擬成交，修正跳空停損與除權息價格座標；資料過期或動能大盤資料不足會阻擋新倉。預設仍是動能 20 日版，另有「整理突破」「週線突破」進場與「趨勢持有」出場實驗，合計 9 組對照。帳戶淨值與現金分開輸入，限制產業、總持股與總停損風險。頁內「決策追蹤」保留新舊版本，「策略研究」讀取同版本回測、0050 對照及飆股捕捉率。詳見 [策略實驗與驗證](策略實驗與驗證.md)；舊 `動能分析設計.md` 績效使用舊成交假設，不能代表新版。
 - **突破決策**：把底部反轉與整理突破候選做五面向評分，列出參考停損、報酬風險比與淘汰原因。
+- **週線突破（實驗）**：先看週線（站上往上的 30 週線、週收盤突破前 52 週最高週收盤、整理 ≥ 6 週），再用日線找進場點（回到壓力線～+5% 且轉強）；列出可進場、等回測、接近壓力三種狀態與追價上限。
 - **型態＋裸 K 決策**：波段型態與 EPS／營收／毛利成長先過濾，再用 OHLC 評估結構、位置、K 棒品質、後續確認與風險。
-- **指定個股分析**：突破決策與裸 K 決策皆可直接輸入股票代號，繞過全市場母體與流動性門檻檢查近期訊號。
+- **指定個股分析**：突破決策、裸 K 決策與週線突破皆可直接輸入股票代號，繞過全市場母體與流動性門檻檢查近期訊號。
 - **預設策略**：動能股 / 價值成長 / 高息存股 / 籌碼強勢，一鍵套用。
 - **個股頁**：還原 K 線圖 + 基本面 + 籌碼（法人/融資/大戶）+ 新聞。
 - **自選股**：加入追蹤、批次看訊號。
@@ -111,7 +112,8 @@ stockselect/
 | POST | `/api/screen` | 依條件篩選 + 排名，回傳股票清單 | `mv_stock_snapshot` |
 | GET | `/api/screen/breakout-ranking` | 多方突破二次評分與風險檢查（`pattern` 只找一種型態；EPS、月季營收、毛利率連增過濾同裸 K；`stock_id` 指定個股、`stock_ids` 逗號分隔多檔） | `mv_stock_snapshot`, `price_daily`, `pattern_backtest`, `monthly_revenue`, `fundamentals_quarterly` |
 | GET | `/api/screen/price-action` | 型態＋裸 K 決策（含 EPS、月季營收、毛利率連增過濾；`stock_id`／`stock_ids` 同上） | `mv_stock_snapshot`, `price_daily`, `monthly_revenue`, `fundamentals_quarterly` |
-| GET | `/api/screen/daily-decision` | 今日決策中心：策略共識、分數校準、持股產業限制、固定風險部位（`mode`=`momentum`／`classic`；動能模式的 `gate`=`trend_template`／`breakout`） | 上述資料＋`trade_log`, `decision_signal_log`, `market_index` |
+| GET | `/api/screen/weekly-breakout` | 週線突破（實驗）：週線趨勢＋週收盤突破 52 週壓力線，日線找進場點（`stock_id` 指定個股、`stock_ids` 逗號分隔多檔，不成立也列原因） | `mv_stock_snapshot`, `price_daily` |
+| GET | `/api/screen/daily-decision` | 今日決策中心：策略共識、分數校準、持股產業限制、固定風險部位（`mode`=`momentum`／`trend_hold`／`classic`；動能類模式的 `gate`=`trend_template`／`breakout`／`consolidation`／`weekly`） | 上述資料＋`trade_log`, `decision_signal_log`, `market_index` |
 | GET | `/api/screen/daily-decision/history` | 決策歷史：依日期、股票、策略、結果篩選，追蹤目前／最終 R（`mode`、`gate` 同上，`gate` 決定「當時入選」依哪個篩選條件） | `decision_signal_log`, `price_daily`, `mv_stock_snapshot` |
 | GET | `/api/stock/{id}` | 個股最新特徵快照 | `mv_stock_snapshot`, `stock` |
 | GET | `/api/stock/{id}/prices?from&to&adj=1` | K 線 OHLC（還原）| `price_daily` |

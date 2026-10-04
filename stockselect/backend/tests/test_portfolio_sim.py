@@ -33,7 +33,7 @@ class PortfolioTest(unittest.TestCase):
         scan = {"as_of": START.isoformat(), "items": [item], "scanned": 1}
         baseline = dc.build_decision_response(scan, [], EMPTY_HOLDINGS, market={"above": True})
         experiment = dc.build_decision_response(scan, [], EMPTY_HOLDINGS, market={"above": True}, gate="consolidation")
-        self.assertFalse(baseline["items"][0]["selected"])
+        self.assertEqual(baseline["items"], [])  # 對照組用不到整理突破，只有它的股票不列為候選
         self.assertTrue(experiment["items"][0]["selected"])
 
     def test_missing_market_and_stale_snapshot_block(self):

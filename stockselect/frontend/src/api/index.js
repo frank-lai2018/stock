@@ -54,6 +54,9 @@ export const getDailyDecisionHistory = (params = {}) =>
   api.get('/screen/daily-decision/history', { params }).then((r) => r.data)
 export const getDecisionResearch = () =>
   api.get('/screen/daily-decision/research').then((r) => r.data)
+// 週線突破（實驗）：週線趨勢＋週收盤突破，日線找進場點
+export const getWeeklyBreakout = (params = {}) =>
+  api.get('/screen/weekly-breakout', { params }).then((r) => r.data)
 export const getPriceActionDecisions = (params = {}) =>
   api.get('/screen/price-action', { params }).then((r) => r.data)
 export const getBreakoutPatterns = (group = 'bottom') =>

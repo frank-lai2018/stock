@@ -56,7 +56,7 @@ function reset() {
 const num = (v, d = 1) => v == null ? '—' : Number(v).toFixed(d)
 const money = (v) => v == null ? '—' : Math.round(Number(v)).toLocaleString('en-US')
 const pct = (v, d = 1) => v == null ? '—' : `${Number(v).toFixed(d)}%`
-const strategyName = (key) => ({ breakout: '型態突破', price_action: '裸 K', consolidation: '整理突破' }[key] || key)
+const strategyName = (key) => ({ breakout: '型態突破', price_action: '裸 K', consolidation: '整理突破', weekly: '週線突破' }[key] || key)
 const decisionName = (status) => ({ priority: '優先', watch: '觀察', waiting: '等待' }[status] || status || '—')
 const decisionType = (status) => ({ priority: 'success', watch: 'info', waiting: 'warning' }[status] || 'info')
 const outcomeMeta = {
@@ -70,7 +70,7 @@ const outcomeMeta = {
 
 const shownR = (row) => row.outcome_status === 'pending' ? row.current_r : row.outcome_r
 const rClass = (row) => Number(shownR(row)) >= 0 ? 'up' : 'down'
-const GATE_NAMES = { trend_template: '趨勢模板', breakout: '型態突破', consolidation: '整理突破' }
+const GATE_NAMES = { trend_template: '趨勢模板', breakout: '型態突破', consolidation: '整理突破', weekly: '週線突破' }
 const modeName = (m, g) => m === 'classic' ? '原始規則' : `${m === 'trend_hold' ? '趨勢持有' : '動能模式'}・${GATE_NAMES[g] || GATE_NAMES.trend_template}`
 
 watch(() => [props.mode, props.gate], () => { form.legacy = false; load() })
@@ -93,6 +93,7 @@ onMounted(load)
           <el-option label="型態突破" value="breakout" />
           <el-option label="裸 K" value="price_action" />
           <el-option label="整理突破" value="consolidation" />
+          <el-option label="週線突破" value="weekly" />
         </el-select>
         <el-select v-model="form.outcome_status" placeholder="全部結果" clearable style="width: 130px">
           <el-option label="觀察中" value="pending" />
@@ -105,7 +106,7 @@ onMounted(load)
         <el-date-picker v-model="dateRange" type="daterange" value-format="YYYY-MM-DD"
                         start-placeholder="開始觀察日" end-placeholder="結束觀察日" style="width: 250px" />
         <el-checkbox v-model="form.selected_only">只看當時入選</el-checkbox>
-        <el-checkbox v-model="form.legacy" :disabled="props.mode === 'trend_hold' || props.gate === 'consolidation'" @change="load">查看舊版封存</el-checkbox>
+        <el-checkbox v-model="form.legacy" :disabled="props.mode === 'trend_hold' || ['consolidation', 'weekly'].includes(props.gate)" @change="load">查看舊版封存</el-checkbox>
         <el-button @click="load">查詢</el-button>
         <el-button text @click="reset">清除</el-button>
         <span class="muted">最新行情 {{ result.as_of || '—' }}｜符合 {{ result.count || 0 }} 筆</span>

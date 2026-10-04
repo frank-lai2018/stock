@@ -146,6 +146,20 @@ class MomentumGateTest(unittest.TestCase):
         result, _ = self.build("trend_template", limit=1)
         self.assertEqual((result["count"], result["total"]), (1, 3))
 
+    def test_candidates_without_usable_strategy_are_dropped(self):
+        # D 只有整理突破：只在整理突破條件下是候選；A～C 沒有整理突破，在該條件下也不列
+        scan = momentum_scan()
+        d = candidate("D", "電子", 70, trend_template=True)
+        d["strategies"] = [{**d["strategies"][0], "key": "consolidation", "status": "watch", "max_entry": 103}]
+        scan["items"].append(d)
+        for mode, gate, ids in (("momentum", "trend_template", {"A", "B", "C"}),
+                                ("momentum", "consolidation", {"D"}), ("classic", None, {"A", "B", "C"})):
+            result = decision_center.build_decision_response(
+                scan, [], EMPTY_HOLDINGS, mode=mode, gate=gate, market={"above": True})
+            self.assertEqual({x["stock_id"] for x in result["items"]}, ids, mode)
+            self.assertEqual(result["total"], len(ids))
+            self.assertTrue(all(x["strategies"] for x in result["items"]))
+
     def test_unknown_gate_falls_back_to_default(self):
         for gate in ("nope", "both"):
             result, _ = self.build(gate)

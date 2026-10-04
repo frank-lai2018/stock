@@ -31,7 +31,7 @@ function draw() {
   const lines = (r.variants || []).map(v => ({ name: v.name, curve: v.curve }))
   if (r.benchmark?.curve?.length) lines.push(r.benchmark)
   const selected = Object.fromEntries(lines.map(v => [v.name,
-    v.name === r.benchmark?.name || v.name === '動能20日・趨勢模板' || v.name.includes('整理突破')]))
+    v.name === r.benchmark?.name || v.name === '動能20日・趨勢模板' || v.name.includes('整理突破') || v.name.includes('週線突破')]))
   chart.setOption({
     tooltip: { trigger: 'axis', valueFormatter: v => `${Number(v).toFixed(2)}%` },
     legend: { type: 'scroll', top: 0, selected },

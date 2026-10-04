@@ -52,12 +52,15 @@ const GATES = [
     rule: '型態突破可執行（量比 ≥ 1.5、離頸線 5% 內、RS ≥ 70）' },
   { value: 'consolidation', label: '整理突破（實驗）', short: '整理突破＋趨勢模板',
     rule: '振幅收斂、量縮後放量突破前 20 日高點，並限制追價' },
+  { value: 'weekly', label: '週線突破（實驗）', short: '週線突破＋日線進場點',
+    rule: '週線站上往上的 30 週線、週收盤突破前 52 週最高週收盤；日線回到壓力線～+5% 且轉強才進場' },
 ]
 const isMomentum = computed(() => form.mode !== 'classic')
 const gateInfo = computed(() => GATES.find((g) => g.value === form.gate) || GATES[0])
 // 表格依「這批資料」算出時的篩選條件判斷，避免切換後、資料還沒回來前顯示錯的原因
 const activeGate = computed(() => result.value.gate || form.gate)
-const gateMiss = (row) => activeGate.value === 'consolidation' ? '整理突破或趨勢模板未成立' : activeGate.value === 'breakout'
+const gateMiss = (row) => activeGate.value === 'weekly' ? '週線突破尚未到日線進場點'
+  : activeGate.value === 'consolidation' ? '整理突破或趨勢模板未成立' : activeGate.value === 'breakout'
   ? (row.breakout_ready ? '' : '型態突破未達可執行')
   : (row.trend_template ? '' : '趨勢模板未成立')
 // 大盤濾網：動能模式只在加權指數站上 60 日線時開新倉
@@ -101,7 +104,7 @@ onBeforeUnmount(() => clearTimeout(timer))
 const money = (v) => v == null ? '—' : Math.round(Number(v)).toLocaleString('en-US')
 const num = (v, d = 1) => v == null ? '—' : Number(v).toFixed(d)
 const pct = (v, d = 1) => v == null ? '—' : `${Number(v).toFixed(d)}%`
-const strategyType = (key) => key === 'breakout' ? 'danger' : 'primary'
+const strategyType = (key) => ({ breakout: 'danger', weekly: 'warning' }[key] || 'primary')
 const stateMeta = {
   ready: { label: '可執行', type: 'success' },
   waiting: { label: '等待確認', type: 'warning' },
@@ -118,7 +121,7 @@ function historicalText(row) {
   return `分數校準 n=${h.n}｜先到目標 ${pct(h.target_hit_rate)}｜期望 ${h.avg_r >= 0 ? '+' : ''}${num(h.avg_r, 2)}R`
 }
 
-function calibrationName(key) { return { breakout: '型態突破', price_action: '裸 K', consolidation: '整理突破' }[key] || key }
+function calibrationName(key) { return { breakout: '型態突破', price_action: '裸 K', consolidation: '整理突破', weekly: '週線突破' }[key] || key }
 
 onMounted(load)
 </script>

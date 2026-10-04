@@ -1,7 +1,7 @@
 """今日決策中心：盤後訊號、隔日成交與分開保存的策略實驗。
 
 momentum 是 20 日基準；trend_hold 是跌破 50 日線隔日出場、最長 60 日的實驗。
-整理突破使用獨立進場條件與追價上限。classic 保留策略原本的停損／目標。
+整理突破、週線突破是實驗策略：只在自己的篩選條件下使用，各有進場條件與追價上限。classic 保留策略原本的停損／目標。
 各模式使用 v3 版本與 execution 共用成交引擎；舊版紀錄封存保留。
 型態先驗只供參考，不影響決策中心突破評分。分數校準與型態先驗分開呈現。
 """
@@ -12,7 +12,7 @@ import math
 from copy import deepcopy
 from datetime import date, timedelta
 
-from . import consolidation, db, execution, ledger, price_action, swings
+from . import consolidation, db, execution, ledger, price_action, swings, weekly_breakout
 from .breakout_rank import score_breakout
 
 
@@ -31,14 +31,26 @@ MARKET_MA_DAYS = 60
 # 「兩者都要」回測與 breakout 幾乎相同（521 檔次有 520 檔相同，可執行的突破 98% 已有趨勢模板），未列入。
 PRIMARY_GATE = "trend_template"
 DEFAULT_GATE = "trend_template"
-GATES = {"trend_template": "趨勢模板", "breakout": "型態突破", "consolidation": "整理突破（實驗）"}
+GATES = {"trend_template": "趨勢模板", "breakout": "型態突破", "consolidation": "整理突破（實驗）",
+         "weekly": "週線突破（實驗）"}
 GATE_RULES = {
     "trend_template": "可執行訊號＋趨勢模板成立（多頭排列、RS ≥ 70）",
     "breakout": "型態突破可執行（量比 ≥ 1.5、離頸線 5% 內、RS ≥ 70）",
     "consolidation": "趨勢模板＋整理量縮、振幅收縮後突破 20 日高，成交額 ≥1.5 倍；隔日追價上限為平台＋1 ATR",
+    "weekly": "週線站上往上的 30 週線、週收盤突破前 52 週最高週收盤（整理 ≥ 6 週）；突破後約 4 週內，"
+              "日線收在壓力線～+5% 且為突破週收盤或收盤高於前一日高點才進場；隔日追價上限為壓力線 +5%",
 }
+# 實驗策略只在自己的篩選條件下使用；其他條件（含原始規則）只用型態突破與裸 K。
+GATE_STRATEGY = {"consolidation": "consolidation", "weekly": "weekly"}
+EXPERIMENT_KEYS = frozenset(GATE_STRATEGY.values())
 
 _ensured = False
+
+
+def strategy_used(key, gate, momentum=True):
+    """這個策略在此篩選條件下是否使用。"""
+    own = GATE_STRATEGY.get(gate) if momentum else None
+    return key == own if own else key not in EXPERIMENT_KEYS
 
 
 def _f(value, default=None):
@@ -219,6 +231,12 @@ def _price_action_strategy(bars, lookback, expiry):
     }
 
 
+def _weekly_strategy(bars, as_of=None):
+    """週線突破只收可進場／等進場點／接近三種狀態；不成立（skip）不列為候選。"""
+    setup = weekly_breakout.analyze(bars, as_of)
+    return setup if setup and setup["status"] != "skip" else None
+
+
 def _candidate(snapshot, strategies, current_close=None):
     status_rank = {"priority": 4, "waiting": 3, "watch": 2, "skip": 0}
     lead = max(strategies, key=lambda x: (status_rank.get(x["status"], 0), x["score"]))
@@ -250,7 +268,7 @@ def _candidate(snapshot, strategies, current_close=None):
 
 def scan_market(min_amt=20_000_000, recent=3, lookback=5, expiry=5,
                 eps_min=None, revenue_yoy_min=None, gross_margin_chg_min=None):
-    """共享一次 150 根 K 棒，合併多方突破與多方裸 K 候選。"""
+    """一次取 320 根 K 棒：型態突破、裸 K、整理突破用最後 150 根，週線突破用全部。"""
     cond = ["in_universe", "security_type='stock'", "amt20 >= %(amt)s"]
     params = {"amt": max(0, int(min_amt))}
     if eps_min is not None:
@@ -270,15 +288,18 @@ def scan_market(min_amt=20_000_000, recent=3, lookback=5, expiry=5,
         " adj_close AS close,raw_close,volume,amount FROM ("
         " SELECT stock_id,trade_date,adj_open,adj_high,adj_low,adj_close,close AS raw_close,volume,amount,"
         " row_number() OVER (PARTITION BY stock_id ORDER BY trade_date DESC) rn"
-        " FROM price_daily WHERE stock_id=ANY(%(ids)s)) z"
-        " WHERE rn<=150 ORDER BY stock_id,trade_date", {"ids": list(snapshots)})
+        " FROM price_daily WHERE stock_id=ANY(%(ids)s) AND trade_date>=%(since)s) z"
+        " WHERE rn<=%(n)s ORDER BY stock_id,trade_date",
+        {"ids": list(snapshots), "n": weekly_breakout.BARS_NEEDED,
+         "since": weekly_breakout.history_start(latest)})
     grouped = {}
     for row in bars_rows:
         grouped.setdefault(row["stock_id"], []).append(row)
     backtests = _pattern_backtests()
     out = []
     stale = 0
-    for sid, bars in grouped.items():
+    for sid, history in grouped.items():
+        bars = history[-150:]
         if len(bars) < 30:
             continue
         if bars[-1]["trade_date"] != latest:
@@ -298,6 +319,9 @@ def scan_market(min_amt=20_000_000, recent=3, lookback=5, expiry=5,
         setup = consolidation.analyze(bars)
         if setup:
             strategies.append(setup)
+        weekly = _weekly_strategy(history, latest)
+        if weekly:
+            strategies.append(weekly)
         if strategies:
             out.append(_candidate(snap, strategies, bars[-1].get("close")))
     out.sort(key=lambda x: (x["state"] == "ready", x["consensus_count"],
@@ -321,7 +345,7 @@ def execution_spec(item, strategy, mode=DEFAULT_MODE):
         "stop_pct": MOMENTUM_STOP_PCT if momentum else None,
         "horizon": 60 if mode == "trend_hold" else HORIZON,
         "exit_ma": 50 if mode == "trend_hold" else 0,
-        "max_entry": _f(strategy.get("max_entry"), 0) / factor if strategy["key"] == "consolidation" else None,
+        "max_entry": _f(strategy.get("max_entry"), 0) / factor if strategy.get("max_entry") else None,
         "cost_pct": ROUND_TRIP_COST, "slippage": execution.SLIPPAGE,
         "execution_version": execution.EXECUTION_VERSION,
     }
@@ -379,7 +403,7 @@ def record_candidates(scan, response=None, mode=DEFAULT_MODE, gate=DEFAULT_GATE)
     的畫面結果，用於保存「當時為何入選／未入選」及建議部位。舊呼叫端只傳
     scan 仍可正常累積訊號，只是沒有完整的畫面快照。
     動能類模式以實際隔日成交價下 8% 停損；trend_hold 最長 60 日，其餘 20 日。
-    trend_template 寫主要欄位與快照；整理突破另保存追價限制與成交結果。
+    trend_template 寫主要欄位與快照；實驗策略（整理突破、週線突破）另保存追價限制與成交結果。
     其他條件只把入選、理由、部位寫進 gate_selection[gate]，同一筆紀錄先寫先贏。
     """
     ensure_tables()
@@ -414,17 +438,17 @@ def record_candidates(scan, response=None, mode=DEFAULT_MODE, gate=DEFAULT_GATE)
         for strategy in item.get("strategies", []):
             if strategy.get("signal_state") != "triggered" or strategy.get("status") not in ("priority", "watch"):
                 continue
-            if mode == "classic" and strategy["key"] == "consolidation":
+            if mode == "classic" and strategy["key"] in EXPERIMENT_KEYS:
                 continue
             spec = execution_spec(item, strategy, mode)
             spec["observed_date"] = observed
             stop, target = spec["stop"], spec["target"]
             if not current or not stop or not 0 < stop < current or (target is not None and target <= current):
                 continue
-            # 整理突破有獨立的追價上限與成交結果，只在它自己的條件下標示入選。
+            # 實驗策略有獨立的追價上限與成交結果，只在它自己的條件下標示入選。
             strategy_selection = selection
             strategy_gate_selection = gate_selection
-            if (strategy["key"] == "consolidation") != (gate == "consolidation"):
+            if not strategy_used(strategy["key"], gate):
                 strategy_selection = (False, "此策略未用於本篩選條件", None, None) if primary else (None, None, None, None)
                 if strategy_gate_selection:
                     strategy_gate_selection = json.dumps({gate: {"selected": False, "reason": "此策略未用於本篩選條件"}})
@@ -487,10 +511,15 @@ def decision_history(stock_id=None, strategy=None, outcome_status=None,
     settle_pending(latest)
 
     cond = ["d.model_version=%(version)s"]
-    if not legacy:
-        cond.append("d.strategy='consolidation'" if gate == "consolidation" and mode != "classic"
-                    else "d.strategy<>'consolidation'")
     params = {"version": version, "limit": max(1, min(int(limit), 1000))}
+    if not legacy:
+        own = GATE_STRATEGY.get(gate) if mode != "classic" else None
+        if own:
+            cond.append("d.strategy=%(own)s")
+            params["own"] = own
+        else:
+            cond.append("NOT (d.strategy = ANY(%(experiments)s))")
+            params["experiments"] = sorted(EXPERIMENT_KEYS)
     if primary:
         sel = {"is_selected": "d.is_selected", "selection_reason": "d.selection_reason",
                "suggested_shares": "d.suggested_shares", "position_value": "d.position_value"}
@@ -502,7 +531,7 @@ def decision_history(stock_id=None, strategy=None, outcome_status=None,
     if stock_id:
         cond.append("d.stock_id=%(stock_id)s")
         params["stock_id"] = str(stock_id).strip()
-    if strategy in ("breakout", "price_action", "consolidation"):
+    if strategy in ("breakout", "price_action", *EXPERIMENT_KEYS):
         cond.append("d.strategy=%(strategy)s")
         params["strategy"] = strategy
     if outcome_status in ("pending", "win", "loss", "timeout", "trend", "skipped"):
@@ -750,9 +779,12 @@ def _breakout_ready(item):
 
 
 def _gate_ok(item, gate):
-    """動能模式的篩選條件；breakout 可執行本身就是可執行訊號，trend_template 另需任一策略可執行（呼叫端檢查）。"""
+    """動能模式的篩選條件；breakout 可執行本身就是可執行訊號，trend_template 另需任一策略可執行（呼叫端檢查）。
+    週線突破看自己的週線趨勢，不要求日線趨勢模板。"""
     if gate == "breakout":
         return bool(item.get("breakout_ready"))
+    if gate == "weekly":
+        return any(s["key"] == "weekly" and s["status"] == "priority" for s in item["strategies"])
     if gate == "consolidation":
         return bool(item.get("trend_template")) and any(
             s["key"] == "consolidation" and s["status"] == "priority" for s in item["strategies"])
@@ -760,6 +792,11 @@ def _gate_ok(item, gate):
 
 
 def _gate_reason(item, gate):
+    if gate == "weekly":
+        setup = next((s for s in item["strategies"] if s["key"] == "weekly"), None)
+        if not setup:
+            return "沒有週線突破訊號"
+        return "週線突破尚未到日線進場點" + (f"（{setup['blockers'][0]}）" if setup.get("blockers") else "")
     if gate == "consolidation":
         setup = next((s for s in item["strategies"] if s["key"] == "consolidation"), None)
         return ("趨勢模板未成立" if not item.get("trend_template") else
@@ -793,15 +830,19 @@ def build_decision_response(scan, calibrations, holdings, capital=1_000_000,
     gate=trend_template（預設）時裸 K 只在趨勢模板股上當進場時機；breakout 只收可執行的型態突破。
     classic：依共識 → 決策分（含校準）→ 成交額排序，出場用領頭策略自己的停損／目標。
     market 由呼叫端傳入（market_regime(as_of)），回測時可帶入當日的大盤狀態。
+    只有本模式／篩選條件用不到的策略（例如趨勢模板下只有整理突破）的股票不列為候選。
     """
     mode = normalize_mode(mode)
     gate = normalize_gate(gate)
     momentum = mode != "classic"
-    items = deepcopy(scan.get("items", []))
+    items = []
+    for item in deepcopy(scan.get("items", [])):
+        item["strategies"] = [s for s in item["strategies"] if strategy_used(s["key"], gate, momentum)]
+        if item["strategies"]:
+            items.append(item)
     cmap = {(r["strategy"], r["score_bucket"]): r for r in calibrations}
     for item in items:
-        active = [s for s in item["strategies"] if (s["key"] == "consolidation") == (momentum and gate == "consolidation")]
-        item["strategies"] = active
+        active = item["strategies"]
         item["consensus_count"] = len(active)
         item["consensus_bonus"] = 6 if len(active) > 1 else 0
         item["base_score"] = max((s["score"] for s in active), default=0)
@@ -855,7 +896,7 @@ def build_decision_response(scan, calibrations, holdings, capital=1_000_000,
         item["position_plan"] = _position_plan(
             entry, stop, target, max(1, float(capital)), max(0, min(float(risk_per_trade_pct), risk_remaining / max(1, float(capital)) * 100)),
             max(1, min(100, float(max_position_pct))), lot_size, remaining, exit_rule)
-        if momentum and gate == "consolidation" and lead:
+        if momentum and lead.get("max_entry"):
             item["position_plan"]["max_entry"] = round(lead["max_entry"] / (_f(item.get("price_factor"), 1) or 1), 2)
         item["position_plan"]["entry_rule"] = "次交易日開盤；成交後重算停損與股數"
         item["held"] = item["stock_id"] in held_ids

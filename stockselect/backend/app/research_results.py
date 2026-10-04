@@ -13,7 +13,7 @@ RESULT_PATH = ROOT / "research" / "decision_backtest_v3.json"
 def fingerprint():
     digest = hashlib.sha256()
     for path in [ROOT / "app" / f for f in (
-            "decision_center.py", "execution.py", "consolidation.py", "portfolio_sim.py", "research_results.py",
+            "decision_center.py", "execution.py", "consolidation.py", "weekly_breakout.py", "portfolio_sim.py", "research_results.py",
             "price_action.py", "swings.py", "breakout_rank.py")
             ] + [ROOT / "backtest_decision_center.py", ROOT.parent / "sql" / "mv_stock_snapshot.sql"]:
         digest.update(path.name.encode())

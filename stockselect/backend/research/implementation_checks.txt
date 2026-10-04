@@ -5,3 +5,9 @@ Live HTTP: 5 profile pairs plus legacy history, zero cash, and configured-equity
 Snapshot rebuilt transactionally: 2293 rows; no stale price in universe.
 All v3 tracking rows have execution specs; legacy rows preserved.
 Full historical research completed: 489 signal days, 7 variants, through 2026-10-02. Code fingerprint and live research API verified; all portfolio curves have nonnegative cash and at most 10 positions.
+
+2026-10-04
+Added weekly breakout (experimental gate `weekly` and /weekly-breakout page); decision lists now drop stocks with no strategy usable under the selected gate.
+55 unit tests: 54 passed; test_research_results needs numpy (absent in backend/.venv) and passes with system Python.
+Frontend production build passed.
+Full historical research rerun: 489 signal days, 9 variants. The 7 earlier variants are identical to the 2026-10-03 run (portfolio and event statistics); research API status in_sample.

@@ -1,4 +1,4 @@
-r"""決策中心 v3 歷史研究：7 組進場／出場條件與連續資金組合。
+r"""決策中心 v3 歷史研究：原始規則＋動能 20 日／趨勢持有 × 各篩選條件，與連續資金組合。
 
 每個訊號日只用當日可見資料重算 RS、趨勢模板、財報及成交條件。
 突破評分不使用目前型態回測表的績效先驗，分數校準為空。
@@ -177,7 +177,7 @@ def per_pct_at(series, t):
 
 
 def run_chunk(payload):
-    from app import consolidation, decision_center, swings
+    from app import consolidation, decision_center, swings, weekly_breakout
     G = payload
     dates, feats, meta = G["dates"], G["feats"], G["meta"]
     sig_set = {dates[i] for i in G["sig_idx"]}
@@ -214,6 +214,10 @@ def run_chunk(payload):
             setup = consolidation.analyze(win)
             if setup:
                 strategies.append(setup)
+            # 週線突破要約 64 週的日 K（同 scan_market）；載入資料已往前多抓 560 天
+            weekly = decision_center._weekly_strategy(bars[max(0, j - weekly_breakout.BARS_NEEDED + 1): j + 1], t)
+            if weekly:
+                strategies.append(weekly)
             if strategies:
                 out.append((t, decision_center._candidate(snap, strategies, bar["close"])))
     return out
