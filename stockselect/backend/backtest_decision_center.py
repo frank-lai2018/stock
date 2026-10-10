@@ -218,6 +218,7 @@ def run_chunk(payload):
             weekly = decision_center._weekly_strategy(bars[max(0, j - weekly_breakout.BARS_NEEDED + 1): j + 1], t)
             if weekly:
                 strategies.append(weekly)
+            strategies += decision_center._buy_stop_strategies(win)       # 支撐轉強、W 底測右底
             if strategies:
                 out.append((t, decision_center._candidate(snap, strategies, bar["close"])))
     return out

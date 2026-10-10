@@ -24,3 +24,4 @@ __pycache__/
 stockselect/backend/research/local_backup/
 stockselect/backend/research/smoke_v3.json
 stockselect/backend/research/decision_picks_v3.csv
+stockselect/backend/research/setups_trades_*.csv

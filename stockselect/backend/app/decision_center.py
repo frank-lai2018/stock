@@ -1,7 +1,9 @@
 """今日決策中心：盤後訊號、隔日成交與分開保存的策略實驗。
 
 momentum 是 20 日基準；trend_hold 是跌破 50 日線隔日出場、最長 60 日的實驗。
-整理突破、週線突破是實驗策略：只在自己的篩選條件下使用，各有進場條件與追價上限。classic 保留策略原本的停損／目標。
+整理突破、週線突破、支撐轉強、W 底測右底是實驗策略：只在自己的篩選條件下使用，各有進場條件與追價上限。
+支撐轉強與 W 底測右底的進場是「隔日盤中漲到觸發價才買」（entry_type=buy_stop，只限隔日），出場照模式。
+classic 保留策略原本的停損／目標。
 各模式使用 v3 版本與 execution 共用成交引擎；舊版紀錄封存保留。
 型態先驗只供參考，不影響決策中心突破評分。分數校準與型態先驗分開呈現。
 """
@@ -12,7 +14,7 @@ import math
 from copy import deepcopy
 from datetime import date, timedelta
 
-from . import consolidation, db, execution, ledger, price_action, swings, weekly_breakout
+from . import consolidation, db, execution, ledger, price_action, support_reclaim, swings, w_bottom, weekly_breakout
 from .breakout_rank import score_breakout
 
 
@@ -32,16 +34,21 @@ MARKET_MA_DAYS = 60
 PRIMARY_GATE = "trend_template"
 DEFAULT_GATE = "trend_template"
 GATES = {"trend_template": "趨勢模板", "breakout": "型態突破", "consolidation": "整理突破（實驗）",
-         "weekly": "週線突破（實驗）"}
+         "weekly": "週線突破（實驗）", "reclaim": "支撐轉強（實驗）", "w_bottom": "W 底測右底（實驗）"}
 GATE_RULES = {
     "trend_template": "可執行訊號＋趨勢模板成立（多頭排列、RS ≥ 70）",
     "breakout": "型態突破可執行（量比 ≥ 1.5、離頸線 5% 內、RS ≥ 70）",
     "consolidation": "趨勢模板＋整理量縮、振幅收縮後突破 20 日高，成交額 ≥1.5 倍；隔日追價上限為平台＋1 ATR",
     "weekly": "週線站上往上的 30 週線、週收盤突破前 52 週最高週收盤（整理 ≥ 6 週）；突破後約 4 週內，"
               "日線收在壓力線～+5% 且為突破週收盤或收盤高於前一日高點才進場；隔日追價上限為壓力線 +5%",
+    "reclaim": "強勢股（20 日漲 ≥ 10%、站上往上的 20 日線、近 10 日振幅 ≤ 15% 且收盤離高點 5% 內）"
+               "放量黑 K 回測近 5 日支撐、隔天紅 K 收復黑 K 半身；再隔一天盤中漲過紅 K 高點一檔才買，沒到就作廢",
+    "w_bottom": "近 20 日曾單日漲 ≥ 8%、自高點回檔 8～15%，縮量回測 5～12 日前的左底（高 0～3%、頸線至少高 6%）；"
+                "隔天盤中漲過當日高點一檔才買，開盤高於觸發價 2% 放棄，沒到就作廢",
 }
 # 實驗策略只在自己的篩選條件下使用；其他條件（含原始規則）只用型態突破與裸 K。
-GATE_STRATEGY = {"consolidation": "consolidation", "weekly": "weekly"}
+GATE_STRATEGY = {"consolidation": "consolidation", "weekly": "weekly", "reclaim": "reclaim", "w_bottom": "w_bottom"}
+BUY_STOP_GATES = ("reclaim", "w_bottom")
 EXPERIMENT_KEYS = frozenset(GATE_STRATEGY.values())
 
 _ensured = False
@@ -237,6 +244,11 @@ def _weekly_strategy(bars, as_of=None):
     return setup if setup and setup["status"] != "skip" else None
 
 
+def _buy_stop_strategies(bars):
+    """支撐轉強、W 底測右底：今天收盤成立就是可執行（隔日盤中漲到觸發價才買）。"""
+    return [x for x in (support_reclaim.analyze(bars), w_bottom.analyze(bars)) if x]
+
+
 def _candidate(snapshot, strategies, current_close=None):
     status_rank = {"priority": 4, "waiting": 3, "watch": 2, "skip": 0}
     lead = max(strategies, key=lambda x: (status_rank.get(x["status"], 0), x["score"]))
@@ -268,7 +280,7 @@ def _candidate(snapshot, strategies, current_close=None):
 
 def scan_market(min_amt=20_000_000, recent=3, lookback=5, expiry=5,
                 eps_min=None, revenue_yoy_min=None, gross_margin_chg_min=None):
-    """一次取 320 根 K 棒：型態突破、裸 K、整理突破用最後 150 根，週線突破用全部。"""
+    """一次取 320 根 K 棒：型態突破、裸 K、整理突破、支撐轉強、W 底測右底用最後 150 根，週線突破用全部。"""
     cond = ["in_universe", "security_type='stock'", "amt20 >= %(amt)s"]
     params = {"amt": max(0, int(min_amt))}
     if eps_min is not None:
@@ -322,6 +334,7 @@ def scan_market(min_amt=20_000_000, recent=3, lookback=5, expiry=5,
         weekly = _weekly_strategy(history, latest)
         if weekly:
             strategies.append(weekly)
+        strategies += _buy_stop_strategies(bars)
         if strategies:
             out.append(_candidate(snap, strategies, bars[-1].get("close")))
     out.sort(key=lambda x: (x["state"] == "ready", x["consensus_count"],
@@ -338,7 +351,7 @@ def execution_spec(item, strategy, mode=DEFAULT_MODE):
     momentum = mode != "classic"
     factor = _f(item.get("price_factor"), 1.0) or 1.0
     entry = _f(item.get("raw_close"), _f(item.get("close")))
-    return {
+    spec = {
         "observed_date": None, "entry": entry,
         "stop": entry * (1 - MOMENTUM_STOP_PCT) if momentum else _f(strategy.get("stop"), 0) / factor,
         "target": None if momentum else _f(strategy.get("target"), 0) / factor,
@@ -349,6 +362,22 @@ def execution_spec(item, strategy, mode=DEFAULT_MODE):
         "cost_pct": ROUND_TRIP_COST, "slippage": execution.SLIPPAGE,
         "execution_version": execution.EXECUTION_VERSION,
     }
+    trigger = _buy_stop_trigger(item, strategy)
+    if trigger:
+        # 隔日盤中漲到觸發價才買；停損照模式（成交價下 8%），參考進場改用觸發價
+        spec.update(entry_type="buy_stop", trigger=trigger, entry=trigger,
+                    max_gap_pct=strategy.get("max_gap_pct"), execution_version=execution.BUY_STOP_VERSION)
+        if momentum:
+            spec["stop"] = trigger * (1 - MOMENTUM_STOP_PCT)
+    return spec
+
+
+def _buy_stop_trigger(item, strategy):
+    """隔日盤中買進的觸發價（觀察日原始價）；不是這類策略回 None。"""
+    if strategy.get("entry_type") != "buy_stop":
+        return None
+    factor = _f(item.get("price_factor"), 1.0) or 1.0
+    return _f(strategy.get("trigger_raw")) or (_f(strategy.get("trigger"), 0) / factor or None)
 
 
 def settle_pending(as_of=None):
@@ -443,7 +472,8 @@ def record_candidates(scan, response=None, mode=DEFAULT_MODE, gate=DEFAULT_GATE)
             spec = execution_spec(item, strategy, mode)
             spec["observed_date"] = observed
             stop, target = spec["stop"], spec["target"]
-            if not current or not stop or not 0 < stop < current or (target is not None and target <= current):
+            basis = spec["entry"] if spec.get("entry_type") == "buy_stop" else current   # 盤中買進記觸發價
+            if not basis or not stop or not 0 < stop < basis or (target is not None and target <= basis):
                 continue
             # 實驗策略有獨立的追價上限與成交結果，只在它自己的條件下標示入選。
             strategy_selection = selection
@@ -454,7 +484,7 @@ def record_candidates(scan, response=None, mode=DEFAULT_MODE, gate=DEFAULT_GATE)
                     strategy_gate_selection = json.dumps({gate: {"selected": False, "reason": "此策略未用於本篩選條件"}})
             values.append((strategy["key"], item["stock_id"], observed, version,
                            strategy["status"], strategy["score"], score_bucket(strategy["score"]),
-                           strategy.get("pattern"), current, stop, target, spec["horizon"], ROUND_TRIP_COST,
+                           strategy.get("pattern"), basis, stop, target, spec["horizon"], ROUND_TRIP_COST,
                            shown.get("state"), shown.get("decision_score"),
                            shown.get("consensus_count"), shown.get("lead_strategy"),
                            *strategy_selection, strategy_gate_selection, snapshot,
@@ -780,11 +810,11 @@ def _breakout_ready(item):
 
 def _gate_ok(item, gate):
     """動能模式的篩選條件；breakout 可執行本身就是可執行訊號，trend_template 另需任一策略可執行（呼叫端檢查）。
-    週線突破看自己的週線趨勢，不要求日線趨勢模板。"""
+    週線突破、支撐轉強、W 底測右底看自己的條件，不要求日線趨勢模板。"""
     if gate == "breakout":
         return bool(item.get("breakout_ready"))
-    if gate == "weekly":
-        return any(s["key"] == "weekly" and s["status"] == "priority" for s in item["strategies"])
+    if gate in ("weekly", *BUY_STOP_GATES):
+        return any(s["key"] == gate and s["status"] == "priority" for s in item["strategies"])
     if gate == "consolidation":
         return bool(item.get("trend_template")) and any(
             s["key"] == "consolidation" and s["status"] == "priority" for s in item["strategies"])
@@ -792,6 +822,8 @@ def _gate_ok(item, gate):
 
 
 def _gate_reason(item, gate):
+    if gate in BUY_STOP_GATES:
+        return "沒有" + GATES[gate].replace("（實驗）", "") + "訊號"
     if gate == "weekly":
         setup = next((s for s in item["strategies"] if s["key"] == "weekly"), None)
         if not setup:
@@ -814,15 +846,17 @@ def method_text(mode, gate=DEFAULT_GATE):
     if mode == "classic":
         return "原始規則：多策略共識 + 可執行狀態 + 現有持股產業上限 + 固定風險部位；分數校準滿 30 筆才影響名次"
     exit_text = "跌破 50 日線後隔日開盤出場，最長 60 日" if mode == "trend_hold" else f"第 {HORIZON} 個交易日收盤出場"
+    entry_text = "隔日盤中漲到觸發價才進場（只限隔日）" if gate in BUY_STOP_GATES else "隔日開盤進場"
     return (f"動能模式（篩選：{GATES[gate]}）：{GATE_RULES[gate]}＋加權指數站上 {MARKET_MA_DAYS} 日線才開新倉，"
-            f"依 RS 評等排序；隔日開盤進場、停損實際進場價下 {int(MOMENTUM_STOP_PCT * 100)}%、不設目標，{exit_text}")
+            f"依 RS 評等排序；{entry_text}、停損實際進場價下 {int(MOMENTUM_STOP_PCT * 100)}%、不設目標，{exit_text}")
 
 
 def build_decision_response(scan, calibrations, holdings, capital=1_000_000,
                             risk_per_trade_pct=0.75, max_new_positions=3,
                             max_industry_positions=2, max_position_pct=25,
                             lot_size=1000, limit=200, mode=DEFAULT_MODE, market=None, gate=DEFAULT_GATE,
-                            available_capital=None, max_total_positions=10, max_total_risk_pct=4):
+                            available_capital=None, max_total_positions=10, max_total_risk_pct=4,
+                            ranking="rs"):
     """套用模式規則、持股產業上限與資金限制，挑出本次新倉。
 
     momentum：ready 且通過篩選條件（gate）者才可入選，加權指數跌破 60 日線時不開新倉，
@@ -835,6 +869,8 @@ def build_decision_response(scan, calibrations, holdings, capital=1_000_000,
     mode = normalize_mode(mode)
     gate = normalize_gate(gate)
     momentum = mode != "classic"
+    if ranking not in ("rs", "growth_quality") or (not momentum and ranking != "rs"):
+        raise ValueError("排序僅支援 rs／growth_quality；原始規則不支援營收品質排序")
     items = []
     for item in deepcopy(scan.get("items", [])):
         item["strategies"] = [s for s in item["strategies"] if strategy_used(s["key"], gate, momentum)]
@@ -868,9 +904,13 @@ def build_decision_response(scan, calibrations, holdings, capital=1_000_000,
         item["momentum_ok"] = _gate_ok(item, gate)
 
     if momentum:
-        items.sort(key=lambda x: (x["state"] == "ready" and x["momentum_ok"], x["state"] == "ready",
-                                  x.get("rs_rating") or 0, x["decision_score"], x.get("amt20") or 0),
-                   reverse=True)
+        def momentum_key(item):
+            key = (item["state"] == "ready" and item["momentum_ok"], item["state"] == "ready")
+            if ranking == "growth_quality":
+                score = (item.get("growth_quality") or {}).get("score")
+                key += (score is not None, score or 0)
+            return key + (item.get("rs_rating") or 0, item["decision_score"], item.get("amt20") or 0)
+        items.sort(key=momentum_key, reverse=True)
     else:
         items.sort(key=lambda x: (x["state"] == "ready", x["consensus_count"],
                                   x["decision_score"], x.get("amt20") or 0), reverse=True)
@@ -885,7 +925,8 @@ def build_decision_response(scan, calibrations, holdings, capital=1_000_000,
     risk_remaining = max(0, float(capital) * max_total_risk_pct / 100 - float(holdings.get("risk_amount") or 0))
     for item in items:
         lead = next((x for x in item["strategies"] if x["key"] == item["lead_strategy"]), {})
-        entry = _f(item.get("raw_close"), _f(item.get("close"))) or _f(lead.get("entry"))
+        trigger = _buy_stop_trigger(item, lead) if momentum else None
+        entry = trigger or _f(item.get("raw_close"), _f(item.get("close"))) or _f(lead.get("entry"))
         if momentum:
             stop = entry * (1 - MOMENTUM_STOP_PCT) if entry else None
             target = None
@@ -899,6 +940,13 @@ def build_decision_response(scan, calibrations, holdings, capital=1_000_000,
         if momentum and lead.get("max_entry"):
             item["position_plan"]["max_entry"] = round(lead["max_entry"] / (_f(item.get("price_factor"), 1) or 1), 2)
         item["position_plan"]["entry_rule"] = "次交易日開盤；成交後重算停損與股數"
+        if trigger:
+            gap = _f(lead.get("max_gap_pct"))
+            item["position_plan"].update(entry_type="buy_stop", entry_rule=(
+                f"次交易日盤中漲到 {trigger:.2f} 才買，沒到就作廢"
+                + (f"；開盤高於 {trigger * (1 + gap):.2f} 放棄" if gap else "") + "；成交後重算停損與股數"))
+            if gap:
+                item["position_plan"]["max_entry"] = round(trigger * (1 + gap), 2)
         item["held"] = item["stock_id"] in held_ids
         item["selected"] = False
         if data_blocked:
@@ -961,8 +1009,10 @@ def build_decision_response(scan, calibrations, holdings, capital=1_000_000,
             "stop_pct": MOMENTUM_STOP_PCT * 100 if momentum else None,
             "market_ma_days": MARKET_MA_DAYS if momentum else None,
             "gate": gate if momentum else None,
+            "ranking": ranking,
             "execution_version": execution.EXECUTION_VERSION, "slippage_pct_per_side": execution.SLIPPAGE * 100,
         },
         "validation": {"status": "unvalidated", "message": "新版隔日成交／公司行動模型；舊版績效不適用。實驗條件需以同版本回測與前瞻結果驗證。"},
-        "method": method_text(mode, gate),
+        "method": method_text(mode, gate).replace("依 RS 評等排序", "依營收成長品質分 → RS 排序（實驗；無評分者排後）")
+                  if ranking == "growth_quality" else method_text(mode, gate),
     }

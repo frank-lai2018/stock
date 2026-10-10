@@ -1,7 +1,7 @@
 """個股 API：快照 / K 線 / 籌碼 / 基本面。"""
 from fastapi import APIRouter, HTTPException
 
-from .. import db, patterns, vpa
+from .. import db, holder_data, patterns, vpa
 
 router = APIRouter(prefix="/api/stock", tags=["stock"])
 
@@ -323,29 +323,14 @@ def profitability(stock_id: str, quarters: int = 20):
 
 @router.get("/{stock_id}/holders")
 def holders(stock_id: str, weeks: int = 104):
-    """集保股權分散：大戶 vs 散戶持股佔比週序列（由舊到新），附當週收盤價。
+    """完整集保週表（舊到新）。收盤價取資料日或之前最近交易日。"""
+    return holder_data.series([stock_id], weeks=weeks, with_prices=True).get(stock_id, [])
 
-    分級（TDCC level 1~15 依股數）：散戶＝1~3（≤10 張）、中實戶＝4~11（10~400 張）、
-    大戶＝12~15（≥400 張）、千張大戶＝15。
-    """
-    n = max(4, min(int(weeks), 520))
-    rows = db.query(
-        "SELECT * FROM ("
-        "  SELECT data_date, "
-        "    sum(pct) FILTER (WHERE level = 15)            AS big1000_pct, "
-        "    sum(pct) FILTER (WHERE level >= 12)           AS big400_pct, "
-        "    sum(pct) FILTER (WHERE level BETWEEN 4 AND 11) AS mid_pct, "
-        "    sum(pct) FILTER (WHERE level <= 3)            AS retail_pct, "
-        "    sum(holders)                                   AS holders_total "
-        "  FROM shareholding_dist WHERE stock_id=%(id)s GROUP BY data_date "
-        "  ORDER BY data_date DESC LIMIT %(n)s) z ORDER BY data_date",
-        {"id": stock_id, "n": n})
-    for r in rows:                                  # 對齊當週（或之前最近一個交易日）收盤價
-        p = db.query("SELECT close FROM price_daily WHERE stock_id=%(id)s AND trade_date <= %(d)s "
-                     "ORDER BY trade_date DESC LIMIT 1", {"id": stock_id, "d": r["data_date"]})
-        r["close"] = p[0]["close"] if p else None
-        r["data_date"] = r["data_date"].isoformat()
-    return rows
+
+@router.get("/{stock_id}/holders/report")
+def holders_report(stock_id: str, weeks: int = 104):
+    rows = holder_data.series([stock_id], weeks=weeks, with_prices=True).get(stock_id, [])
+    return {"items": rows, **holder_data.summary(rows)}
 
 
 @router.get("/{stock_id}/valuation")

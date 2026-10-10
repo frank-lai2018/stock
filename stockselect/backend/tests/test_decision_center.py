@@ -217,5 +217,75 @@ class MomentumGateTest(unittest.TestCase):
         self.assertIsNone(rows[("C", "breakout")][21])
 
 
+def buy_stop_candidate(stock_id, key="reclaim", trigger=310, factor=1.0, gap=None, rs=90):
+    """支撐轉強／W 底測右底：成立就可執行，隔日盤中漲到觸發價才買。factor＝還原價／原始價。"""
+    item = candidate(stock_id, "電子", 80)
+    item.update(close=302 * factor, raw_close=302, price_factor=factor, rs_rating=rs, lead_strategy=key,
+                strategies=[{"key": key, "label": decision_center.GATES[key], "score": 80, "status": "priority",
+                             "signal_state": "triggered", "pattern": "support_reclaim", "pattern_name": "回測支撐",
+                             "entry_type": "buy_stop", "trigger": trigger * factor, "trigger_raw": trigger,
+                             "entry": trigger * factor, "stop": 297 * factor, "target": None, "risk_pct": 4.19,
+                             "rr": None, "max_gap_pct": gap, "blockers": [], "notes": [], "parts": {},
+                             "pattern_prior": None, "signal_date": "2026-09-18"}])
+    return item
+
+
+class BuyStopGateTest(unittest.TestCase):
+    def scan(self, *items):
+        return {"as_of": "2026-09-18", "scanned": len(items), "items": list(items)}
+
+    def test_only_own_gate_uses_it_and_plan_starts_at_trigger(self):
+        scan = self.scan(buy_stop_candidate("6672"), candidate("A", "航運", 82, trend_template=True))
+        for mode, gate, ids in (("momentum", "reclaim", ["6672"]), ("momentum", "w_bottom", []),
+                                ("momentum", "trend_template", ["A"]), ("classic", None, ["A"])):
+            result = decision_center.build_decision_response(
+                scan, [], EMPTY_HOLDINGS, mode=mode, gate=gate, market={"above": True})
+            self.assertEqual([x["stock_id"] for x in result["items"]], ids, (mode, gate))
+        result = decision_center.build_decision_response(
+            scan, [], EMPTY_HOLDINGS, mode="momentum", gate="reclaim", market={"above": True})
+        item = result["items"][0]
+        plan = item["position_plan"]
+        self.assertTrue(item["selected"])
+        self.assertEqual((plan["entry"], plan["stop"], plan["entry_type"]), (310, 285.2, "buy_stop"))
+        self.assertIn("盤中漲到 310.00 才買，沒到就作廢", plan["entry_rule"])
+        self.assertNotIn("max_entry", plan)
+        self.assertIn("隔日盤中漲到觸發價才進場", result["method"])
+
+    def test_w_bottom_gap_cap_and_execution_spec(self):
+        item = buy_stop_candidate("2492", key="w_bottom", trigger=309.5, gap=0.02)
+        plan = decision_center.build_decision_response(
+            self.scan(item), [], EMPTY_HOLDINGS, mode="momentum", gate="w_bottom",
+            market={"above": True})["items"][0]["position_plan"]
+        self.assertEqual(plan["max_entry"], 315.69)
+        self.assertIn("開盤高於 315.69 放棄", plan["entry_rule"])
+        strategy = item["strategies"][0]
+        spec = decision_center.execution_spec(item, strategy, "momentum")
+        self.assertEqual((spec["entry_type"], spec["trigger"], spec["entry"], spec["max_gap_pct"]),
+                         ("buy_stop", 309.5, 309.5, 0.02))
+        self.assertAlmostEqual(spec["stop"], 309.5 * 0.92)
+        self.assertEqual((spec["stop_pct"], spec["horizon"], spec["exit_ma"]), (0.08, 20, 0))
+        hold = decision_center.execution_spec(item, strategy, "trend_hold")
+        self.assertEqual((hold["entry_type"], hold["horizon"], hold["exit_ma"]), ("buy_stop", 60, 50))
+
+    def test_trigger_uses_raw_price_when_adjusted_series_is_scaled(self):
+        item = buy_stop_candidate("6672", factor=0.9)          # 之後除息，還原價是原始價的 0.9 倍
+        spec = decision_center.execution_spec(item, item["strategies"][0], "momentum")
+        self.assertEqual(spec["trigger"], 310)
+
+    def test_record_logs_trigger_as_entry(self):
+        scan = self.scan(buy_stop_candidate("6672"))
+        response = decision_center.build_decision_response(
+            scan, [], EMPTY_HOLDINGS, mode="momentum", gate="reclaim", market={"above": True})
+        with patch.object(decision_center, "ensure_tables"), \
+             patch.object(decision_center.db, "query", side_effect=[[{"n": 0}], [{"n": 1}]]), \
+             patch.object(decision_center.db, "execute_many") as execute_many:
+            decision_center.record_candidates(scan, response, "momentum", "reclaim")
+        row = execute_many.call_args.args[1][0]
+        self.assertEqual((row[0], row[8], row[9]), ("reclaim", 310, 310 * 0.92))
+        self.assertTrue(json.loads(row[21])["reclaim"]["selected"])
+        spec = json.loads(row[23])
+        self.assertEqual((spec["entry_type"], spec["trigger"]), ("buy_stop", 310))
+
+
 if __name__ == "__main__":
     unittest.main()

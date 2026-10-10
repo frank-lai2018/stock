@@ -31,7 +31,8 @@ function draw() {
   const lines = (r.variants || []).map(v => ({ name: v.name, curve: v.curve }))
   if (r.benchmark?.curve?.length) lines.push(r.benchmark)
   const selected = Object.fromEntries(lines.map(v => [v.name,
-    v.name === r.benchmark?.name || v.name === '動能20日・趨勢模板' || v.name.includes('整理突破') || v.name.includes('週線突破')]))
+    // 預設只開基準、預設規則與各實驗的動能 20 日版；其餘點圖例再打開
+    v.name === r.benchmark?.name || v.name === '動能20日・趨勢模板' || (v.name.startsWith('動能20日') && v.name.includes('（實驗）'))]))
   chart.setOption({
     tooltip: { trigger: 'axis', valueFormatter: v => `${Number(v).toFixed(2)}%` },
     legend: { type: 'scroll', top: 0, selected },
@@ -54,7 +55,7 @@ onBeforeUnmount(() => { observer?.disconnect(); chart?.dispose() })
       <div v-if="result.signal_start">訊號 {{ result.signal_start }}～{{ result.signal_end }}；結算至 {{ result.data_end }}。最後 60 日保留給結算，不開新倉。</div>
     </el-alert>
     <template v-if="result.variants?.length">
-      <p class="muted">同一成交模型、同一訊號期間：隔日開盤、8% 停損、每邊 0.1% 滑價加 0.6% 成本。連續組合限制現金、重複持股、同產業 2 檔、總持股 10 檔與總停損風險 4%；初始淨值 {{ Number(result.capital).toLocaleString() }} 元，{{ result.variants[0]?.portfolio?.lot_size === 1 ? '允許零股' : '整張交易' }}。原始規則使用自己的停損與目標。</p>
+      <p class="muted">同一成交模型、同一訊號期間：隔日開盤（支撐轉強、W 底測右底為隔日盤中漲到觸發價才買）、8% 停損、每邊 0.1% 滑價加 0.6% 成本。連續組合限制現金、重複持股、同產業 2 檔、總持股 10 檔與總停損風險 4%；初始淨值 {{ Number(result.capital).toLocaleString() }} 元，{{ result.variants[0]?.portfolio?.lot_size === 1 ? '允許零股' : '整張交易' }}。原始規則使用自己的停損與目標。</p>
       <el-table :data="result.variants" border stripe>
         <el-table-column prop="name" label="策略版本" min-width="225" fixed />
         <el-table-column label="組合總報酬" width="120"><template #default="{ row }">{{ percent(row.portfolio.total_return) }}</template></el-table-column>

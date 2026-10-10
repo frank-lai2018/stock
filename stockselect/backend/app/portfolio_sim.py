@@ -9,7 +9,7 @@ from . import decision_center as dc, execution
 
 
 def run(calendar, by_date, bars_by_stock, markets, mode, gate, capital=1_000_000,
-        lot_size=1, max_total_positions=10, max_total_risk_pct=4):
+        lot_size=1, max_total_positions=10, max_total_risk_pct=4, ranking="rs"):
     calendar = sorted(calendar)
     if not by_date:
         return {"curve": [], "trades": [], "skipped": [], "open_positions": 0}
@@ -91,7 +91,7 @@ def run(calendar, by_date, bars_by_stock, markets, mode, gate, capital=1_000_000
                 {"as_of": d.isoformat(), "items": by_date[d], "scanned": len(by_date[d])}, [], holdings,
                 capital=equity, available_capital=cash, lot_size=lot_size, mode=mode, gate=gate,
                 market=markets.get(d), limit=500, max_total_positions=max_total_positions,
-                max_total_risk_pct=max_total_risk_pct)
+                max_total_risk_pct=max_total_risk_pct, ranking=ranking)
             pending = [(item, d) for item in response["items"] if item["selected"]]
     return {"curve": curve, "trades": trades, "skipped": skipped, "open_positions": len(held),
             "accounting": "adjusted-total-return-dividend-reinvestment", "lot_size": lot_size}

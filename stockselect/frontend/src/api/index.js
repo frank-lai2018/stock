@@ -54,6 +54,8 @@ export const getDailyDecisionHistory = (params = {}) =>
   api.get('/screen/daily-decision/history', { params }).then((r) => r.data)
 export const getDecisionResearch = () =>
   api.get('/screen/daily-decision/research').then((r) => r.data)
+export const getGrowthResearch = () =>
+  api.get('/screen/daily-decision/growth-research').then((r) => r.data)
 // 週線突破（實驗）：週線趨勢＋週收盤突破，日線找進場點
 export const getWeeklyBreakout = (params = {}) =>
   api.get('/screen/weekly-breakout', { params }).then((r) => r.data)
@@ -79,6 +81,8 @@ export const getProfitability = (id, quarters = 20) =>
   api.get(`/stock/${id}/profitability`, { params: { quarters } }).then((r) => r.data)
 export const getHolders = (id, weeks = 104) =>
   api.get(`/stock/${id}/holders`, { params: { weeks } }).then((r) => r.data)
+export const getHoldersReport = (id, weeks = 104) =>
+  api.get(`/stock/${id}/holders/report`, { params: { weeks } }).then((r) => r.data)
 export const getValuation = (id, years = 3) =>
   api.get(`/stock/${id}/valuation`, { params: { years } }).then((r) => r.data)
 export const getGrowthRank = (params = {}) =>

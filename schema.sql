@@ -148,18 +148,30 @@ CREATE TABLE IF NOT EXISTS valuation_daily (
     PRIMARY KEY (stock_id, trade_date)
 );
 
--- 集保戶股權分散表（TDCC 週報）：持股分級 1~15（1=1-999股 … 15=1,000,001股以上）
+-- 集保戶股權分散表（TDCC 週報）：持股分級 1~15（1=1-999股 … 15=1,000,001股以上）；16 差異、17 合計
 -- 千張大戶=level 15；400張大戶=level 12~15。來源 TDCC opendata（update_holderdist.py）。
 CREATE TABLE IF NOT EXISTS shareholding_dist (
     stock_id   VARCHAR(10) NOT NULL REFERENCES stock(stock_id),
     data_date  DATE        NOT NULL,   -- 集保資料日期（週）
-    level      SMALLINT    NOT NULL,   -- 持股分級 1~15
+    level      SMALLINT    NOT NULL,   -- 1~15 分級、16 差異、17 官方合計
     holders    BIGINT,                 -- 該級人數
     shares     BIGINT,                 -- 該級股數
     pct        NUMERIC(8,4),           -- 占集保庫存數比例%
     PRIMARY KEY (stock_id, data_date, level)
 );
 CREATE INDEX IF NOT EXISTS idx_holderdist_date ON shareholding_dist (data_date);
+
+-- 未知發布時間不以資料日期推估；首次觀察／修訂取得時間用於防止回測偷看。
+CREATE TABLE IF NOT EXISTS shareholding_observation (
+    stock_id VARCHAR(10) NOT NULL,
+    data_date DATE NOT NULL,
+    first_seen_at TIMESTAMPTZ NOT NULL,
+    last_seen_at TIMESTAMPTZ NOT NULL,
+    values_seen_at TIMESTAMPTZ NOT NULL,
+    published_at TIMESTAMPTZ,
+    content_hash TEXT,
+    PRIMARY KEY (stock_id, data_date)
+);
 
 -- ========== 新聞（RAG 的文字部分；向量在 schema_rag.sql）==========
 CREATE TABLE IF NOT EXISTS news (

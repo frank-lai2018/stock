@@ -1,7 +1,10 @@
-"""今日決策中心的「進場條件」：等待確認的訊號要發生什麼事才會變成可執行，寫成可以照著看盤的文字。
+"""今日決策中心的「進場條件」：等待確認的訊號要發生什麼事才會變成可執行，寫成可以照著看盤的文字；
+支撐轉強、W 底測右底雖然已可執行，下單方式是隔日盤中漲到觸發價才買，也寫成條件；
+可執行的型態突破不必再等，寫出隔日開盤買與停損、出場。
 
 只做說明，不影響選股、入選與回測（所以不在研究指紋裡）。規則照 price_action.evaluate_signal／_decision、
-decision_center.scan_market 的 lookback／expiry，以及 weekly_breakout.analyze；那幾支的門檻改了，這裡要跟著改。
+decision_center.scan_market 的 lookback／expiry、weekly_breakout.analyze，以及 decision_center.execution_spec
+的隔日盤中買進、build_decision_response 的停損與出場；那幾支的門檻改了，這裡要跟著改。
 """
 from datetime import timedelta
 
@@ -74,12 +77,54 @@ def _weekly(s):
             "deadline": deadline, "score_after": None, "lines": lines}
 
 
+def _exit_text(mode):
+    """動能類模式的出場（停損都是成交價下 8%）。"""
+    return "收盤跌破 50 日線隔日開盤出、最長 60 個交易日" if mode == "trend_hold" else "第 20 個交易日收盤出場"
+
+
+def _buy_stop(s, mode):
+    """支撐轉強、W 底測右底：隔日盤中漲到觸發價才買，只限隔日；出場照模式。"""
+    trigger = number(s.get("trigger_raw")) or number(s.get("trigger"))      # 觀察日原始價（觸發價對齊升降單位）
+    if trigger is None:
+        return None
+    gap = number(s.get("max_gap_pct"))
+    high = round(trigger * (1 + gap), 2) if gap else None
+    lines = [f"下一個交易日盤中漲到 {trigger:.2f}（{_mmdd(s['signal_date'])} 最高價上一檔）才買；沒到就作廢，不延到之後"
+             if s.get("signal_date") else f"下一個交易日盤中漲到 {trigger:.2f} 才買；沒到就作廢"]
+    if high:
+        lines.append(f"開盤就高於 {high:.2f}（觸發價 +{gap * 100:g}%）就放棄")
+    lines.append(f"買進後停損＝成交價下 8%（以觸發價成交約 {trigger * 0.92:.2f}），{_exit_text(mode)}")
+    return {"strategy": s.get("key"), "label": s.get("label"), "trigger_low": trigger, "trigger_high": high,
+            "invalid_below": None, "deadline": "只限下一個交易日", "score_after": None, "lines": lines}
+
+
+def _breakout(s, item, mode):
+    """型態突破可執行：已經收盤帶量突破，下一個交易日開盤直接買（沒有開盤價上限）。
+    動能類模式停損＝成交價下 8%、出場照模式；原始規則用型態自己的停損（頸線下 1 ATR）與量測目標。"""
+    close = number(item.get("raw_close")) or number(item.get("close"))      # 觀察日原始收盤＝參考進場
+    if close is None:
+        return None
+    when = f"{_mmdd(s['signal_date'])} " if s.get("signal_date") else ""
+    lines = [f"下一個交易日開盤買（{when}{s.get('pattern_name') or '型態'}收盤帶量突破）；開盤價不設上限"]
+    if mode == "classic":
+        factor = number(item.get("price_factor"), 1.0) or 1.0              # 策略的停損／目標是還原價
+        stop, target = number(s.get("stop")), number(s.get("target"))
+        if stop and target:
+            lines.append(f"停損 {stop / factor:.2f}（頸線下 1 ATR）、目標 {target / factor:.2f}（量測滿足價）")
+    else:
+        lines.append(f"買進後停損＝成交價下 8%（若以收盤價 {close:.2f} 成交，約 {close * 0.92:.2f}），{_exit_text(mode)}")
+    return {"strategy": "breakout", "label": s.get("label"), "trigger_low": None, "trigger_high": None,
+            "invalid_below": None, "deadline": "下一個交易日開盤", "score_after": None, "lines": lines}
+
+
 def _wanted(s):
-    return s.get("status") == "waiting" or (s.get("key") == "weekly" and s.get("status") == "watch")
+    return (s.get("status") == "waiting" or (s.get("key") == "weekly" and s.get("status") == "watch")
+            or s.get("entry_type") == "buy_stop" or (s.get("key") == "breakout" and s.get("status") == "priority"))
 
 
 def attach(response, lookback=5, expiry=5, calendar=None):
-    """把每檔「等待確認」的策略（另含週線突破的接近壓力）的進場條件放進 item["entry_conditions"]。
+    """把每檔「等待確認」的策略（另含週線突破的接近壓力、隔日盤中買進的觸發價、可執行型態突破的隔日開盤）
+    的進場條件放進 item["entry_conditions"]。
     calendar：市場交易日（測試用）；沒給就讀加權指數的交易日算訊號已經過了幾天。"""
     items = response.get("items") or []
     signals = [day(s["signal_date"]) for item in items for s in item.get("strategies", [])
@@ -107,6 +152,12 @@ def attach(response, lookback=5, expiry=5, calendar=None):
                     cond["lines"].append("篩選條件是型態突破：裸 K 訊號觸發了也不會入選")
             elif s.get("key") == "weekly":
                 cond = _weekly(s)
+            elif s.get("entry_type") == "buy_stop":
+                cond = _buy_stop(s, response.get("mode"))
+            elif s.get("key") == "breakout":
+                cond = _breakout(s, item, response.get("mode"))
+                if cond and gate == "trend_template" and not item.get("trend_template"):
+                    cond["lines"].append("另需趨勢模板成立（目前未成立），否則不會入選")
             else:
                 cond = None
             if cond:

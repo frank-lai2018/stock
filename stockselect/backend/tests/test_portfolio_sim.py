@@ -36,6 +36,21 @@ class PortfolioTest(unittest.TestCase):
         self.assertEqual(baseline["items"], [])  # 對照組用不到整理突破，只有它的股票不列為候選
         self.assertTrue(experiment["items"][0]["selected"])
 
+    def test_buy_stop_gate_fills_only_when_trigger_is_reached(self):
+        from test_decision_center import buy_stop_candidate
+        bars = {"A": [bar(i) for i in range(30)]}                      # 每天最高 102
+        dates = [b["trade_date"] for b in bars["A"]]
+        for trigger, trades in ((101, 1), (103, 0)):
+            item = buy_stop_candidate("A", trigger=trigger)
+            item["raw_close"] = 100
+            result = portfolio_sim.run(dates, {START: [item]}, bars, {START: {"above": True}},
+                                       "momentum", "reclaim", lot_size=1)
+            self.assertEqual(len(result["trades"]), trades, trigger)
+            if trades:
+                self.assertAlmostEqual(result["trades"][0]["actual_entry_raw"], 101 * 1.001)
+            else:
+                self.assertIn("沒有漲到觸發價", result["skipped"][0]["reason"])
+
     def test_missing_market_and_stale_snapshot_block(self):
         item = candidate("A", "X", trend_template=True)
         scan = {"items": [item], "scanned": 1}
