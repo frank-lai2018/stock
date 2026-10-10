@@ -48,6 +48,8 @@ r"""nightly.py — 排程大腦：每晚無腦執行這一支，由它依「今�
                **必須排在 refresh 之前**，否則選股視圖 join 到的是昨天的狀態。
   refresh    以上跑完後，刷新選股物化視圖 mv_stock_snapshot（選股器同步最新；--skip-refresh 可略過）。
   decision   refresh 成功後保存今日決策中心候選、結算到期觀察，累積分數校準資料。
+  line       完整夜間更新完成後，推播型態突破＋趨勢持有60日日報；讀 LINE_TOKEN／LINE_USER_ID。
+             必要工作失敗改發更新告警；歷史補跑、單一工作與休市不發正常日報。
 
 防重複：quarterly / dividend 是 FinMind 逐檔的重工作，用狀態檔 nightly_state.json 記錄
         「本季/本週已完成」，跨夜自動不重跑（daily / revenue 便宜則照排程窗口每晚跑）。
@@ -63,6 +65,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from datetime import date, datetime, timedelta
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -84,6 +87,7 @@ BACKTEST_DIR = os.path.join(HERE, "stockselect", "backend")   # 回測腳本在�
 BACKTEST = os.path.join(BACKTEST_DIR, "backtest_patterns.py")
 RENKO = os.path.join(BACKTEST_DIR, "renko_etl.py")            # 磚形圖狀態（同樣需 import app）
 DECISION_CAPTURE = os.path.join(BACKTEST_DIR, "capture_daily_decisions.py")
+LINE_NOTIFY = os.path.join(BACKTEST_DIR, "notify_daily_decision.py")
 HOLDERS_RAW = r"H:\data\Holders"           # 集保週快照封存（往後自建歷史）
 
 
@@ -301,7 +305,8 @@ def plan_jobs(d, state, only, skip=()):
 # ---------- 執行 ----------
 
 def run_cmd(cmd, cwd=HERE):
-    print(f"    $ {' '.join(cmd)}")
+    shown = ["[已隱藏連線字串]" if i and cmd[i - 1] == "--dsn" else value for i, value in enumerate(cmd)]
+    print(f"    $ {' '.join(shown)}")
     return subprocess.run(cmd, cwd=cwd).returncode
 
 
@@ -370,6 +375,46 @@ def clean_dsn(dsn):
     return dsn
 
 
+def capture_and_notify(dsn, requested_date, results, notify=True):
+    """刷新後使用同次決策快照發送；通知失敗不撤銷已保存的決策。"""
+    prerequisites = {"daily", "quarterly", "revenue", "refresh", "decision"}
+    failures = [job for job, success in results if job in prerequisites and not success]
+    if not failures:
+        with tempfile.TemporaryDirectory(prefix="twstock-line-") as folder:
+            snapshot = os.path.join(folder, "decision.json")
+            command = [sys.executable, DECISION_CAPTURE, "--dsn", dsn]
+            if notify:
+                command += ["--line-snapshot", snapshot, "--date", str(requested_date)]
+            print("\n----- daily decision capture -----")
+            try:
+                rc = run_cmd(command, cwd=BACKTEST_DIR)
+            except Exception:
+                rc = 1
+            results.append(("decision", rc == 0))
+            print(f"    → {'成功' if rc == 0 else f'失敗 (rc={rc})'}")
+            if notify and rc == 0:
+                warnings = [job for job, success in results if job not in prerequisites and not success]
+                return run_line_notify(dsn, requested_date, results,
+                                       ["--snapshot", snapshot, "--warning-jobs", ",".join(warnings)])
+    else:
+        results.append(("decision", False))
+        print("    → 必要上游資料更新失敗，跳過決策保存；既有結果可供查閱")
+    if notify:
+        failures = [job for job, success in results if job in prerequisites and not success]
+        return run_line_notify(dsn, requested_date, results, ["--failed-jobs", ",".join(failures)])
+
+
+def run_line_notify(dsn, requested_date, results, extra):
+    print("\n----- LINE notification -----")
+    try:
+        rc = run_cmd([sys.executable, LINE_NOTIFY, "--dsn", dsn, "--date", str(requested_date), *extra],
+                     cwd=BACKTEST_DIR)
+    except Exception:
+        rc = 1
+    results.append(("line", rc == 0))
+    return rc
+
+
 def main():
     ap = argparse.ArgumentParser(description="排程大腦：依今天日期自動決定該跑哪些更新")
     ap.add_argument("--dsn", default=os.environ.get("DATABASE_URL", ""), help="PostgreSQL 連線字串")
@@ -378,6 +423,7 @@ def main():
     ap.add_argument("--skip", default="", help="本次略過某些工作（逗號分隔，如 --skip capreduction）；"
                                                "其餘照排程跑。適合「今晚不想跑某支重工作」")
     ap.add_argument("--skip-refresh", action="store_true", help="跑完不刷新 mv_stock_snapshot 選股視圖")
+    ap.add_argument("--skip-line", action="store_true", help="本次不發送 LINE 通知")
     ap.add_argument("--plan", action="store_true", help="只印排程決策，不執行")
     args = ap.parse_args()
     args.dsn = clean_dsn(args.dsn)
@@ -395,6 +441,7 @@ def main():
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
     if skip - set(JOBS):
         raise SystemExit(f"--skip 有無效工作名：{sorted(skip - set(JOBS))}；可選：{JOBS}")
+    notify = not (args.only or args.skip_refresh or args.skip_line or skip & {"daily", "quarterly", "revenue"})
 
     state = load_state()
     jobs = plan_jobs(d, state, args.only, skip)
@@ -407,6 +454,8 @@ def main():
     if not args.skip_refresh:
         print(f"  [✓ 跑] {'refresh':10} 執行後刷新 mv_stock_snapshot（選股器同步最新）")
         print(f"  [✓ 跑] {'decision':10} refresh 成功後保存候選並結算分數校準")
+        if notify:
+            print(f"  [✓ 跑] {'line':10} 決策完成後 LINE 日報／必要資料失敗告警（需環境變數）")
 
     if args.plan:
         print("\n(--plan：僅顯示決策，未執行)")
@@ -444,15 +493,7 @@ def main():
         ok, err = refresh_snapshot(args.dsn)
         results.append(("refresh", ok))
         print("    → " + ("已刷新 ✓" if ok else f"刷新失敗（{err}）；若尚未建視圖請先跑 stockselect/sql/mv_stock_snapshot.sql"))
-        prerequisites_ok = all(success for job, success in results if job in ("daily", "quarterly", "revenue"))
-        if ok and prerequisites_ok:
-            print("\n----- daily decision capture -----")
-            rc = run_cmd([sys.executable, DECISION_CAPTURE, "--dsn", args.dsn], cwd=BACKTEST_DIR)
-            results.append(("decision", rc == 0))
-            print(f"    → {'成功' if rc == 0 else f'失敗 (rc={rc})'}")
-        elif ok:
-            results.append(("decision", False))
-            print("    → 必要上游資料更新失敗，跳過決策保存；既有結果可供查閱")
+        capture_and_notify(args.dsn, d, results, notify=notify)
 
     print("\n=== nightly 完成 ===")
     for job, ok in results:

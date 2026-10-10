@@ -25,3 +25,6 @@ stockselect/backend/research/local_backup/
 stockselect/backend/research/smoke_v3.json
 stockselect/backend/research/decision_picks_v3.csv
 stockselect/backend/research/setups_trades_*.csv
+
+# LINE 本機通知防重紀錄、休市快取（不含憑證，不進版控）
+stockselect/backend/.local/

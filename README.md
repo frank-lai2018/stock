@@ -343,6 +343,7 @@ python nightly.py --dsn "postgresql://帳號:密碼@localhost:5432/twstock" #每
 | etfnav（ETF 淨值/折溢價/規模）| 每晚固定（mis.twse 單一請求，便宜）| — |
 | refresh | 以上跑完後刷新 `mv_stock_snapshot`（選股器同步最新）| `--skip-refresh` 可略過 |
 | decision | refresh 成功後保存今日決策候選、結算 20 日觀察（自動執行）| 同日同策略同股票以主鍵去重 |
+| line | 完整 nightly 保存決策後，發送「日線型態突破＋趨勢持有60日」LINE 摘要；必要資料失敗改發告警 | 使用 `LINE_TOKEN`、`LINE_USER_ID`；同日事件防重，休市略過正常日報。詳見 [LINE通知設定](LINE通知設定.md) |
 
 - **狀態檔 `nightly_state.json`**（自動建立）：記錄 quarterly/dividend 這類 FinMind 逐檔的重工作「本季/本週已完成」，避免跨夜重跑；daily/revenue/holderdist 便宜則照窗口每晚跑。
 - **重工作避開平日**：dividend 只在週六/日跑，平日 nightly 都是分鐘級（不會被 3-4 小時卡住）。

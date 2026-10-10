@@ -9,8 +9,11 @@ v3 的 classic、momentum、trend_hold 分開記錄；動能類各 6 個進場�
   python capture_daily_decisions.py --dsn postgresql://...
 """
 import argparse
+import json
 import os
 import sys
+from datetime import date
+from pathlib import Path
 
 
 def main():
@@ -21,6 +24,8 @@ def main():
     ap = argparse.ArgumentParser(description="保存今日決策中心訊號，累積分數校準資料")
     ap.add_argument("--dsn", default="", help="PostgreSQL 連線字串；省略時讀 DATABASE_URL")
     ap.add_argument("--min-amt", type=int, default=20_000_000)
+    ap.add_argument("--line-snapshot", type=Path, help="保存同次掃描的型態突破／60日通知快照，不推播")
+    ap.add_argument("--date", default=date.today().isoformat(), help="通知預期的排程日期")
     args = ap.parse_args()
     if args.dsn:
         os.environ["DATABASE_URL"] = args.dsn
@@ -43,6 +48,11 @@ def main():
             recorded = decision_center.record_candidates(scan, response, mode, gate)
             name = f"{mode}/{gate}" if mode != "classic" else mode
             parts.append(f"{name}：入選 {response['summary']['selected']}、新增觀察 {recorded}")
+    if args.line_snapshot:
+        from app import decision_digest
+        response = decision_digest.build_response(scan, holdings, market)
+        snapshot = decision_digest.make_snapshot(response, args.date)
+        args.line_snapshot.write_text(json.dumps(snapshot, ensure_ascii=False, default=str), encoding="utf-8")
     above = market.get("above")
     regime = "資料不足" if above is None else ("站上" if above else "跌破") + f" {market['ma_days']} 日線"
     print(f"今日決策中心：資料日 {scan.get('as_of') or '—'}｜掃描 {scan['scanned']} 檔｜"
