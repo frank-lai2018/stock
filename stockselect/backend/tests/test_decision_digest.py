@@ -37,7 +37,7 @@ def txn(id, action, d, shares=100, price=100):
 
 def response(as_of):
     scan = {"as_of": str(as_of), "scanned": 1, "data_health": {"healthy": True},
-            "items": [candidate("A", "電子") ]}
+            "items": [{**candidate("A", "電子"), "eps": 1.2}]}
     return dg.build_response(scan, EMPTY_HOLDINGS, {"above": True})
 
 
@@ -191,19 +191,20 @@ class NightlyNotificationTest(unittest.TestCase):
 
     def test_capture_failure_sends_alert_and_does_not_pass_snapshot(self):
         results = [("daily", True), ("refresh", True)]
-        with patch.object(self.nightly, "run_cmd", side_effect=[1, 0]) as run, \
+        with patch.object(self.nightly, "run_cmd", side_effect=[1, 0, 0]) as run, \
              contextlib.redirect_stdout(io.StringIO()):
             self.nightly.capture_and_notify("test-dsn", date(2026, 10, 8), results)
         self.assertIn("--failed-jobs", run.call_args.args[0])
         self.assertNotIn("--snapshot", run.call_args.args[0])
         self.assertIn(("decision", False), results)
+        self.assertIn(("line_lin_bojin", True), results)
 
     def test_refresh_failure_does_not_capture_but_still_alerts(self):
         results = [("daily", True), ("refresh", False)]
         with patch.object(self.nightly, "run_cmd", return_value=0) as run, \
              contextlib.redirect_stdout(io.StringIO()):
             self.nightly.capture_and_notify("test-dsn", date(2026, 10, 8), results)
-        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_count, 2)
         self.assertIn("refresh,decision", run.call_args.args[0])
 
     def test_success_reuses_same_capture_snapshot_and_other_job_warning(self):
@@ -211,9 +212,22 @@ class NightlyNotificationTest(unittest.TestCase):
         with patch.object(self.nightly, "run_cmd", return_value=0) as run, \
              contextlib.redirect_stdout(io.StringIO()):
             self.nightly.capture_and_notify("test-dsn", date(2026, 10, 8), results)
-        capture, notify = [c.args[0] for c in run.call_args_list]
+        capture, notify, lin_notify = [c.args[0] for c in run.call_args_list]
         self.assertEqual(capture[capture.index("--line-snapshot") + 1], notify[notify.index("--snapshot") + 1])
+        self.assertEqual(capture[capture.index("--lin-line-snapshot") + 1], lin_notify[lin_notify.index("--snapshot") + 1])
+        self.assertIn("lin_bojin", lin_notify)
         self.assertIn("usprice", notify)
+        self.assertIn("usprice", lin_notify)
+
+    def test_first_notification_failure_does_not_prevent_second_strategy(self):
+        results = [("daily", True), ("refresh", True)]
+        with patch.object(self.nightly, "run_cmd", side_effect=[0, 1, 0]) as run, \
+             contextlib.redirect_stdout(io.StringIO()):
+            rc = self.nightly.capture_and_notify("test-dsn", date(2026, 10, 8), results)
+        self.assertEqual(rc, 1)
+        self.assertEqual(run.call_count, 3)
+        self.assertIn(("line", False), results)
+        self.assertIn(("line_lin_bojin", True), results)
 
     def test_skip_line_preserves_normal_capture_without_notification(self):
         results = [("daily", True), ("refresh", True)]

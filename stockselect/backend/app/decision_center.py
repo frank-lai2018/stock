@@ -14,7 +14,7 @@ import math
 from copy import deepcopy
 from datetime import date, timedelta
 
-from . import consolidation, db, execution, ledger, price_action, support_reclaim, swings, w_bottom, weekly_breakout
+from . import consolidation, db, execution, ledger, lin_bojin, price_action, support_reclaim, swings, w_bottom, weekly_breakout
 from .breakout_rank import score_breakout
 
 
@@ -34,7 +34,8 @@ MARKET_MA_DAYS = 60
 PRIMARY_GATE = "trend_template"
 DEFAULT_GATE = "trend_template"
 GATES = {"trend_template": "趨勢模板", "breakout": "型態突破", "consolidation": "整理突破（實驗）",
-         "weekly": "週線突破（實驗）", "reclaim": "支撐轉強（實驗）", "w_bottom": "W 底測右底（實驗）"}
+         "weekly": "週線突破（實驗）", "reclaim": "支撐轉強（實驗）", "w_bottom": "W 底測右底（實驗）",
+         "lin_bojin": lin_bojin.LABEL}
 GATE_RULES = {
     "trend_template": "可執行訊號＋趨勢模板成立（多頭排列、RS ≥ 70）",
     "breakout": "型態突破可執行（量比 ≥ 1.5、離頸線 5% 內、RS ≥ 70）",
@@ -45,9 +46,12 @@ GATE_RULES = {
                "放量黑 K 回測近 5 日支撐、隔天紅 K 收復黑 K 半身；再隔一天盤中漲過紅 K 高點一檔才買，沒到就作廢",
     "w_bottom": "近 20 日曾單日漲 ≥ 8%、自高點回檔 8～15%，縮量回測 5～12 日前的左底（高 0～3%、頸線至少高 6%）；"
                 "隔天盤中漲過當日高點一檔才買，開盤高於觸發價 2% 放棄，沒到就作廢",
+    "lin_bojin": "多方型態＋RS ≥70＋往上的20日線；首次頸線放量長紅突破、回測頸線再轉強、跳空越過頸線擇一；"
+                 "收盤及隔日含滑價成交價均不高於頸線5%，突破後收盤低於固定頸線2%作廢（圖卡研究版）",
 }
 # 實驗策略只在自己的篩選條件下使用；其他條件（含原始規則）只用型態突破與裸 K。
-GATE_STRATEGY = {"consolidation": "consolidation", "weekly": "weekly", "reclaim": "reclaim", "w_bottom": "w_bottom"}
+GATE_STRATEGY = {"consolidation": "consolidation", "weekly": "weekly", "reclaim": "reclaim", "w_bottom": "w_bottom",
+                 "lin_bojin": "lin_bojin"}
 BUY_STOP_GATES = ("reclaim", "w_bottom")
 EXPERIMENT_KEYS = frozenset(GATE_STRATEGY.values())
 
@@ -275,11 +279,12 @@ def _candidate(snapshot, strategies, current_close=None):
         "consensus_bonus": consensus_bonus, "calibration_adjustment": 0,
         "decision_score": round(min(100, max(x["score"] for x in strategies) + consensus_bonus), 1),
         "lead_strategy": lead["key"], "strategies": strategies,
+        "lin_bojin": next((s.get("lin_bojin") for s in strategies if s["key"] == lin_bojin.KEY), None),
     }
 
 
 def scan_market(min_amt=20_000_000, recent=3, lookback=5, expiry=5,
-                eps_min=None, revenue_yoy_min=None, gross_margin_chg_min=None):
+                eps_min=None, revenue_yoy_min=None, gross_margin_chg_min=None, include_lin_bojin=False):
     """一次取 320 根 K 棒：型態突破、裸 K、整理突破、支撐轉強、W 底測右底用最後 150 根，週線突破用全部。"""
     cond = ["in_universe", "security_type='stock'", "amt20 >= %(amt)s"]
     params = {"amt": max(0, int(min_amt))}
@@ -335,6 +340,10 @@ def scan_market(min_amt=20_000_000, recent=3, lookback=5, expiry=5,
         if weekly:
             strategies.append(weekly)
         strategies += _buy_stop_strategies(bars)
+        if include_lin_bojin:
+            setup = lin_bojin.analyze(bars, snap.get("rs_rating"))
+            if setup:
+                strategies.append(setup)
         if strategies:
             out.append(_candidate(snap, strategies, bars[-1].get("close")))
     out.sort(key=lambda x: (x["state"] == "ready", x["consensus_count"],
@@ -369,6 +378,8 @@ def execution_spec(item, strategy, mode=DEFAULT_MODE):
                     max_gap_pct=strategy.get("max_gap_pct"), execution_version=execution.BUY_STOP_VERSION)
         if momentum:
             spec["stop"] = trigger * (1 - MOMENTUM_STOP_PCT)
+    if strategy.get("key") == lin_bojin.KEY:
+        spec.update(strategy_version=lin_bojin.VERSION, lin_bojin=strategy.get("lin_bojin"))
     return spec
 
 
@@ -465,6 +476,8 @@ def record_candidates(scan, response=None, mode=DEFAULT_MODE, gate=DEFAULT_GATE)
                     {gate: gate_detail}, ensure_ascii=False)
             selection = (None, None, None, None)
         for strategy in item.get("strategies", []):
+            if strategy["key"] == lin_bojin.KEY and (mode == "classic" or gate != lin_bojin.KEY):
+                continue  # 圖卡研究版只保存自己的決策快照，不寫入其他主買點的紀錄。
             if strategy.get("signal_state") != "triggered" or strategy.get("status") not in ("priority", "watch"):
                 continue
             if mode == "classic" and strategy["key"] in EXPERIMENT_KEYS:
@@ -487,7 +500,10 @@ def record_candidates(scan, response=None, mode=DEFAULT_MODE, gate=DEFAULT_GATE)
                            strategy.get("pattern"), basis, stop, target, spec["horizon"], ROUND_TRIP_COST,
                            shown.get("state"), shown.get("decision_score"),
                            shown.get("consensus_count"), shown.get("lead_strategy"),
-                           *strategy_selection, strategy_gate_selection, snapshot,
+                           *strategy_selection, strategy_gate_selection,
+                           json.dumps(shown, ensure_ascii=False, default=_iso)
+                           if strategy["key"] == lin_bojin.KEY and strategy_used(strategy["key"], gate) and item["stock_id"] in rendered
+                           else snapshot,
                            json.dumps(spec, ensure_ascii=False, default=_iso)))
     if not values:
         return 0
@@ -813,7 +829,7 @@ def _gate_ok(item, gate):
     週線突破、支撐轉強、W 底測右底看自己的條件，不要求日線趨勢模板。"""
     if gate == "breakout":
         return bool(item.get("breakout_ready"))
-    if gate in ("weekly", *BUY_STOP_GATES):
+    if gate in ("weekly", "lin_bojin", *BUY_STOP_GATES):
         return any(s["key"] == gate and s["status"] == "priority" for s in item["strategies"])
     if gate == "consolidation":
         return bool(item.get("trend_template")) and any(
@@ -822,6 +838,9 @@ def _gate_ok(item, gate):
 
 
 def _gate_reason(item, gate):
+    if gate == lin_bojin.KEY:
+        setup = next((s for s in item["strategies"] if s["key"] == lin_bojin.KEY), None)
+        return (setup.get("blockers") or ["等待頸線突破或回測再轉強"])[0] if setup else "沒有林柏錦選股條件訊號"
     if gate in BUY_STOP_GATES:
         return "沒有" + GATES[gate].replace("（實驗）", "") + "訊號"
     if gate == "weekly":

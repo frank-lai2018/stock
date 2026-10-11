@@ -85,5 +85,72 @@ class DecisionThemesTest(unittest.TestCase):
         recorder.assert_called_once_with(self.scan, {}, "momentum", "trend_template")
 
 
+class DisplayThemesTest(unittest.TestCase):
+    def test_market_groups_are_attached_without_selecting_a_theme_filter(self):
+        response = {"items": [{"stock_id": sid} for sid in ("3026", "2383", "2337", "5425")]}
+        members = [
+            {"stock_id": "3026", "code": "passive", "name": "被動元件（MLCC／電阻／電感／石英）", "layer": 3},
+            {"stock_id": "3026", "code": "tpex:J000:J600", "name": "電容器", "layer": 2},
+            {"stock_id": "2383", "code": "pcb", "name": "AI PCB／CCL／載板", "layer": 3},
+            {"stock_id": "2383", "code": "tpex:L000:L630", "name": "銅箔基板", "layer": 2},
+            {"stock_id": "2337", "code": "memory", "name": "記憶體（DRAM／NAND／HBM）", "layer": 3},
+            {"stock_id": "5425", "code": "power_semi", "name": "功率半導體（MOSFET／二極體）", "layer": 3},
+        ]
+        with patch.object(decision_themes.db, "query", return_value=members) as query:
+            decision_themes.attach_display_themes(response)
+        self.assertEqual([[t["name"] for t in row["display_themes"]] for row in response["items"]],
+                         [["被動元件"], ["CCL", "PCB"], ["記憶體"], ["功率元件"]])
+        self.assertEqual(response["items"][1]["display_themes"][0]["full_name"], "銅箔基板")
+        query.assert_called_once()
+        self.assertEqual(query.call_args.args[1]["ids"], ["2337", "2383", "3026", "5425"])
+
+    def test_product_fallback_has_short_unique_names_and_missing_members_stay_unclassified(self):
+        response = {"items": [{"stock_id": "PRODUCT"}, {"stock_id": "UNKNOWN", "industry": "電子零組件業"}]}
+        members = [
+            {"stock_id": "PRODUCT", "code": "one", "name": "IC設計 > 記憶體IC（範例）", "layer": 2},
+            {"stock_id": "PRODUCT", "code": "two", "name": "記憶體IC", "layer": 2},
+            {"stock_id": "PRODUCT", "code": "three", "name": "其他", "layer": 2},
+        ]
+        with patch.object(decision_themes.db, "query", return_value=members):
+            decision_themes.attach_display_themes(response)
+        self.assertEqual([t["name"] for t in response["items"][0]["display_themes"]], ["記憶體IC"])
+        self.assertEqual(response["items"][1]["display_themes"], [])
+
+    def test_display_does_not_change_selection_risk_classification_or_filter_matches(self):
+        scan = {"items": [candidate("3026")], "as_of": "2026-10-08"}
+        before_scan = deepcopy(scan)
+        response = decision_center.build_decision_response(
+            scan, [], {"items": [], "stock_ids": set(), "industry_counts": {}},
+            market={"above": True}, lot_size=1)
+        response["items"][0]["themes"] = [{"code": "selected", "name": "篩選命中族群"}]
+        before = deepcopy(response)
+        with patch.object(decision_themes.db, "query", return_value=[
+            {"stock_id": "3026", "code": "passive", "name": "被動元件", "layer": 3}
+        ]):
+            decision_themes.attach_display_themes(response)
+        response["items"][0].pop("display_themes")
+        self.assertEqual(response, before)
+        self.assertEqual(scan, before_scan)
+
+    def test_excluded_candidates_receive_groups_in_same_batch_with_independent_labels(self):
+        response = {"items": [{"stock_id": "A"}],
+                    "combination_filter": {"excluded_items": [{"stock_id": "A"}, {"stock_id": "B"}]}}
+        with patch.object(decision_themes.db, "query", return_value=[
+            {"stock_id": "A", "code": "memory", "name": "記憶體", "layer": 3}
+        ]) as query:
+            decision_themes.attach_display_themes(response)
+        self.assertEqual(query.call_args.args[1]["ids"], ["A", "B"])
+        excluded = response["combination_filter"]["excluded_items"]
+        self.assertEqual(excluded[0]["display_themes"], response["items"][0]["display_themes"])
+        excluded[0]["display_themes"][0]["name"] = "changed"
+        self.assertEqual(response["items"][0]["display_themes"][0]["name"], "記憶體")
+        self.assertEqual(excluded[1]["display_themes"], [])
+
+    def test_empty_response_does_not_query_memberships(self):
+        with patch.object(decision_themes.db, "query") as query:
+            decision_themes.attach_display_themes({"items": []})
+        query.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

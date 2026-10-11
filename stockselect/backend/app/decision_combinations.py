@@ -17,6 +17,7 @@ CONDITIONS = {
     "price_action": "裸 K 可執行",
     "holder_concentration": "籌碼集中：近 4 期千張增、400 張以上不減",
     "growth_quality": "營收成長品質通過（實驗）",
+    "lin_bojin": "林柏錦選股條件可執行（圖卡研究版）",
 }
 VERSION = "decision-combination-v1"
 
@@ -85,6 +86,8 @@ def _check(item, code, entry):
                            if check["passed"] else "週線尚未收盤確認、突破已失敗或有效期已結束")
         return check
     check["passed"] = strategy.get("status") == "priority" and not strategy.get("blockers")
+    if code == "lin_bojin":
+        check["lin_data"] = strategy.get("lin_bojin")
     if code == "consolidation" and not item.get("trend_template"):
         check["passed"] = False
         check["reason"] = "整理突破另需趨勢模板成立"
@@ -93,7 +96,7 @@ def _check(item, code, entry):
             "、".join(strategy.get("blockers") or ["仍在等待／觀察，尚未可執行"])
     if check["passed"]:
         cap = _positive(strategy.get("max_entry"))
-        if code in ("weekly", "consolidation") and cap is None:
+        if code in ("weekly", "consolidation", "lin_bojin") and cap is None:
             check.update(passed=False, reason="追價上限資料不足，暫不通過")
             return check
         if cap:

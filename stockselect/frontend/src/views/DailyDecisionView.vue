@@ -7,6 +7,7 @@ import { getDailyDecision, getThemeOptions } from '../api'
 import DecisionHistoryPanel from '../components/DecisionHistoryPanel.vue'
 import DecisionResearchPanel from '../components/DecisionResearchPanel.vue'
 import GrowthResearchPanel from '../components/GrowthResearchPanel.vue'
+import LinBojinGuide from '../components/LinBojinGuide.vue'
 
 const router = useRouter()
 const loading = ref(false)
@@ -32,11 +33,12 @@ function savedAccount() {
   }
 }
 
+const initialLin = new URLSearchParams(window.location.search).get('gate') === 'lin_bojin'
 const form = reactive({
   // momentum：篩選條件＋大盤站上 60 日線＋RS 排序、8% 停損 20 日到期；classic：原始規則（保留對照）
-  mode: 'momentum',
+  mode: initialLin ? 'trend_hold' : 'momentum',
   // 動能模式的篩選條件：trend_template（預設）／breakout，對應後端 decision_center.GATES
-  gate: 'trend_template',
+  gate: initialLin ? 'lin_bojin' : 'trend_template',
   theme_codes: [],
   combine: [],
   combine_logic: 'all',
@@ -82,10 +84,14 @@ const themeFilter = computed(() => result.value.theme_filter || null)
 const combinationFilter = computed(() => result.value.combination_filter || null)
 const combinationExcluded = computed(() => combinationFilter.value?.excluded_items || [])
 const growthConfig = computed(() => result.value.growth_quality_config || null)
+const linConfig = computed(() => result.value.lin_bojin_config || null)
+const linInfo = (row) => row.lin_bojin || (row.combination_checks || []).find((c) => c.code === 'lin_bojin')?.lin_data || {}
 const RANKINGS = { rs: 'RS 排序（基準）', growth_quality: '營收品質 → RS（實驗）' }
 const growthText = (row) => [row.growth_quality?.reason, ...(row.growth_quality?.warnings || [])].filter(Boolean).join('；')
 const canExport = computed(() => shown.value.length || combinationExcluded.value.length)
 const themeText = (row) => (row.themes || []).map(themeName).join('、')
+const displayThemes = (row) => row.display_themes || []
+const displayThemeText = (row) => displayThemes(row).map((t) => t.name).join('、') || '族群待補'
 const combinationText = (row) => (row.combination_checks || []).map((c) =>
   `${c.label}：${c.passed ? '通過' : '未通過'}（${c.reason}）`).join('；')
 const emptyText = computed(() => {
@@ -128,6 +134,8 @@ const GATES = [
     rule: '強勢股放量黑 K 回測支撐、隔天紅 K 收復黑 K 半身；再隔一天盤中漲過紅 K 高點一檔才買' },
   { value: 'w_bottom', label: 'W 底測右底（實驗）', short: 'W 底測右底，隔日盤中過觸發價才買',
     rule: '強漲後回檔 8～15%、縮量回測左底；隔天盤中漲過當日高點一檔才買，開盤高於觸發價 2% 放棄' },
+  { value: 'lin_bojin', label: '林柏錦選股條件', short: '林柏錦圖卡研究版：頸線突破／回測轉強／跳空突破',
+    rule: '多方型態＋RS ≥70＋往上的20日線；三種買點擇一，隔日含滑價成交價不得高於頸線5%' },
 ]
 const COMBINATION_OPTIONS = [
   { value: 'trend_template', label: '趨勢模板成立' },
@@ -138,10 +146,13 @@ const COMBINATION_OPTIONS = [
   { value: 'price_action', label: '裸 K 可執行' },
   { value: 'holder_concentration', label: '籌碼集中：近 4 期千張增、400 張以上不減' },
   { value: 'growth_quality', label: '營收成長品質通過（實驗）' },
+  { value: 'lin_bojin', label: '林柏錦選股條件可執行（圖卡研究版）' },
 ]
 const combinationOptions = computed(() => COMBINATION_OPTIONS.filter((c) =>
   c.value !== form.gate && !(form.gate === 'weekly' && c.value === 'weekly_structure')))
 const COMBINATION_PRESETS = [
+  { label: '林柏錦＋趨勢持有60日', gate: 'lin_bojin', codes: [], mode: 'trend_hold' },
+  { label: '林柏錦＋籌碼集中', gate: 'lin_bojin', codes: ['holder_concentration'], mode: 'trend_hold' },
   { label: '週線買點＋趨勢模板', gate: 'weekly', codes: ['trend_template'] },
   { label: '週線買點＋趨勢＋籌碼', gate: 'weekly', codes: ['trend_template', 'holder_concentration'] },
   { label: '成長＋週線＋趨勢＋籌碼', gate: 'weekly', codes: ['growth_quality', 'trend_template', 'holder_concentration'] },
@@ -150,6 +161,7 @@ const COMBINATION_PRESETS = [
   { label: '週線結構＋W 底買點', gate: 'w_bottom', codes: ['weekly_structure'] },
 ]
 function applyCombination(preset) {
+  if (preset.mode) form.mode = preset.mode
   form.gate = preset.gate
   form.combine = [...preset.codes]
   form.combine_logic = 'all'
@@ -161,6 +173,7 @@ const gateInfo = computed(() => GATES.find((g) => g.value === form.gate) || GATE
 // 表格依「這批資料」算出時的篩選條件判斷，避免切換後、資料還沒回來前顯示錯的原因
 const activeGate = computed(() => result.value.gate || form.gate)
 const gateMiss = (row) => activeGate.value === 'weekly' ? '週線突破尚未到日線進場點'
+  : activeGate.value === 'lin_bojin' ? (linInfo(row).setup_label || '林柏錦圖卡條件尚未確認')
   : activeGate.value === 'reclaim' ? '沒有支撐轉強訊號' : activeGate.value === 'w_bottom' ? '沒有 W 底測右底訊號'
   : activeGate.value === 'consolidation' ? '整理突破或趨勢模板未成立' : activeGate.value === 'breakout'
   ? (row.breakout_ready ? '' : '型態突破未達可執行')
@@ -241,6 +254,7 @@ const stateMeta = {
 const confidenceLabel = { low: '低', medium: '中', high: '高' }
 
 function historicalText(row) {
+  if (linConfig.value) return '林柏錦圖卡研究版：績效尚待驗證'
   if (row.combination_checks || row.growth_quality) return '此實驗尚無校準樣本'
   const h = row.historical_reference
   if (!h) return '決策校準累積中'
@@ -252,7 +266,7 @@ function historicalText(row) {
 
 function calibrationName(key) {
   return { breakout: '型態突破', price_action: '裸 K', consolidation: '整理突破', weekly: '週線突破',
-    reclaim: '支撐轉強', w_bottom: 'W 底測右底' }[key] || key
+    reclaim: '支撐轉強', w_bottom: 'W 底測右底', lin_bojin: '林柏錦圖卡研究版' }[key] || key
 }
 
 const MODE_LABELS = { momentum: '動能模式', trend_hold: '趨勢持有', classic: '原始規則' }
@@ -282,12 +296,22 @@ function downloadXlsx() {
     ['目前持有', (x) => (x.held ? '是' : ''), 8],
     ['代號', (x) => x.stock_id, 8],
     ['名稱', (x) => x.name, 12],
-    ['產業', (x) => x.industry, 12],
-    ...(r.theme_filter ? [['族群', themeText, 30]] : []),
+    ['熱門族群', displayThemeText, 30],
+    ['產業（風險分類）', (x) => x.industry, 18],
+    ...(r.theme_filter ? [['篩選命中族群', themeText, 30]] : []),
     ...(r.combination_filter ? [['主買點可執行', (x) => yes(x.combination_ready), 12],
       ['組合檢查與原因', combinationText, 70]] : []),
     ['收盤', (x) => xnum(x.close), 9, PRICE],
     ['RS', (x) => xnum(x.rs_rating, 0), 6],
+    ...(r.lin_bojin_config ? [
+      ['林柏錦買點', (x) => linInfo(x).setup_label || '', 22],
+      ['型態', (x) => linInfo(x).pattern_name || '', 16],
+      ['固定頸線', (x) => xnum(linInfo(x).neckline), 12, PRICE],
+      ['突破日期', (x) => linInfo(x).breakout_date || '', 12],
+      ['距頸線%', (x) => xnum(linInfo(x).extension_pct), 12],
+      ['確認量比', (x) => xnum(linInfo(x).volume_ratio), 12],
+      ['林柏錦條件檢查', (x) => (linInfo(x).checks || []).map((c) => `${c.label}：${c.passed ? '通過' : '未通過'}（${c.reason}）`).join('；'), 80],
+    ] : []),
     ...(r.growth_quality_config ? [
       ['營收品質分(0～100)', (x) => xnum(x.growth_quality?.score, 1), 12],
       ['營收月份', (x) => x.growth_quality?.revenue_month || '', 12],
@@ -364,6 +388,11 @@ function downloadXlsx() {
     ['下載時間', new Date().toLocaleString('zh-TW', { hour12: false })],
     ['模式', MODE_LABELS[r.mode] || r.mode],
     ['篩選條件', gateName],
+    ...(r.lin_bojin_config ? [
+      ['林柏錦規則版本', r.lin_bojin_config.version],
+      ['林柏錦規則來源', r.lin_bojin_config.source],
+      ...r.lin_bojin_config.rules.map((rule) => [`林柏錦・${rule.item}`, rule.rule]),
+    ] : []),
     ['排序方式', RANKINGS[s.ranking || p.ranking] || RANKINGS.rs],
     ...(r.growth_quality_config ? [
       ['營收品質版本', r.growth_quality_config.version],
@@ -421,9 +450,9 @@ function downloadXlsx() {
     (v) => (Number.isInteger(v) && Math.abs(v) >= 1000 ? MONEY : null)), '條件與摘要')
   if (combinationExcluded.value.length) {
     XLSX.utils.book_append_sheet(wb, sheet([
-      ['代號', '名稱', '族群', '收盤', 'RS', '組合檢查與原因'],
-      ...combinationExcluded.value.map((x) => [x.stock_id, x.name, themeText(x), xnum(x.close), xnum(x.rs_rating, 0), combinationText(x)]),
-    ], [8, 14, 30, 10, 8, 100], { 3: PRICE }), '組合未通過')
+      ['代號', '名稱', '熱門族群', '篩選命中族群', '收盤', 'RS', '組合檢查與原因'],
+      ...combinationExcluded.value.map((x) => [x.stock_id, x.name, displayThemeText(x), themeText(x), xnum(x.close), xnum(x.rs_rating, 0), combinationText(x)]),
+    ], [8, 14, 30, 30, 10, 8, 100], { 4: PRICE }), '組合未通過')
   }
 
   const held = r.holdings?.items || []
@@ -656,7 +685,9 @@ onMounted(() => { load(); loadThemeOptions() })
       </span>
     </div>
 
-    <el-table v-loading="loading" :data="shown" stripe border height="calc(100vh - 470px)"
+    <LinBojinGuide v-if="linConfig" :config="linConfig" />
+
+    <el-table v-loading="loading" :data="shown" stripe border
               :empty-text="emptyText" style="cursor: pointer"
               @row-click="(row) => router.push(`/stock/${row.stock_id}`)">
       <el-table-column label="決策" width="96" fixed>
@@ -669,7 +700,14 @@ onMounted(() => { load(); loadThemeOptions() })
       <el-table-column label="股票" width="145" fixed>
         <template #default="{ row }">
           <b>{{ row.stock_id }} {{ row.name }}</b>
-          <div class="muted small">{{ row.industry }}</div>
+          <div v-if="displayThemes(row).length" class="stock-themes">
+            <el-tag v-for="t in displayThemes(row).slice(0, 2)" :key="t.code"
+                    size="small" type="info" effect="plain" :title="t.full_name || t.name">{{ t.name }}</el-tag>
+            <el-tooltip v-if="displayThemes(row).length > 2" :content="displayThemeText(row)" placement="top">
+              <el-tag size="small" type="info" effect="plain">+{{ displayThemes(row).length - 2 }}</el-tag>
+            </el-tooltip>
+          </div>
+          <div v-else class="muted small">族群待補</div>
           <div class="small">收 {{ num(row.close, 2) }}・RS {{ num(row.rs_rating, 0) }}</div>
           <div class="gate-tags">
             <el-tag v-if="row.trend_template" size="small" type="danger" effect="plain">趨勢模板</el-tag>
@@ -678,7 +716,7 @@ onMounted(() => { load(); loadThemeOptions() })
           <div v-if="isMomentum && !row.momentum_ok" class="muted small">{{ gateMiss(row) }}</div>
         </template>
       </el-table-column>
-      <el-table-column v-if="themeFilter" label="族群" min-width="175">
+      <el-table-column v-if="themeFilter" label="篩選命中族群" min-width="175">
         <template #default="{ row }">
           <div class="gate-tags"><el-tag v-for="t in row.themes || []" :key="t.code" size="small" effect="plain">{{ themeName(t) }}</el-tag></div>
         </template>
@@ -693,14 +731,6 @@ onMounted(() => { load(); loadThemeOptions() })
           <div v-if="row.consensus_count > 1" class="consensus-text">+{{ row.consensus_bonus }} 分共識</div>
         </template>
       </el-table-column>
-      <el-table-column v-if="combinationFilter" label="組合檢查" min-width="240">
-        <template #default="{ row }">
-          <div v-for="c in row.combination_checks || []" :key="`${c.role}-${c.code}`" class="combination-check">
-            <el-tag :type="c.passed ? 'success' : 'warning'" size="small" effect="plain" :title="c.reason">{{ c.passed ? '✓' : '待確認' }} {{ c.label }}</el-tag>
-            <div v-if="!c.passed" class="small muted">{{ c.reason }}</div>
-          </div>
-        </template>
-      </el-table-column>
       <el-table-column label="決策分" width="100" align="center" sortable prop="decision_score">
         <template #default="{ row }">
           <div class="big-score">{{ num(row.decision_score, 1) }}</div>
@@ -709,22 +739,40 @@ onMounted(() => { load(); loadThemeOptions() })
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="歷史依據" min-width="240">
-        <template #default="{ row }">
-          <div>{{ historicalText(row) }}</div>
-          <div v-if="row.calibration" class="muted small">
-            95%區間 {{ pct(row.calibration.target_hit_ci_low) }}～{{ pct(row.calibration.target_hit_ci_high) }}・信賴度 {{ confidenceLabel[row.calibration.confidence] }}
-          </div>
-          <div v-else-if="combinationFilter || growthConfig" class="muted small">單一策略的校準與績效不適用此實驗</div>
-          <div v-else class="muted small">型態先驗與分數校準分開呈現，避免誤把兩者當成同一件事</div>
-        </template>
-      </el-table-column>
       <el-table-column label="基本面確認" width="155">
         <template #default="{ row }">
           <div>單季 EPS {{ num(row.eps, 2) }}</div>
           <div>EPS YoY {{ pct(row.eps_yoy) }}</div>
           <div>營收 YoY {{ pct(row.rev_yoy) }}</div>
           <div>毛利季增 {{ pct(row.gross_margin_chg) }}</div>
+        </template>
+      </el-table-column>
+      <el-table-column v-if="linConfig" label="林柏錦條件檢查" min-width="265">
+        <template #default="{ row }">
+          <b>{{ linInfo(row).setup_label || '尚無此買點' }}</b>
+          <div class="small">{{ linInfo(row).pattern_name }}・頸線 {{ num(linInfo(row).neckline, 2) }}</div>
+          <div class="small">距頸線 {{ pct(linInfo(row).extension_pct, 2) }}・量比 {{ num(linInfo(row).volume_ratio, 2) }}</div>
+          <div v-if="linInfo(row).breakout_date" class="small muted">突破 {{ linInfo(row).breakout_date }}・第 {{ linInfo(row).age_days }} 個交易日</div>
+          <div v-for="c in linInfo(row).checks || []" :key="c.label" class="small" :class="c.passed ? 'down' : 'muted'">
+            {{ c.passed ? '✓' : '待確認' }} {{ c.label }}（{{ c.reason }}）
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column v-if="combinationFilter" label="組合檢查" min-width="240">
+        <template #default="{ row }">
+          <div v-for="c in row.combination_checks || []" :key="`${c.role}-${c.code}`" class="combination-check">
+            <el-tag :type="c.passed ? 'success' : 'warning'" size="small" effect="plain" :title="c.reason">{{ c.passed ? '✓' : '待確認' }} {{ c.label }}</el-tag>
+            <div v-if="!c.passed" class="small muted">{{ c.reason }}</div>
+          </div>
+        </template>
+      </el-table-column>
+      <el-table-column v-if="growthConfig" label="營收品質" min-width="240">
+        <template #default="{ row }">
+          <b>{{ num(row.growth_quality?.score, 1) }} 分</b>
+          <el-tag size="small" :type="row.growth_quality?.passed ? 'success' : 'info'" style="margin-left: 6px">{{ row.growth_quality?.passed ? '品質通過' : '未通過' }}</el-tag>
+          <div class="small">{{ row.growth_quality?.revenue_month?.slice(0, 7) || '無可用月份' }}・近3月年增 {{ pct(row.growth_quality?.yoy_3m, 2) }}</div>
+          <div class="small">加速 {{ num(row.growth_quality?.acceleration_pp, 2) }} 百分點・R² {{ pct(row.growth_quality?.linearity_pct, 1) }}</div>
+          <el-tooltip :content="growthText(row)" placement="top" trigger="click"><el-button link size="small" @click.stop>檢查原因與低基期提醒</el-button></el-tooltip>
         </template>
       </el-table-column>
       <el-table-column label="交易計畫" width="170">
@@ -746,25 +794,6 @@ onMounted(() => { load(); loadThemeOptions() })
           <span v-else class="down">{{ row.position_plan?.reason }}</span>
         </template>
       </el-table-column>
-      <el-table-column v-if="growthConfig" label="營收品質" min-width="240">
-        <template #default="{ row }">
-          <b>{{ num(row.growth_quality?.score, 1) }} 分</b>
-          <el-tag size="small" :type="row.growth_quality?.passed ? 'success' : 'info'" style="margin-left: 6px">{{ row.growth_quality?.passed ? '品質通過' : '未通過' }}</el-tag>
-          <div class="small">{{ row.growth_quality?.revenue_month?.slice(0, 7) || '無可用月份' }}・近3月年增 {{ pct(row.growth_quality?.yoy_3m, 2) }}</div>
-          <div class="small">加速 {{ num(row.growth_quality?.acceleration_pp, 2) }} 百分點・R² {{ pct(row.growth_quality?.linearity_pct, 1) }}</div>
-          <el-tooltip :content="growthText(row)" placement="top" trigger="click"><el-button link size="small" @click.stop>檢查原因與低基期提醒</el-button></el-tooltip>
-        </template>
-      </el-table-column>
-      <el-table-column label="建議部位" width="180">
-        <template #default="{ row }">
-          <template v-if="row.position_plan?.valid">
-            <div><b>{{ money(row.position_plan.suggested_shares) }}</b> 股（{{ row.position_plan.order_mode }}）</div>
-            <div>約 {{ money(row.position_plan.position_value) }} 元・{{ pct(row.position_plan.capital_pct) }}</div>
-            <div class="small muted">停損風險 {{ money(row.position_plan.risk_amount) }} 元・{{ pct(row.position_plan.actual_risk_pct, 2) }}</div>
-          </template>
-          <span v-else-if="row.position_plan?.entry != null" class="down">{{ row.position_plan.reason }}</span>
-        </template>
-      </el-table-column>
       <el-table-column label="進場條件" min-width="300">
         <template #default="{ row }">
           <div v-for="c in row.entry_conditions || []" :key="c.strategy" class="cond">
@@ -781,13 +810,33 @@ onMounted(() => { load(); loadThemeOptions() })
           <span :class="row.selected ? 'up' : 'muted'">{{ row.selection_reason }}</span>
         </template>
       </el-table-column>
+      <el-table-column label="建議部位" width="180">
+        <template #default="{ row }">
+          <template v-if="row.position_plan?.valid">
+            <div><b>{{ money(row.position_plan.suggested_shares) }}</b> 股（{{ row.position_plan.order_mode }}）</div>
+            <div>約 {{ money(row.position_plan.position_value) }} 元・{{ pct(row.position_plan.capital_pct) }}</div>
+            <div class="small muted">停損風險 {{ money(row.position_plan.risk_amount) }} 元・{{ pct(row.position_plan.actual_risk_pct, 2) }}</div>
+          </template>
+          <span v-else-if="row.position_plan?.entry != null" class="down">{{ row.position_plan.reason }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="歷史依據" min-width="240">
+        <template #default="{ row }">
+          <div>{{ historicalText(row) }}</div>
+          <div v-if="row.calibration" class="muted small">
+            95%區間 {{ pct(row.calibration.target_hit_ci_low) }}～{{ pct(row.calibration.target_hit_ci_high) }}・信賴度 {{ confidenceLabel[row.calibration.confidence] }}
+          </div>
+          <div v-else-if="combinationFilter || growthConfig || linConfig" class="muted small">單一策略的校準與績效不適用此實驗</div>
+          <div v-else class="muted small">型態先驗與分數校準分開呈現，避免誤把兩者當成同一件事</div>
+        </template>
+      </el-table-column>
     </el-table>
 
     <el-collapse v-if="combinationFilter?.excluded_count" class="combination-exclusions">
       <el-collapse-item name="combination-exclusions">
         <template #title><b>未通過加強條件（{{ combinationFilter.excluded_count }} 檔）</b></template>
         <div class="small muted">列出主策略候選未通過組合的原因，最多顯示 100 檔；這些股票不納入本次入選與部位配置。</div>
-        <el-table :data="combinationExcluded" border size="small" max-height="420">
+        <el-table :data="combinationExcluded" border size="small">
           <el-table-column label="股票" width="170"><template #default="{ row }">{{ row.stock_id }} {{ row.name }}</template></el-table-column>
           <el-table-column label="RS" width="70"><template #default="{ row }">{{ num(row.rs_rating, 0) }}</template></el-table-column>
           <el-table-column label="條件檢查與原因" min-width="400">
@@ -838,7 +887,7 @@ onMounted(() => { load(); loadThemeOptions() })
         <DecisionHistoryPanel :mode="form.mode" :gate="form.gate" />
       </el-tab-pane>
       <el-tab-pane label="策略研究" name="research" lazy>
-        <el-alert v-if="combinationFilter || growthConfig" type="info" :closable="false" class="notice">以下是單一策略的研究結果，不能當作目前實驗的績效。營收因子比較請見「營收品質研究」；額外族群與籌碼交集尚未回測。</el-alert>
+        <el-alert v-if="combinationFilter || growthConfig || linConfig" type="info" :closable="false" class="notice">以下是另行產生的歷史研究，需確認是否包含目前的規則版本；林柏錦圖卡研究版與額外族群、籌碼交集尚未完成驗證。</el-alert>
         <DecisionResearchPanel />
       </el-tab-pane>
       <el-tab-pane label="營收品質研究" name="growth-research" lazy>
@@ -881,6 +930,9 @@ h2 { margin: 0 0 4px; font-size: 24px; }
 .title-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .gate-label { color: #606266; font-size: 13px; font-weight: 600; margin-left: 6px; }
 .gate-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+.stock-themes { display: flex; gap: 4px; flex-wrap: wrap; margin: 3px 0; }
+.stock-themes :deep(.el-tag) { max-width: 100%; min-width: 0; }
+.stock-themes :deep(.el-tag__content) { overflow: hidden; text-overflow: ellipsis; }
 .backtest-note { margin-top: 4px; color: #8a6d3b; }
 .summary { cursor: pointer; }
 .summary :deep(.el-card__body) { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 16px; }

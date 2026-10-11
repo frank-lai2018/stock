@@ -48,7 +48,7 @@ r"""nightly.py — 排程大腦：每晚無腦執行這一支，由它依「今�
                **必須排在 refresh 之前**，否則選股視圖 join 到的是昨天的狀態。
   refresh    以上跑完後，刷新選股物化視圖 mv_stock_snapshot（選股器同步最新；--skip-refresh 可略過）。
   decision   refresh 成功後保存今日決策中心候選、結算到期觀察，累積分數校準資料。
-  line       完整夜間更新完成後，推播型態突破＋趨勢持有60日日報；讀 LINE_TOKEN／LINE_USER_ID。
+  line       完整夜間更新完成後，分別推播型態突破、林柏錦圖卡研究版＋趨勢持有60日日報。
              必要工作失敗改發更新告警；歷史補跑、單一工作與休市不發正常日報。
 
 防重複：quarterly / dividend 是 FinMind 逐檔的重工作，用狀態檔 nightly_state.json 記錄
@@ -382,9 +382,10 @@ def capture_and_notify(dsn, requested_date, results, notify=True):
     if not failures:
         with tempfile.TemporaryDirectory(prefix="twstock-line-") as folder:
             snapshot = os.path.join(folder, "decision.json")
+            lin_snapshot = os.path.join(folder, "lin-decision.json")
             command = [sys.executable, DECISION_CAPTURE, "--dsn", dsn]
             if notify:
-                command += ["--line-snapshot", snapshot, "--date", str(requested_date)]
+                command += ["--line-snapshot", snapshot, "--lin-line-snapshot", lin_snapshot, "--date", str(requested_date)]
             print("\n----- daily decision capture -----")
             try:
                 rc = run_cmd(command, cwd=BACKTEST_DIR)
@@ -394,24 +395,30 @@ def capture_and_notify(dsn, requested_date, results, notify=True):
             print(f"    → {'成功' if rc == 0 else f'失敗 (rc={rc})'}")
             if notify and rc == 0:
                 warnings = [job for job, success in results if job not in prerequisites and not success]
-                return run_line_notify(dsn, requested_date, results,
-                                       ["--snapshot", snapshot, "--warning-jobs", ",".join(warnings)])
+                original_rc = run_line_notify(dsn, requested_date, results,
+                                              ["--snapshot", snapshot, "--warning-jobs", ",".join(warnings)])
+                lin_rc = run_line_notify(dsn, requested_date, results,
+                                        ["--snapshot", lin_snapshot, "--warning-jobs", ",".join(warnings)], strategy="lin_bojin")
+                return max(original_rc, lin_rc)
     else:
         results.append(("decision", False))
         print("    → 必要上游資料更新失敗，跳過決策保存；既有結果可供查閱")
     if notify:
         failures = [job for job, success in results if job in prerequisites and not success]
-        return run_line_notify(dsn, requested_date, results, ["--failed-jobs", ",".join(failures)])
+        extra = ["--failed-jobs", ",".join(failures)]
+        original_rc = run_line_notify(dsn, requested_date, results, extra)
+        lin_rc = run_line_notify(dsn, requested_date, results, extra, strategy="lin_bojin")
+        return max(original_rc, lin_rc)
 
 
-def run_line_notify(dsn, requested_date, results, extra):
-    print("\n----- LINE notification -----")
+def run_line_notify(dsn, requested_date, results, extra, strategy="breakout"):
+    print(f"\n----- LINE notification ({strategy}) -----")
     try:
-        rc = run_cmd([sys.executable, LINE_NOTIFY, "--dsn", dsn, "--date", str(requested_date), *extra],
+        rc = run_cmd([sys.executable, LINE_NOTIFY, "--dsn", dsn, "--date", str(requested_date), "--strategy", strategy, *extra],
                      cwd=BACKTEST_DIR)
     except Exception:
         rc = 1
-    results.append(("line", rc == 0))
+    results.append(("line" if strategy == "breakout" else "line_lin_bojin", rc == 0))
     return rc
 
 

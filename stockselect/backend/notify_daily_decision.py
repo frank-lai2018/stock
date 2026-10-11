@@ -4,6 +4,7 @@ python notify_daily_decision.py --check-config   # 僅檢查設定及 LINE 額�
 python notify_daily_decision.py --test           # 傳一則連線測試（每天防重）
 python notify_daily_decision.py --dry-run        # 僅預覽最新行情，不寫決策帳／不推播
 python notify_daily_decision.py                 # 僅當日行情可補送，休市／歷史日略過
+python notify_daily_decision.py --strategy lin_bojin --dry-run  # 林柏錦策略唯讀預覽
 """
 import argparse
 import json
@@ -20,7 +21,8 @@ def main(argv=None):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
-    ap = argparse.ArgumentParser(description="型態突破＋趨勢持有60日 LINE 日報")
+    ap = argparse.ArgumentParser(description="型態突破／林柏錦圖卡研究版＋趨勢持有60日 LINE 日報")
+    ap.add_argument("--strategy", choices=("breakout", "lin_bojin"), default="breakout")
     ap.add_argument("--dsn", default="")
     ap.add_argument("--date", help="預期排程日；歷史／未來日期不推播")
     actions = ap.add_mutually_exclusive_group()
@@ -55,24 +57,27 @@ def main(argv=None):
                 print("歷史或未來排程日，略過 LINE 推播。")
                 return 0
         if args.test:
+            label = "林柏錦圖卡研究版" if args.strategy == "lin_bojin" else "型態突破"
             text = ("✅ 台股選股 LINE 通知連線測試\n"
-                    "已接上：型態突破＋趨勢持有60日（實驗）\n"
+                    f"已接上：{label}＋趨勢持有60日（實驗）\n"
                     "交易日每晚必要資料更新與決策保存完成後，發送策略摘要與交易帳出場檢查。\n"
                     "休市日略過正常日報；這是連線測試，不是買進訊號。")
-            result = line_notify.send_once(f"test/{requested}", text, auth=auth)
+            test_key = f"test/{requested}" + ("/lin_bojin" if args.strategy == "lin_bojin" else "")
+            result = line_notify.send_once(test_key, text, auth=auth)
             print(result["message"])
             return 0
         from app import decision_digest as digest, notification_calendar
+        profile = digest.profile_for(args.strategy)
         failures = [j for j in args.failed_jobs.split(",") if j]
         warnings = [j for j in args.warning_jobs.split(",") if j]
         if failures:
-            text = digest.failure_text(requested, ["更新工作失敗：" + "、".join(failures)])
-            key = f"failure/{requested}/{digest.PROFILE}"
+            text = digest.failure_text(requested, ["更新工作失敗：" + "、".join(failures)], gate=args.strategy)
+            key = f"failure/{requested}/{profile}"
         else:
             if args.snapshot:
                 snapshot = json.loads(args.snapshot.read_text(encoding="utf-8"))
                 created = datetime.fromisoformat(snapshot["created_at"])
-                if (snapshot.get("version") != digest.VERSION or snapshot.get("profile") != digest.PROFILE
+                if (snapshot.get("version") != digest.VERSION or snapshot.get("profile") != profile
                         or snapshot.get("requested_date") != requested.isoformat()
                         or created.tzinfo is None
                         or not 0 <= (datetime.now(digest.TAIPEI) - created).total_seconds() < 12 * 3600):
@@ -86,11 +91,15 @@ def main(argv=None):
                     if reason:
                         print(f"{reason}，略過正常 LINE 日報。")
                         return 0
-                scan = dc.scan_market(min_amt=20_000_000, recent=3)
-                response = digest.build_response(scan, dc.current_holdings(), dc.market_regime(scan.get("as_of")))
+                scan = dc.scan_market(min_amt=20_000_000, recent=3, include_lin_bojin=args.strategy == "lin_bojin")
+                response = digest.build_response(scan, dc.current_holdings(), dc.market_regime(scan.get("as_of")), gate=args.strategy)
                 snapshot = digest.make_snapshot(response, requested)
-            if response.get("mode") != "trend_hold" or response.get("gate") != "breakout" or response.get("settings", {}).get("ranking") != "rs":
+            settings = response.get("settings", {})
+            if (response.get("mode") != "trend_hold" or response.get("gate") != args.strategy
+                    or settings.get("ranking") != "rs" or settings.get("lot_size") != 1):
                 raise line_notify.NotificationError("通知快照策略設定不符")
+            if args.strategy == "lin_bojin" and response.get("lin_bojin_config", {}).get("version") != digest.lin_bojin.VERSION:
+                raise line_notify.NotificationError("林柏錦通知規則版本不符")
             if not args.dry_run and response.get("as_of") != requested.isoformat():
                 reason = notification_calendar.closed_reason(requested)
                 if reason:
@@ -101,8 +110,8 @@ def main(argv=None):
                 failures.append("選股資料尚未刷新到最新行情")
             if not args.dry_run and response.get("scanned", 0) <= 0:
                 failures.append("沒有可用的選股母體資料")
-            text = (digest.failure_text(requested, failures) if failures else digest.render_digest(snapshot, warnings))
-            key = f"{'failure' if failures else 'daily'}/{requested}/{digest.PROFILE}"
+            text = (digest.failure_text(requested, failures, gate=args.strategy) if failures else digest.render_digest(snapshot, warnings))
+            key = f"{'failure' if failures else 'daily'}/{requested}/{profile}"
         if args.dry_run:
             print("[預覽：未推播、未寫入決策紀錄]\n" + text)
             return 0

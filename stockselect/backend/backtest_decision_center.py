@@ -219,6 +219,9 @@ def run_chunk(payload):
             if weekly:
                 strategies.append(weekly)
             strategies += decision_center._buy_stop_strategies(win)       # 支撐轉強、W 底測右底
+            setup = decision_center.lin_bojin.analyze(win, snap.get("rs_rating"))
+            if setup:
+                strategies.append(setup)
             if strategies:
                 out.append((t, decision_center._candidate(snap, strategies, bar["close"])))
     return out

@@ -119,7 +119,27 @@ def _breakout(s, item, mode):
 
 def _wanted(s):
     return (s.get("status") == "waiting" or (s.get("key") == "weekly" and s.get("status") == "watch")
-            or s.get("entry_type") == "buy_stop" or (s.get("key") == "breakout" and s.get("status") == "priority"))
+            or s.get("entry_type") == "buy_stop" or s.get("key") == "lin_bojin"
+            or (s.get("key") == "breakout" and s.get("status") == "priority"))
+
+
+def _lin_bojin(s, mode):
+    info = s.get("lin_bojin") or {}
+    pivot, cap, invalid = (number(info.get(k)) for k in ("neckline", "max_entry", "invalid_below"))
+    if pivot is None or cap is None or invalid is None:
+        return None
+    lines = [f"{info.get('setup_label')}；固定頸線 {pivot:.2f}，追價上限 {cap:.2f}"]
+    if s.get("status") == "priority":
+        lines.append(f"下一個交易日開盤進場，含滑價成交價高於 {cap:.2f} 就放棄")
+        lines.append(f"成交後停損＝成交價下 8%；{_exit_text(mode)}")
+    else:
+        lines += s.get("blockers") or ["等待確認，尚不可執行"]
+    lines.append(f"突破後收盤低於 {invalid:.2f}，本次型態作廢；這是訊號作廢線，持倉停損另依交易計畫")
+    if info.get("gap_lower") is not None:
+        lines.append(f"確認日未回補缺口：{info['gap_lower']:.2f}～{info['gap_upper']:.2f}")
+    return {"strategy": "lin_bojin", "label": "林柏錦圖卡研究版", "trigger_low": pivot,
+            "trigger_high": cap, "invalid_below": invalid, "deadline": "只限下一個交易日" if s.get("status") == "priority" else "等待確認",
+            "score_after": None, "lines": lines}
 
 
 def attach(response, lookback=5, expiry=5, calendar=None):
@@ -150,6 +170,8 @@ def attach(response, lookback=5, expiry=5, calendar=None):
                     cond["lines"].append("另需趨勢模板成立（目前未成立），否則觸發了也不會入選")
                 elif cond and gate == "breakout":
                     cond["lines"].append("篩選條件是型態突破：裸 K 訊號觸發了也不會入選")
+            elif s.get("key") == "lin_bojin":
+                cond = _lin_bojin(s, response.get("mode"))
             elif s.get("key") == "weekly":
                 cond = _weekly(s)
             elif s.get("entry_type") == "buy_stop":

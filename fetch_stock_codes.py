@@ -44,7 +44,8 @@ def fetch_isin(mode, want):
     """抓一份 ISIN 清單，回傳 DataFrame（依 want 篩選 stock/etf/all）。"""
     req = urllib.request.Request(ISIN_URL.format(mode=mode), headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=60, context=SSL_CTX) as r:
-        html = r.read().decode("big5", errors="ignore")
+        # 證交所的 Big5 頁面含 CP950 擴充字（例如啟碁的「碁」）；不可忽略解碼錯誤，否則名稱會缺字。
+        html = r.read().decode("cp950")
 
     df = pd.read_html(io.StringIO(html))[0]
     df = df.iloc[1:]                                  # 第一列是欄名，丟掉

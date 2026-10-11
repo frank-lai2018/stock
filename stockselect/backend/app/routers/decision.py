@@ -3,7 +3,7 @@ from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 
-from .. import decision_center, decision_combinations, decision_themes, entry_conditions, growth_quality, holder_data, research_results
+from .. import decision_center, decision_combinations, decision_themes, entry_conditions, growth_quality, holder_data, lin_bojin, research_results
 from ..scan_cache import ScanCache
 
 
@@ -44,7 +44,7 @@ def daily_decision(capital: float = 1_000_000, risk_per_trade_pct: float = 0.75,
     capital 是帳戶淨值；available_capital 是可用現金，未傳入時假設全額可用。
     持股計入產業、總檔數與總風險；現有交易帳缺停損欄位，風險以市值 8% 估計。
     momentum 是 20 日基準；trend_hold 是最長 60 日／跌破 50 日線隔日出場。
-    gate 可切換 trend_template、breakout、consolidation、weekly、reclaim、w_bottom；
+    gate 可切換 trend_template、breakout、consolidation、weekly、reclaim、w_bottom、lin_bojin（圖卡研究版）；
     reclaim／w_bottom 是隔日盤中漲到觸發價才買。classic 保留原策略停損／目標。
     theme_codes 是逗號分隔的族群代碼，多選採聯集、L2 含子節點；在族群內重排，
     全帳戶持股仍納入風險。族群查詢不覆蓋全市場每日追蹤。
@@ -66,7 +66,8 @@ def daily_decision(capital: float = 1_000_000, risk_per_trade_pct: float = 0.75,
         min_amt=max(0, int(min_amt)), recent=max(1, min(int(recent), 25)),
         lookback=lookback, expiry=expiry,
         eps_min=eps_min, revenue_yoy_min=revenue_yoy_min,
-        gross_margin_chg_min=gross_margin_chg_min)
+        gross_margin_chg_min=gross_margin_chg_min,
+        include_lin_bojin=gate == lin_bojin.KEY or lin_bojin.KEY in conditions)
     try:
         scan = decision_themes.filter_scan(scan, codes)
         if "growth_quality" in conditions or ranking == "growth_quality":
@@ -97,9 +98,12 @@ def daily_decision(capital: float = 1_000_000, risk_per_trade_pct: float = 0.75,
     entry_conditions.attach(response, lookback=lookback, expiry=expiry)
     decision_combinations.attach(response, scan)
     growth_quality.attach(response, scan, ranking)
+    lin_bojin.attach(response, scan)
     response["theme_filter"] = scan.get("theme_filter")
     recorded = decision_themes.record_candidates(scan, response, mode, gate, decision_center.record_candidates)
     response["tracking"] = {"recorded": recorded, "settled": settled}
+    # 顯示分類在記錄之後補上，避免影響策略掃描快取與歷史研究。
+    decision_themes.attach_display_themes(response)
     return response
 
 

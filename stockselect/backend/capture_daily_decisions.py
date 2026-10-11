@@ -1,6 +1,6 @@
 """每晚刷新快照後，保存今日決策候選並結算到期觀察。
 
-v3 的 classic、momentum、trend_hold 分開記錄；動能類各 6 個進場條件合計 13 組。
+v3 的 classic、momentum、trend_hold 分開記錄；動能類各 7 個進場條件合計 15 組。
 快照附上進場條件（entry_conditions：等待確認的訊號、隔日盤中突破的觸發價、可執行型態突破的隔日開盤），和頁面看到的一樣。
 預設帳戶 100 萬、現金 100 萬與交易帳持股，用於規則對照；不是個人券商帳戶快照。
 
@@ -16,7 +16,7 @@ from datetime import date
 from pathlib import Path
 
 
-def main():
+def main(argv=None):
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
     except (AttributeError, ValueError):
@@ -25,15 +25,16 @@ def main():
     ap.add_argument("--dsn", default="", help="PostgreSQL 連線字串；省略時讀 DATABASE_URL")
     ap.add_argument("--min-amt", type=int, default=20_000_000)
     ap.add_argument("--line-snapshot", type=Path, help="保存同次掃描的型態突破／60日通知快照，不推播")
+    ap.add_argument("--lin-line-snapshot", type=Path, help="保存同次掃描的林柏錦圖卡研究版／60日通知快照，不推播")
     ap.add_argument("--date", default=date.today().isoformat(), help="通知預期的排程日期")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     if args.dsn:
         os.environ["DATABASE_URL"] = args.dsn
 
     # 設好 DATABASE_URL 後才載入 app.config。
-    from app import decision_center, entry_conditions
+    from app import decision_center, entry_conditions, lin_bojin
 
-    scan = decision_center.scan_market(min_amt=args.min_amt)
+    scan = decision_center.scan_market(min_amt=args.min_amt, include_lin_bojin=True)
     settled = decision_center.settle_pending(scan.get("as_of"))
     holdings = decision_center.current_holdings()
     market = decision_center.market_regime(scan.get("as_of"))
@@ -45,14 +46,18 @@ def main():
             response = decision_center.build_decision_response(
                 scan, rows, holdings, limit=500, mode=mode, market=market, gate=gate)
             entry_conditions.attach(response)          # scan_market 用預設 lookback／expiry（5／5）
+            lin_bojin.attach(response, scan)
             recorded = decision_center.record_candidates(scan, response, mode, gate)
             name = f"{mode}/{gate}" if mode != "classic" else mode
             parts.append(f"{name}：入選 {response['summary']['selected']}、新增觀察 {recorded}")
-    if args.line_snapshot:
+    if args.line_snapshot or args.lin_line_snapshot:
         from app import decision_digest
-        response = decision_digest.build_response(scan, holdings, market)
-        snapshot = decision_digest.make_snapshot(response, args.date)
-        args.line_snapshot.write_text(json.dumps(snapshot, ensure_ascii=False, default=str), encoding="utf-8")
+        checks = decision_digest.load_holding_checks(scan["as_of"]) if scan.get("as_of") else []
+        for gate, path in (("breakout", args.line_snapshot), (lin_bojin.KEY, args.lin_line_snapshot)):
+            if path:
+                response = decision_digest.build_response(scan, holdings, market, gate=gate)
+                snapshot = decision_digest.make_snapshot(response, args.date, holding_checks=checks)
+                path.write_text(json.dumps(snapshot, ensure_ascii=False, default=str), encoding="utf-8")
     above = market.get("above")
     regime = "資料不足" if above is None else ("站上" if above else "跌破") + f" {market['ma_days']} 日線"
     print(f"今日決策中心：資料日 {scan.get('as_of') or '—'}｜掃描 {scan['scanned']} 檔｜"
