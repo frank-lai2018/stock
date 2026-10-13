@@ -46,7 +46,7 @@ GATE_RULES = {
                "放量黑 K 回測近 5 日支撐、隔天紅 K 收復黑 K 半身；再隔一天盤中漲過紅 K 高點一檔才買，沒到就作廢",
     "w_bottom": "近 20 日曾單日漲 ≥ 8%、自高點回檔 8～15%，縮量回測 5～12 日前的左底（高 0～3%、頸線至少高 6%）；"
                 "隔天盤中漲過當日高點一檔才買，開盤高於觸發價 2% 放棄，沒到就作廢",
-    "lin_bojin": "多方型態＋RS ≥70＋往上的20日線；首次頸線放量長紅突破、回測頸線再轉強、跳空越過頸線擇一；"
+    "lin_bojin": "日線多方型態或已確認週線前高壓力帶＋RS ≥70＋往上的20日線；首次頸線放量長紅突破、回測頸線再轉強、跳空越過頸線擇一；"
                  "收盤及隔日含滑價成交價均不高於頸線5%，突破後收盤低於固定頸線2%作廢（圖卡研究版）",
 }
 # 實驗策略只在自己的篩選條件下使用；其他條件（含原始規則）只用型態突破與裸 K。
@@ -341,7 +341,7 @@ def scan_market(min_amt=20_000_000, recent=3, lookback=5, expiry=5,
             strategies.append(weekly)
         strategies += _buy_stop_strategies(bars)
         if include_lin_bojin:
-            setup = lin_bojin.analyze(bars, snap.get("rs_rating"))
+            setup = lin_bojin.analyze(history, snap.get("rs_rating"))
             if setup:
                 strategies.append(setup)
         if strategies:
@@ -840,7 +840,7 @@ def _gate_ok(item, gate):
 def _gate_reason(item, gate):
     if gate == lin_bojin.KEY:
         setup = next((s for s in item["strategies"] if s["key"] == lin_bojin.KEY), None)
-        return (setup.get("blockers") or ["等待頸線突破或回測再轉強"])[0] if setup else "沒有林柏錦選股條件訊號"
+        return (setup.get("blockers") or ["等待頸線突破或回測再轉強"])[0] if setup else "沒有強哥選股條件訊號"
     if gate in BUY_STOP_GATES:
         return "沒有" + GATES[gate].replace("（實驗）", "") + "訊號"
     if gate == "weekly":

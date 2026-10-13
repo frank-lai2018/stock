@@ -1,16 +1,17 @@
-"""林柏錦選股條件：依使用者提供的日線圖卡歸納，並非本人公開公式。
+"""強哥選股條件：依使用者提供的日線／週線圖卡歸納，並非本人公開公式。
 
 沿用多方波段型態的頸線；逐日重播時只把當日以前的 K 棒交給偵測器，
-突破後固定當時頸線，避免用後來的走勢重畫壓力。所有數值是 v1 研究參數。
+突破後固定當時頸線，避免用後來的走勢重畫壓力。所有數值是研究參數。
 """
-from . import swings
-from .execution import number
+from . import swings, weekly_resistance
+from .execution import day, number
 
 KEY = "lin_bojin"
-LABEL = "林柏錦選股條件（圖卡研究版）"
-VERSION = "lin-bojin-cards-v1"
-SOURCE = "依使用者提供的日線圖卡歸納；數值為系統研究設定，非林柏錦本人官方公式"
+LABEL = "強哥選股條件（圖卡研究版）"
+VERSION = "lin-bojin-cards-v2"
+SOURCE = "依使用者提供的日線／週線圖卡歸納；數值為系統研究設定，非強哥本人官方公式"
 BARS_NEEDED = 70
+HISTORY_BARS = 320
 TRACK_DAYS = 20
 CHASE_PCT = .05
 FAIL_PCT = .02
@@ -23,6 +24,8 @@ EVENTS = {"first": "首次頸線突破", "retest": "回測頸線再轉強", "gap
           "near": "等待頸線突破", "pullback": "等待回測轉強"}
 RULES = [
     {"item": "型態與趨勢", "rule": "多方底部／整理型態；RS ≥ 70、收盤站上 20 日線且 20 日線高於五個交易日前。不要求長期均線多頭排列。"},
+    {"item": "週線前高壓力帶", "rule": "取本週以前已完成週 K，最多 52 週、至少 26 週；週高點由已完成左右鄰週確認。至少兩次相隔 4 週的測試聚集於 2% 價格帶，最早測試至少 6 週前，之後尚無週收盤越過上緣。突破時固定上緣與測試紀錄，不改既有週線最高收盤策略。"},
+    {"item": "提前觀察", "rule": "收盤在週壓力上緣下方 0～8%，RS ≥70、站上往上的20日線可列接近壓力；多個壓力帶先取測試次數最多者，同次數取較高上緣。另有量比 ≥1.5、紅 K 上漲且最高價碰到壓力帶時列放量挑戰。僅為觀察，尚非買點、不配置股數；通知另要求最新單季EPS>0、20日均額至少2千萬。"},
     {"item": "首次突破", "rule": "當日收盤由頸線下穿越到頸線上；量 ≥ 前 20 日均量 1.5 倍，紅 K 實體 ≥ 全振幅 50%、收盤位於振幅上方 30%。型態偵測另要求突破量通過其前 50 日均量門檻。"},
     {"item": "回測再轉強", "rule": "突破後第 2～20 個交易日，最近三根 K 棒至少一根低點在頸線 −2%～+3%；今日紅 K 收盤高於昨日最高價、位於振幅上方 30%，量 ≥ 前 20 日均量 1.2 倍。"},
     {"item": "跳空突破", "rule": "符合首次突破，另需昨日收盤未過頸線；今日開盤與最低價均高於昨日最高價，最低價也高於頸線，缺口當日未回補。"},
@@ -48,7 +51,7 @@ def _confirmed(bars):
         return []
     found = []
     for key in swings.BULL_KEYS:
-        setup = swings.ALL[key](bars, recent=1)
+        setup = swings.ALL[key](bars[-150:], recent=1)
         if (setup and setup.get("dir") != "bear"
                 and setup.get("breakout_date") == _iso(bars[-1]["trade_date"])):
             pivot = number(setup.get("neckline"))
@@ -60,7 +63,7 @@ def _confirmed(bars):
 def _near(bars):
     with swings.near_mode(NEAR_PCT):
         for key in swings.BULL_KEYS:
-            setup = swings.ALL[key](bars, recent=1)
+            setup = swings.ALL[key](bars[-150:], recent=1)
             if setup and setup.get("dir") != "bear":
                 yield setup
 
@@ -110,7 +113,8 @@ def _evaluate(bars, setup, age, rs, factor):
     score = round(30 + min(ratio / 2.5, 1) * 20 + max(0, min((rs or 0) / 100, 1)) * 20
                   + position * 10 + (10 if trend else 0) + (10 if 0 <= extension <= CHASE_PCT else 0), 1)
     info = {"version": VERSION, "setup_type": event, "setup_label": EVENTS[event],
-            "pattern_name": swings.PATTERN_NAMES.get(setup["pattern"], setup["pattern"]),
+            "pattern_name": weekly_resistance.LABEL if setup["pattern"] == weekly_resistance.PATTERN else
+                swings.PATTERN_NAMES.get(setup["pattern"], setup["pattern"]),
             "neckline": round(pivot / factor, 2), "breakout_date": setup.get("breakout_date") if age >= 0 else None,
             "age_days": age if age >= 0 else None, "extension_pct": round(extension * 100, 2),
             "volume_ratio": round(ratio, 2), "close_position_pct": round(position * 100, 1),
@@ -119,7 +123,9 @@ def _evaluate(bars, setup, age, rs, factor):
             "gap_lower": round(prev["high"] / factor, 2) if gap else None,
             "gap_upper": round(cur["low"] / factor, 2) if gap else None,
             "checks": checks, "source": SOURCE}
-    return {"key": KEY, "label": "林柏錦", "score": score, "status": status,
+    if setup.get("pressure_band"):
+        info["pressure_band"] = weekly_resistance.display(setup["pressure_band"], factor)
+    return {"key": KEY, "label": "強哥", "score": score, "status": status,
             "signal_state": "triggered" if confirmed else "waiting", "stage": event,
             "pattern": setup["pattern"], "pattern_name": f"{EVENTS[event]}・{info['pattern_name']}",
             "signal_date": _iso(cur["trade_date"]) if confirmed else info["breakout_date"],
@@ -131,7 +137,7 @@ def _evaluate(bars, setup, age, rs, factor):
 
 def analyze(bars, rs_rating=None):
     """輸入僅截至掃描日的還原日 K；回傳最佳買點或等待狀態，不使用外部／未來資料。"""
-    bars = bars[-150:]
+    bars = bars[-HISTORY_BARS:]
     if len(bars) < BARS_NEEDED:
         return None
     normalized = []
@@ -153,9 +159,17 @@ def analyze(bars, rs_rating=None):
         return None
     factor = normalized[-1]["close"] / raw
     rs = number(rs_rating)
+    week_cache = {}
+
+    def known_bands(prefix):
+        key = tuple(day(prefix[-1]["trade_date"]).isocalendar()[:2])
+        if key not in week_cache:
+            week_cache[key] = weekly_resistance.bands(prefix)
+        return week_cache[key]
+
     options = []
     # 當日突破、以及過去 20 個交易日的有效突破。每次都只用那一天以前的前綴。
-    for age in range(min(TRACK_DAYS, len(normalized) - BARS_NEEDED) + 1):
+    for age in range(min(TRACK_DAYS, min(150, len(normalized)) - BARS_NEEDED) + 1):
         prefix = normalized[:len(normalized) - age]
         if age > 0:
             last = prefix[-1]
@@ -163,7 +177,8 @@ def analyze(bars, rs_rating=None):
             if (spread <= 0 or (last["close"] - last["open"]) / spread < .5
                     or (last["close"] - last["low"]) / spread < .7):
                 continue  # 回測買點的起點也必須是當時已確認的放量長紅突破。
-        for setup in _confirmed(prefix):
+        # 原日線分支仍以掃描日150根窗口的前綴重播；新增週線分支才使用320根歷史。
+        for setup in _confirmed(prefix[-(150 - age):]) + weekly_resistance.confirmed(prefix, known_bands(prefix)):
             if _volume_ratio(prefix) < VOLUME_MULT:
                 continue
             result = _evaluate(normalized, setup, age, rs, factor)
@@ -174,9 +189,27 @@ def analyze(bars, rs_rating=None):
             result = _evaluate(normalized, setup, -1, rs, factor)
             if result:
                 options.append(result)
+    observed = weekly_resistance.observation(normalized, rs, known_bands(normalized), factor)
+    if observed and not options:
+        # 純觀察者也能進決策表；signal_state=waiting 不累積成可成交回測樣本。
+        band = observed["pressure_band"]
+        setup = {"pattern": weekly_resistance.PATTERN, "neckline": band["high"] * factor}
+        options.append(_evaluate(normalized, setup, -1, rs, factor))
     rank = {"priority": 3, "waiting": 2, "watch": 1}
-    return max(options, key=lambda s: (rank[s["status"]], s["score"],
+    best = max(options, key=lambda s: (rank[s["status"]], s["score"],
                                       -(s["lin_bojin"]["age_days"] or 0)), default=None)
+    if best and observed:
+        best["lin_bojin"]["observation"] = observed
+    return best
+
+
+def observation_items(response):
+    items = [x for x in response.get("items", [])
+             if x.get("state") != "ready" and (x.get("lin_bojin") or {}).get("observation", {}).get("eligible")
+             and (number(x.get("eps")) or 0) > 0 and (number(x.get("amt20")) or 0) >= 20_000_000]
+    return sorted(items, key=lambda x: ((x["lin_bojin"]["observation"]["type"] == "challenge"),
+                                       number(x.get("rs_rating"), 0),
+                                       x["lin_bojin"]["observation"]["extension_pct"]), reverse=True)
 
 
 def attach(response, scan):
@@ -185,8 +218,17 @@ def attach(response, scan):
     if response.get("gate") != KEY and KEY not in codes:
         return response
     response["lin_bojin_config"] = {"label": LABEL, "version": VERSION, "source": SOURCE, "rules": RULES}
+    observations = observation_items(response)
+    response["lin_bojin_observation_count"] = len(observations)
+    for item in observations:
+        # 引擎只會配置 ready；也清除未配置者的試算股數，避免畫面誤顯觀察股的建議部位。
+        plan = item.get("position_plan")
+        if plan:
+            plan.update(valid=False, suggested_shares=0, position_value=0, risk_amount=0,
+                        capital_pct=0, actual_risk_pct=0, estimated_entry_cost=0,
+                        reason="提前觀察，尚未確認買點，不配置部位")
     response["calibration"] = []
-    response["validation"] = {"status": "unvalidated", "message": "林柏錦圖卡研究版尚未完成回測與前瞻驗證；其他策略的歷史績效不適用。"}
+    response["validation"] = {"status": "unvalidated", "message": "強哥圖卡研究版尚未完成回測與前瞻驗證；其他策略的歷史績效不適用。"}
     for item in response.get("items", []):
         item["calibration"] = item["historical_reference"] = None
         for strategy in item.get("strategies", []):

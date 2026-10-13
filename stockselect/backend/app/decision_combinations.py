@@ -17,7 +17,7 @@ CONDITIONS = {
     "price_action": "裸 K 可執行",
     "holder_concentration": "籌碼集中：近 4 期千張增、400 張以上不減",
     "growth_quality": "營收成長品質通過（實驗）",
-    "lin_bojin": "林柏錦選股條件可執行（圖卡研究版）",
+    "lin_bojin": "強哥選股條件可執行（圖卡研究版）",
 }
 VERSION = "decision-combination-v1"
 

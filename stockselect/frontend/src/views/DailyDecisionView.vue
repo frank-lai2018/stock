@@ -70,6 +70,7 @@ const shown = computed(() => {
   if (view.value === 'momentum') return items.filter((x) => x.state === 'ready' && x.momentum_ok)
   if (view.value === 'consensus') return items.filter((x) => x.consensus_count > 1)
   if (view.value === 'waiting') return items.filter((x) => x.state === 'waiting')
+  if (view.value === 'observation') return items.filter((x) => isLinObservation(x))
   return items
 })
 
@@ -86,6 +87,9 @@ const combinationExcluded = computed(() => combinationFilter.value?.excluded_ite
 const growthConfig = computed(() => result.value.growth_quality_config || null)
 const linConfig = computed(() => result.value.lin_bojin_config || null)
 const linInfo = (row) => row.lin_bojin || (row.combination_checks || []).find((c) => c.code === 'lin_bojin')?.lin_data || {}
+const isLinObservation = (row) => row.state !== 'ready' && linInfo(row).observation?.eligible && Number(row.eps) > 0 && Number(row.amt20) >= 20000000
+const observationCount = computed(() => (result.value.items || []).filter(isLinObservation).length)
+watch(linConfig, (config) => { if (!config && view.value === 'observation') view.value = 'selected' })
 const RANKINGS = { rs: 'RS 排序（基準）', growth_quality: '營收品質 → RS（實驗）' }
 const growthText = (row) => [row.growth_quality?.reason, ...(row.growth_quality?.warnings || [])].filter(Boolean).join('；')
 const canExport = computed(() => shown.value.length || combinationExcluded.value.length)
@@ -95,6 +99,7 @@ const displayThemeText = (row) => displayThemes(row).map((t) => t.name).join('�
 const combinationText = (row) => (row.combination_checks || []).map((c) =>
   `${c.label}：${c.passed ? '通過' : '未通過'}（${c.reason}）`).join('；')
 const emptyText = computed(() => {
+  if (view.value === 'observation') return '目前沒有符合週線壓力、趨勢與EPS>0的提前觀察股票；尚未確認買點，不配置部位'
   if (view.value === 'selected') return '目前沒有本次入選，可切換「全部可執行」或「全部候選」查看買點與原因'
   if (combinationFilter.value) return '目前沒有符合此檢視的組合候選；可切換「全部候選」，或查看下方未通過加強條件的原因'
   if (themeFilter.value) return '所選族群目前沒有符合此檢視的訊號，可切換「全部候選」或其他篩選條件'
@@ -134,7 +139,7 @@ const GATES = [
     rule: '強勢股放量黑 K 回測支撐、隔天紅 K 收復黑 K 半身；再隔一天盤中漲過紅 K 高點一檔才買' },
   { value: 'w_bottom', label: 'W 底測右底（實驗）', short: 'W 底測右底，隔日盤中過觸發價才買',
     rule: '強漲後回檔 8～15%、縮量回測左底；隔天盤中漲過當日高點一檔才買，開盤高於觸發價 2% 放棄' },
-  { value: 'lin_bojin', label: '林柏錦選股條件', short: '林柏錦圖卡研究版：頸線突破／回測轉強／跳空突破',
+  { value: 'lin_bojin', label: '強哥選股條件', short: '強哥圖卡研究版：日線型態／週線前高壓力帶＋提前觀察',
     rule: '多方型態＋RS ≥70＋往上的20日線；三種買點擇一，隔日含滑價成交價不得高於頸線5%' },
 ]
 const COMBINATION_OPTIONS = [
@@ -146,13 +151,13 @@ const COMBINATION_OPTIONS = [
   { value: 'price_action', label: '裸 K 可執行' },
   { value: 'holder_concentration', label: '籌碼集中：近 4 期千張增、400 張以上不減' },
   { value: 'growth_quality', label: '營收成長品質通過（實驗）' },
-  { value: 'lin_bojin', label: '林柏錦選股條件可執行（圖卡研究版）' },
+  { value: 'lin_bojin', label: '強哥選股條件可執行（圖卡研究版）' },
 ]
 const combinationOptions = computed(() => COMBINATION_OPTIONS.filter((c) =>
   c.value !== form.gate && !(form.gate === 'weekly' && c.value === 'weekly_structure')))
 const COMBINATION_PRESETS = [
-  { label: '林柏錦＋趨勢持有60日', gate: 'lin_bojin', codes: [], mode: 'trend_hold' },
-  { label: '林柏錦＋籌碼集中', gate: 'lin_bojin', codes: ['holder_concentration'], mode: 'trend_hold' },
+  { label: '強哥＋趨勢持有60日', gate: 'lin_bojin', codes: [], mode: 'trend_hold' },
+  { label: '強哥＋籌碼集中', gate: 'lin_bojin', codes: ['holder_concentration'], mode: 'trend_hold' },
   { label: '週線買點＋趨勢模板', gate: 'weekly', codes: ['trend_template'] },
   { label: '週線買點＋趨勢＋籌碼', gate: 'weekly', codes: ['trend_template', 'holder_concentration'] },
   { label: '成長＋週線＋趨勢＋籌碼', gate: 'weekly', codes: ['growth_quality', 'trend_template', 'holder_concentration'] },
@@ -173,7 +178,7 @@ const gateInfo = computed(() => GATES.find((g) => g.value === form.gate) || GATE
 // 表格依「這批資料」算出時的篩選條件判斷，避免切換後、資料還沒回來前顯示錯的原因
 const activeGate = computed(() => result.value.gate || form.gate)
 const gateMiss = (row) => activeGate.value === 'weekly' ? '週線突破尚未到日線進場點'
-  : activeGate.value === 'lin_bojin' ? (linInfo(row).setup_label || '林柏錦圖卡條件尚未確認')
+  : activeGate.value === 'lin_bojin' ? (linInfo(row).setup_label || '強哥圖卡條件尚未確認')
   : activeGate.value === 'reclaim' ? '沒有支撐轉強訊號' : activeGate.value === 'w_bottom' ? '沒有 W 底測右底訊號'
   : activeGate.value === 'consolidation' ? '整理突破或趨勢模板未成立' : activeGate.value === 'breakout'
   ? (row.breakout_ready ? '' : '型態突破未達可執行')
@@ -196,6 +201,8 @@ async function load() {
   loading.value = true
   try {
     const params = { ...form, theme_codes: form.theme_codes.join(','), combine: form.combine.join(',') }
+    // 提前觀察與 LINE 使用同樣的500檔候選上限，避免只載入前200檔漏掉觀察股。
+    if (params.mode !== 'classic' && params.gate === 'lin_bojin') params.limit = 500
     if (!params.theme_codes) delete params.theme_codes
     if (!params.combine || form.mode === 'classic') { delete params.combine; delete params.combine_logic }
     for (const key of ['eps_min', 'revenue_yoy_min', 'gross_margin_chg_min']) {
@@ -254,7 +261,7 @@ const stateMeta = {
 const confidenceLabel = { low: '低', medium: '中', high: '高' }
 
 function historicalText(row) {
-  if (linConfig.value) return '林柏錦圖卡研究版：績效尚待驗證'
+  if (linConfig.value) return '強哥圖卡研究版：績效尚待驗證'
   if (row.combination_checks || row.growth_quality) return '此實驗尚無校準樣本'
   const h = row.historical_reference
   if (!h) return '決策校準累積中'
@@ -266,7 +273,7 @@ function historicalText(row) {
 
 function calibrationName(key) {
   return { breakout: '型態突破', price_action: '裸 K', consolidation: '整理突破', weekly: '週線突破',
-    reclaim: '支撐轉強', w_bottom: 'W 底測右底', lin_bojin: '林柏錦圖卡研究版' }[key] || key
+    reclaim: '支撐轉強', w_bottom: 'W 底測右底', lin_bojin: '強哥圖卡研究版' }[key] || key
 }
 
 const MODE_LABELS = { momentum: '動能模式', trend_hold: '趨勢持有', classic: '原始規則' }
@@ -304,13 +311,17 @@ function downloadXlsx() {
     ['收盤', (x) => xnum(x.close), 9, PRICE],
     ['RS', (x) => xnum(x.rs_rating, 0), 6],
     ...(r.lin_bojin_config ? [
-      ['林柏錦買點', (x) => linInfo(x).setup_label || '', 22],
+      ['強哥買點', (x) => linInfo(x).setup_label || '', 22],
       ['型態', (x) => linInfo(x).pattern_name || '', 16],
       ['固定頸線', (x) => xnum(linInfo(x).neckline), 12, PRICE],
       ['突破日期', (x) => linInfo(x).breakout_date || '', 12],
       ['距頸線%', (x) => xnum(linInfo(x).extension_pct), 12],
       ['確認量比', (x) => xnum(linInfo(x).volume_ratio), 12],
-      ['林柏錦條件檢查', (x) => (linInfo(x).checks || []).map((c) => `${c.label}：${c.passed ? '通過' : '未通過'}（${c.reason}）`).join('；'), 80],
+      ['提前觀察', (x) => isLinObservation(x) ? linInfo(x).observation.label + '（尚未確認買點）' : '', 30],
+      ['週壓力下緣', (x) => xnum(linInfo(x).observation?.pressure_band?.low ?? linInfo(x).pressure_band?.low), 12, PRICE],
+      ['週壓力上緣', (x) => xnum(linInfo(x).observation?.pressure_band?.high ?? linInfo(x).pressure_band?.high), 12, PRICE],
+      ['週壓力測試次數', (x) => xnum(linInfo(x).observation?.pressure_band?.touch_count ?? linInfo(x).pressure_band?.touch_count, 0), 16],
+      ['強哥條件檢查', (x) => (linInfo(x).checks || []).map((c) => `${c.label}：${c.passed ? '通過' : '未通過'}（${c.reason}）`).join('；'), 80],
     ] : []),
     ...(r.growth_quality_config ? [
       ['營收品質分(0～100)', (x) => xnum(x.growth_quality?.score, 1), 12],
@@ -338,10 +349,10 @@ function downloadXlsx() {
     ['EPS YoY%', (x) => xnum(x.eps_yoy, 1), 9],
     ['營收YoY%', (x) => xnum(x.rev_yoy, 1), 9],
     ['毛利率季增(百分點)', (x) => xnum(x.gross_margin_chg, 1), 10],
-    ['參考進場', (x) => xnum(price(x).entry), 9, PRICE],
-    ['進場方式', (x) => (isBuyStop(price(x)) ? '隔日盤中過觸發價' : '隔日開盤'), 14],
-    ['追價上限', (x) => xnum(price(x).max_entry), 9, PRICE],
-    ['停損', (x) => xnum(price(x).stop), 9, PRICE],
+    ['參考進場', (x) => isLinObservation(x) ? '' : xnum(price(x).entry), 9, PRICE],
+    ['進場方式', (x) => isLinObservation(x) ? '等待買點確認' : (isBuyStop(price(x)) ? '隔日盤中過觸發價' : '隔日開盤'), 14],
+    ['追價上限', (x) => isLinObservation(x) ? '' : xnum(price(x).max_entry), 9, PRICE],
+    ['停損', (x) => isLinObservation(x) ? '' : xnum(price(x).stop), 9, PRICE],
     ['目標', (x) => xnum(price(x).target), 9, PRICE],
     ['R/R', (x) => xnum(price(x).rr), 6],
     ['出場規則', (x) => price(x).exit_rule || '', 26],
@@ -389,9 +400,9 @@ function downloadXlsx() {
     ['模式', MODE_LABELS[r.mode] || r.mode],
     ['篩選條件', gateName],
     ...(r.lin_bojin_config ? [
-      ['林柏錦規則版本', r.lin_bojin_config.version],
-      ['林柏錦規則來源', r.lin_bojin_config.source],
-      ...r.lin_bojin_config.rules.map((rule) => [`林柏錦・${rule.item}`, rule.rule]),
+      ['強哥規則版本', r.lin_bojin_config.version],
+      ['強哥規則來源', r.lin_bojin_config.source],
+      ...r.lin_bojin_config.rules.map((rule) => [`強哥・${rule.item}`, rule.rule]),
     ] : []),
     ['排序方式', RANKINGS[s.ranking || p.ranking] || RANKINGS.rs],
     ...(r.growth_quality_config ? [
@@ -673,6 +684,7 @@ onMounted(() => { load(); loadThemeOptions() })
           <el-radio-button v-if="isMomentum" value="momentum">通過動能篩選</el-radio-button>
           <el-radio-button value="consensus">雙策略共識</el-radio-button>
           <el-radio-button value="waiting">等待確認</el-radio-button>
+          <el-radio-button v-if="linConfig" value="observation">提前觀察（{{ observationCount }}）</el-radio-button>
           <el-radio-button value="all">全部候選</el-radio-button>
         </el-radio-group>
         <el-button size="small" type="success" :disabled="loading || !canExport"
@@ -747,9 +759,15 @@ onMounted(() => { load(); loadThemeOptions() })
           <div>毛利季增 {{ pct(row.gross_margin_chg) }}</div>
         </template>
       </el-table-column>
-      <el-table-column v-if="linConfig" label="林柏錦條件檢查" min-width="265">
+      <el-table-column v-if="linConfig" label="強哥條件檢查" min-width="265">
         <template #default="{ row }">
           <b>{{ linInfo(row).setup_label || '尚無此買點' }}</b>
+          <div v-if="isLinObservation(row)" class="small observation-note">
+            <el-tag size="small" type="warning" effect="plain">{{ linInfo(row).observation.label }}・尚未確認買點</el-tag>
+            <div>週壓力 {{ num(linInfo(row).observation.pressure_band.low, 2) }}～{{ num(linInfo(row).observation.pressure_band.high, 2) }}・{{ linInfo(row).observation.pressure_band.touch_count }} 次測試</div>
+            <div>距壓力上緣 {{ pct(linInfo(row).observation.extension_pct, 2) }}・觀察量比 {{ num(linInfo(row).observation.volume_ratio, 2) }}；不配置部位</div>
+          </div>
+          <div v-else-if="linInfo(row).pressure_band" class="small">週壓力 {{ num(linInfo(row).pressure_band.low, 2) }}～{{ num(linInfo(row).pressure_band.high, 2) }}・{{ linInfo(row).pressure_band.touch_count }} 次測試</div>
           <div class="small">{{ linInfo(row).pattern_name }}・頸線 {{ num(linInfo(row).neckline, 2) }}</div>
           <div class="small">距頸線 {{ pct(linInfo(row).extension_pct, 2) }}・量比 {{ num(linInfo(row).volume_ratio, 2) }}</div>
           <div v-if="linInfo(row).breakout_date" class="small muted">突破 {{ linInfo(row).breakout_date }}・第 {{ linInfo(row).age_days }} 個交易日</div>
@@ -777,8 +795,12 @@ onMounted(() => { load(); loadThemeOptions() })
       </el-table-column>
       <el-table-column label="交易計畫" width="170">
         <template #default="{ row }">
-          <!-- 價位算得出來就顯示；資金或風險額度不足只影響股數，理由寫在「建議部位」 -->
-          <template v-if="row.position_plan?.entry != null">
+          <template v-if="isLinObservation(row)">
+            <div class="muted">提前觀察，尚未確認買點</div>
+            <div class="small muted">確認後再產生進場與停損計畫；目前不配置部位</div>
+          </template>
+          <!-- 已確認的買點即使資金不足也顯示參考價；原因在「建議部位」。 -->
+          <template v-else-if="row.position_plan?.entry != null">
             <div>{{ isBuyStop(row.position_plan) ? '觸發價' : '參考進場' }} {{ num(row.position_plan.entry, 2) }}</div>
             <div v-if="row.position_plan.max_entry" class="small">
               {{ isBuyStop(row.position_plan) ? '開盤上限' : '追價上限' }} {{ num(row.position_plan.max_entry, 2) }}
@@ -887,7 +909,7 @@ onMounted(() => { load(); loadThemeOptions() })
         <DecisionHistoryPanel :mode="form.mode" :gate="form.gate" />
       </el-tab-pane>
       <el-tab-pane label="策略研究" name="research" lazy>
-        <el-alert v-if="combinationFilter || growthConfig || linConfig" type="info" :closable="false" class="notice">以下是另行產生的歷史研究，需確認是否包含目前的規則版本；林柏錦圖卡研究版與額外族群、籌碼交集尚未完成驗證。</el-alert>
+        <el-alert v-if="combinationFilter || growthConfig || linConfig" type="info" :closable="false" class="notice">以下是另行產生的歷史研究，需確認是否包含目前的規則版本；強哥圖卡研究版與額外族群、籌碼交集尚未完成驗證。</el-alert>
         <DecisionResearchPanel />
       </el-tab-pane>
       <el-tab-pane label="營收品質研究" name="growth-research" lazy>

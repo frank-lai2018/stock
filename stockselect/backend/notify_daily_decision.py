@@ -4,7 +4,7 @@ python notify_daily_decision.py --check-config   # 僅檢查設定及 LINE 額�
 python notify_daily_decision.py --test           # 傳一則連線測試（每天防重）
 python notify_daily_decision.py --dry-run        # 僅預覽最新行情，不寫決策帳／不推播
 python notify_daily_decision.py                 # 僅當日行情可補送，休市／歷史日略過
-python notify_daily_decision.py --strategy lin_bojin --dry-run  # 林柏錦策略唯讀預覽
+python notify_daily_decision.py --strategy lin_bojin --dry-run  # 強哥策略唯讀預覽
 """
 import argparse
 import json
@@ -21,7 +21,7 @@ def main(argv=None):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
-    ap = argparse.ArgumentParser(description="型態突破／林柏錦圖卡研究版＋趨勢持有60日 LINE 日報")
+    ap = argparse.ArgumentParser(description="型態突破／強哥圖卡研究版＋趨勢持有60日 LINE 日報")
     ap.add_argument("--strategy", choices=("breakout", "lin_bojin"), default="breakout")
     ap.add_argument("--dsn", default="")
     ap.add_argument("--date", help="預期排程日；歷史／未來日期不推播")
@@ -57,7 +57,7 @@ def main(argv=None):
                 print("歷史或未來排程日，略過 LINE 推播。")
                 return 0
         if args.test:
-            label = "林柏錦圖卡研究版" if args.strategy == "lin_bojin" else "型態突破"
+            label = "強哥圖卡研究版" if args.strategy == "lin_bojin" else "型態突破"
             text = ("✅ 台股選股 LINE 通知連線測試\n"
                     f"已接上：{label}＋趨勢持有60日（實驗）\n"
                     "交易日每晚必要資料更新與決策保存完成後，發送策略摘要與交易帳出場檢查。\n"
@@ -99,7 +99,7 @@ def main(argv=None):
                     or settings.get("ranking") != "rs" or settings.get("lot_size") != 1):
                 raise line_notify.NotificationError("通知快照策略設定不符")
             if args.strategy == "lin_bojin" and response.get("lin_bojin_config", {}).get("version") != digest.lin_bojin.VERSION:
-                raise line_notify.NotificationError("林柏錦通知規則版本不符")
+                raise line_notify.NotificationError("強哥通知規則版本不符")
             if not args.dry_run and response.get("as_of") != requested.isoformat():
                 reason = notification_calendar.closed_reason(requested)
                 if reason:

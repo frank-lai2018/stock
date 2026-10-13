@@ -25,7 +25,7 @@ def main(argv=None):
     ap.add_argument("--dsn", default="", help="PostgreSQL 連線字串；省略時讀 DATABASE_URL")
     ap.add_argument("--min-amt", type=int, default=20_000_000)
     ap.add_argument("--line-snapshot", type=Path, help="保存同次掃描的型態突破／60日通知快照，不推播")
-    ap.add_argument("--lin-line-snapshot", type=Path, help="保存同次掃描的林柏錦圖卡研究版／60日通知快照，不推播")
+    ap.add_argument("--lin-line-snapshot", type=Path, help="保存同次掃描的強哥圖卡研究版／60日通知快照，不推播")
     ap.add_argument("--date", default=date.today().isoformat(), help="通知預期的排程日期")
     args = ap.parse_args(argv)
     if args.dsn:

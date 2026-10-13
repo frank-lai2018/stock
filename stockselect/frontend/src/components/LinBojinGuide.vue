@@ -4,8 +4,8 @@ defineProps({ config: { type: Object, required: true } })
 
 <template>
   <el-collapse class="lin-guide">
-    <el-collapse-item title="林柏錦選股條件・圖卡研究版｜查看條件定義" name="lin-rules">
-      <p>{{ config.source }}。三種買點擇一；等待確認與追價過遠不列為可執行。</p>
+    <el-collapse-item title="強哥選股條件・圖卡研究版｜查看條件定義" name="lin-rules">
+      <p>{{ config.source }}。日線型態或週線前高壓力帶，三種買點擇一；「提前觀察」仍需等待買點確認，不配置部位。</p>
       <table class="rules-table">
         <thead><tr><th>條件</th><th>定義與用途</th></tr></thead>
         <tbody><tr v-for="rule in config.rules" :key="rule.item"><th>{{ rule.item }}</th><td>{{ rule.rule }}</td></tr></tbody>

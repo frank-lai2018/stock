@@ -134,10 +134,15 @@ def _lin_bojin(s, mode):
         lines.append(f"成交後停損＝成交價下 8%；{_exit_text(mode)}")
     else:
         lines += s.get("blockers") or ["等待確認，尚不可執行"]
+    observed = info.get("observation")
+    if observed:
+        band = observed["pressure_band"]
+        lines.append(f"提前觀察：{observed['label']}；週壓力 {band['low']:.2f}～{band['high']:.2f}，"
+                     "尚未確認買點、不配置部位；週壓力與日線型態頸線可能不同")
     lines.append(f"突破後收盤低於 {invalid:.2f}，本次型態作廢；這是訊號作廢線，持倉停損另依交易計畫")
     if info.get("gap_lower") is not None:
         lines.append(f"確認日未回補缺口：{info['gap_lower']:.2f}～{info['gap_upper']:.2f}")
-    return {"strategy": "lin_bojin", "label": "林柏錦圖卡研究版", "trigger_low": pivot,
+    return {"strategy": "lin_bojin", "label": "強哥圖卡研究版", "trigger_low": pivot,
             "trigger_high": cap, "invalid_below": invalid, "deadline": "只限下一個交易日" if s.get("status") == "priority" else "等待確認",
             "score_after": None, "lines": lines}
 

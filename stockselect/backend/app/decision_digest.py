@@ -1,4 +1,4 @@
-"""型態突破／林柏錦圖卡研究版＋趨勢持有 60 日的 LINE 日報。
+"""型態突破／強哥圖卡研究版＋趨勢持有 60 日的 LINE 日報。
 
 新倉股數是 100 萬淨值／100 萬現金的規則試算，已持股納入限制。
 交易帳沒有買進策略標籤；出場檢查是將本規則套用到未平倉買批的參考。
@@ -10,7 +10,7 @@ from . import decision_center as dc, decision_themes, db, entry_conditions, exec
 from .line_notify import NotificationError, fit_text
 
 TAIPEI = timezone(timedelta(hours=8))
-VERSION = "line-digest-v2"
+VERSION = "line-digest-v3"
 PROFILE = "trend_hold/breakout/rs/lot1"
 LIN_PROFILE = f"trend_hold/lin_bojin/{lin_bojin.VERSION}/rs/lot1"
 STRATEGIES = {"breakout": "日線型態突破", lin_bojin.KEY: lin_bojin.LABEL}
@@ -152,7 +152,8 @@ def enrich_selected(response):
     """取原型態的突破量比，不改核心研究指紋或選股門檻。"""
     if response.get("gate") == lin_bojin.KEY:
         # 風險額度不足仍通知通過買點的股票；族群標籤沿用今日決策中心。
-        decision_themes.attach_display_themes({"items": [x for x in response["items"] if x.get("state") == "ready"]})
+        decision_themes.attach_display_themes({"items": [x for x in response["items"] if x.get("state") == "ready"]
+                                              + lin_bojin.observation_items(response)})
         return
     selected = [x for x in response["items"] if x.get("selected")]
     if not selected:
@@ -252,9 +253,10 @@ def render_lin_digest(snapshot, warning_jobs=()):
     response = snapshot["response"]
     ready = [x for x in response.get("items", []) if x.get("state") == "ready"]
     selected = [x for x in ready if x.get("selected")]
+    observations = lin_bojin.observation_items(response)
     above = (response.get("market") or {}).get("above")
     regime = "站上60日線，允許新倉" if above is True else "低於或等於60日線，暫停新倉" if above is False else "資料不足，暫停新倉"
-    lines = ["📊 林柏錦選股條件｜趨勢持有60日", "依圖卡整理的研究版，非本人官方公式；績效尚待驗證。",
+    lines = ["📊 強哥選股條件｜趨勢持有60日", "依圖卡整理的研究版，非本人官方公式；績效尚待驗證。",
              f"行情日期：{response.get('as_of') or '—'}", "✅ 決策資料完成", f"大盤：{regime}",
              "設定：RS排序、全部族群、均額2千萬+、最新單季EPS>0；未加籌碼或營收交集", "",
              f"【通過買點條件：{len(ready)}檔｜資金配置入選：{len(selected)}檔】"]
@@ -282,6 +284,20 @@ def render_lin_digest(snapshot, warning_jobs=()):
         if ready:
             reasons = Counter(x.get("selection_reason") or "未通過帳戶限制" for x in ready)
             lines += [f"• {reason}（{n}檔）" for reason, n in reasons.most_common(3)]
+    lines += ["", f"【提前觀察：{len(observations)}檔｜尚未確認買點】",
+              "僅追蹤週線壓力下方0～8%；不配置部位，不是買進訊號。"]
+    for item in observations[:5]:
+        observed = item["lin_bojin"]["observation"]
+        band = observed["pressure_band"]
+        close = _f(item.get("raw_close")) or _f(item.get("close"))
+        themes = "／".join(t["name"] for t in item.get("display_themes", [])[:2]) or "族群待補"
+        lines += [f"{item['stock_id']} {item.get('name') or ''}｜{themes}｜{observed['label']}",
+                  f"週壓力：{band['low']:g}～{band['high']:g}｜測試{band['touch_count']}次｜距上緣{observed['extension_pct']:+g}%",
+                  f"收盤：{close:g}｜RS：{item.get('rs_rating', '—')}｜最新單季 EPS：{_f(item.get('eps')):g}元｜量比：{observed['volume_ratio']:g}"]
+    if len(observations) > 5:
+        lines.append(f"另有 {len(observations) - 5} 檔，請至今日決策中心的「提前觀察」查看。")
+    if not observations:
+        lines.append("今日無符合提前觀察條件的股票。")
     alerts = [c for c in snapshot.get("holding_checks", []) if c["alerts"]]
     lines += ["", f"【交易帳出場檢查：{len(alerts)}筆提醒】"]
     for check in alerts[:5]:
@@ -293,7 +309,7 @@ def render_lin_digest(snapshot, warning_jobs=()):
         lines.append("交易帳無出場提醒；行情不足會另列提醒。")
     if warning_jobs:
         lines += ["", "⚠️ 其他更新工作未完成：" + "、".join(warning_jobs)]
-    lines += ["", "三種買點擇一：首次頸線突破／回測再轉強／跳空突破。",
+    lines += ["", "日線型態或週線前高壓力帶：首次突破／回測再轉強／跳空突破擇一。",
               "只供次交易日開盤參考；含滑價成交價超過頸線5%就放棄。",
               "出場：成交價下8%停損；收盤低於50日線後次日開盤出；第60個交易日收盤到期。",
               "股數採淨值100萬／現金100萬試算，既有持股納入限制；未連券商。",

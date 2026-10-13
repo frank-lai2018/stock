@@ -49,7 +49,7 @@ class LinNotificationsTest(unittest.TestCase):
         self.assertEqual(result["settings"]["horizon"], 60)
         self.assertEqual(result["settings"]["lot_size"], 1)
         text = dg.render_digest({"response": result, "holding_checks": []})
-        for phrase in ("林柏錦選股條件", "首次頸線突破", "固定頸線：100.0", "追價上限：105.0", "CCL", "第60個交易日收盤", "非本人官方公式"):
+        for phrase in ("強哥選股條件", "首次頸線突破", "固定頸線：100.0", "追價上限：105.0", "CCL", "第60個交易日收盤", "非本人官方公式"):
             self.assertIn(phrase, text)
         self.assertLessEqual(len(text.encode("utf-16-le")) // 2, 4500)
 
@@ -87,7 +87,7 @@ class LinNotificationsTest(unittest.TestCase):
             rc, send, _ = self.run_cli(args)
             self.assertEqual(rc, 2)
             self.assertIn("failure/", send.call_args.args[0])
-            self.assertIn("林柏錦", send.call_args.args[1])
+            self.assertIn("強哥", send.call_args.args[1])
             self.assertNotIn("TEST 測試", send.call_args.args[1])
             rc, send, _ = self.run_cli(args, holiday="休市")
             self.assertEqual(rc, 0)

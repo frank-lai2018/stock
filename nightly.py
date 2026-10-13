@@ -48,7 +48,7 @@ r"""nightly.py — 排程大腦：每晚無腦執行這一支，由它依「今�
                **必須排在 refresh 之前**，否則選股視圖 join 到的是昨天的狀態。
   refresh    以上跑完後，刷新選股物化視圖 mv_stock_snapshot（選股器同步最新；--skip-refresh 可略過）。
   decision   refresh 成功後保存今日決策中心候選、結算到期觀察，累積分數校準資料。
-  line       完整夜間更新完成後，分別推播型態突破、林柏錦圖卡研究版＋趨勢持有60日日報。
+  line       完整夜間更新完成後，分別推播型態突破、強哥圖卡研究版＋趨勢持有60日日報。
              必要工作失敗改發更新告警；歷史補跑、單一工作與休市不發正常日報。
 
 防重複：quarterly / dividend 是 FinMind 逐檔的重工作，用狀態檔 nightly_state.json 記錄
