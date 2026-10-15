@@ -125,6 +125,18 @@ def _wanted(s):
 
 def _lin_bojin(s, mode):
     info = s.get("lin_bojin") or {}
+    observed = info.get("observation")
+    recovered = next((o for o in info.get("observations", [observed])
+                      if o and o.get("type") == "support_recovery"), None)
+    if recovered and s.get("status") != "priority":
+        observed = recovered
+        return {"strategy": "lin_bojin", "label": "強哥・量縮收復支撐（實驗）",
+                "trigger_low": None, "trigger_high": None, "invalid_below": None,
+                "deadline": "等待確認", "score_after": None,
+                "lines": [f"提前觀察：支撐 {observed['support']:.2f}；訊號高／低點 "
+                          f"{observed['signal_high']:.2f}／{observed['signal_low']:.2f}",
+                          observed["confirmation"], observed["volume_note"],
+                          "尚未確認買點、不配置部位；觀察參考價不是委託價"]}
     pivot, cap, invalid = (number(info.get(k)) for k in ("neckline", "max_entry", "invalid_below"))
     if pivot is None or cap is None or invalid is None:
         return None
@@ -134,8 +146,7 @@ def _lin_bojin(s, mode):
         lines.append(f"成交後停損＝成交價下 8%；{_exit_text(mode)}")
     else:
         lines += s.get("blockers") or ["等待確認，尚不可執行"]
-    observed = info.get("observation")
-    if observed:
+    if observed and observed.get("pressure_band"):
         band = observed["pressure_band"]
         lines.append(f"提前觀察：{observed['label']}；週壓力 {band['low']:.2f}～{band['high']:.2f}，"
                      "尚未確認買點、不配置部位；週壓力與日線型態頸線可能不同")

@@ -10,7 +10,7 @@ from . import decision_center as dc, decision_themes, db, entry_conditions, exec
 from .line_notify import NotificationError, fit_text
 
 TAIPEI = timezone(timedelta(hours=8))
-VERSION = "line-digest-v3"
+VERSION = "line-digest-v4"
 PROFILE = "trend_hold/breakout/rs/lot1"
 LIN_PROFILE = f"trend_hold/lin_bojin/{lin_bojin.VERSION}/rs/lot1"
 STRATEGIES = {"breakout": "日線型態突破", lin_bojin.KEY: lin_bojin.LABEL}
@@ -285,15 +285,24 @@ def render_lin_digest(snapshot, warning_jobs=()):
             reasons = Counter(x.get("selection_reason") or "未通過帳戶限制" for x in ready)
             lines += [f"• {reason}（{n}檔）" for reason, n in reasons.most_common(3)]
     lines += ["", f"【提前觀察：{len(observations)}檔｜尚未確認買點】",
-              "僅追蹤週線壓力下方0～8%；不配置部位，不是買進訊號。"]
+              "週線接近壓力／量縮收復支撐；不配置部位，不是買進訊號。"]
     for item in observations[:5]:
         observed = item["lin_bojin"]["observation"]
-        band = observed["pressure_band"]
         close = _f(item.get("raw_close")) or _f(item.get("close"))
         themes = "／".join(t["name"] for t in item.get("display_themes", [])[:2]) or "族群待補"
-        lines += [f"{item['stock_id']} {item.get('name') or ''}｜{themes}｜{observed['label']}",
-                  f"週壓力：{band['low']:g}～{band['high']:g}｜測試{band['touch_count']}次｜距上緣{observed['extension_pct']:+g}%",
-                  f"收盤：{close:g}｜RS：{item.get('rs_rating', '—')}｜最新單季 EPS：{_f(item.get('eps')):g}元｜量比：{observed['volume_ratio']:g}"]
+        lines.append(f"{item['stock_id']} {item.get('name') or ''}｜{themes}｜{observed['label']}")
+        if observed.get("type") == "support_recovery":
+            lines += [f"收復支撐：{observed['support']:g}｜訊號日：{observed['signal_date']}｜測壓日：{observed['test_date']}",
+                      f"訊號高／低：{observed['signal_high']:g}／{observed['signal_low']:g}｜訊號量比：{observed['volume_ratio']:g}",
+                      observed["confirmation"], observed["volume_note"]]
+        else:
+            band = observed["pressure_band"]
+            lines.append(f"週壓力：{band['low']:g}～{band['high']:g}｜測試{band['touch_count']}次｜距上緣{observed['extension_pct']:+g}%｜量比：{observed['volume_ratio']:g}")
+            for extra in item["lin_bojin"].get("observations", []):
+                if extra.get("type") == "support_recovery":
+                    lines += [f"另符合{extra['label']}：支撐{extra['support']:g}｜訊號日{extra['signal_date']}",
+                              extra["confirmation"], extra["volume_note"]]
+        lines.append(f"收盤：{close:g}｜RS：{item.get('rs_rating', '—')}｜最新單季 EPS：{_f(item.get('eps')):g}元")
     if len(observations) > 5:
         lines.append(f"另有 {len(observations) - 5} 檔，請至今日決策中心的「提前觀察」查看。")
     if not observations:

@@ -3,12 +3,12 @@
 沿用多方波段型態的頸線；逐日重播時只把當日以前的 K 棒交給偵測器，
 突破後固定當時頸線，避免用後來的走勢重畫壓力。所有數值是研究參數。
 """
-from . import swings, weekly_resistance
+from . import support_recovery, swings, weekly_resistance
 from .execution import day, number
 
 KEY = "lin_bojin"
 LABEL = "強哥選股條件（圖卡研究版）"
-VERSION = "lin-bojin-cards-v2"
+VERSION = "lin-bojin-cards-v3"
 SOURCE = "依使用者提供的日線／週線圖卡歸納；數值為系統研究設定，非強哥本人官方公式"
 BARS_NEEDED = 70
 HISTORY_BARS = 320
@@ -26,6 +26,8 @@ RULES = [
     {"item": "型態與趨勢", "rule": "多方底部／整理型態；RS ≥ 70、收盤站上 20 日線且 20 日線高於五個交易日前。不要求長期均線多頭排列。"},
     {"item": "週線前高壓力帶", "rule": "取本週以前已完成週 K，最多 52 週、至少 26 週；週高點由已完成左右鄰週確認。至少兩次相隔 4 週的測試聚集於 2% 價格帶，最早測試至少 6 週前，之後尚無週收盤越過上緣。突破時固定上緣與測試紀錄，不改既有週線最高收盤策略。"},
     {"item": "提前觀察", "rule": "收盤在週壓力上緣下方 0～8%，RS ≥70、站上往上的20日線可列接近壓力；多個壓力帶先取測試次數最多者，同次數取較高上緣。另有量比 ≥1.5、紅 K 上漲且最高價碰到壓力帶時列放量挑戰。僅為觀察，尚非買點、不配置股數；通知另要求最新單季EPS>0、20日均額至少2千萬。"},
+    {"item": "量縮收復支撐（實驗）", "rule": "RS≥70、站上往上的20日線；近3～15日曾有上影≥振幅50%、實體≤40%的測壓棒，測壓高點不低於此前10日高點且當時20日收盤漲幅≥10%。支撐取訊號日前5日低點、須在測壓後形成；低點短暫跌破支撐≤3%、收盤站回，紅K實體≥50%、收在振幅上方30%，量≤此前20日均量0.6倍。"},
+    {"item": "支撐觀察追蹤", "rule": "訊號日起至後續3個交易日固定支撐、訊號高低點與測壓紀錄；後續低點觸及訊號低點或收盤跌回支撐即失效。越過訊號高點仍須核對成交價至訊號低點的8%結構風險與交易限制；僅列觀察、不配置部位。量比未區分處置／正常撮合，不把量縮當作惜售證據。通知仍須最新單季EPS>0及20日均額≥2千萬。"},
     {"item": "首次突破", "rule": "當日收盤由頸線下穿越到頸線上；量 ≥ 前 20 日均量 1.5 倍，紅 K 實體 ≥ 全振幅 50%、收盤位於振幅上方 30%。型態偵測另要求突破量通過其前 50 日均量門檻。"},
     {"item": "回測再轉強", "rule": "突破後第 2～20 個交易日，最近三根 K 棒至少一根低點在頸線 −2%～+3%；今日紅 K 收盤高於昨日最高價、位於振幅上方 30%，量 ≥ 前 20 日均量 1.2 倍。"},
     {"item": "跳空突破", "rule": "符合首次突破，另需昨日收盤未過頸線；今日開盤與最低價均高於昨日最高價，最低價也高於頸線，缺口當日未回補。"},
@@ -190,6 +192,9 @@ def analyze(bars, rs_rating=None):
             if result:
                 options.append(result)
     observed = weekly_resistance.observation(normalized, rs, known_bands(normalized), factor)
+    recovered = support_recovery.observation(normalized, rs, factor)
+    if recovered and not options:
+        options.append(support_recovery.waiting_strategy(recovered, KEY, VERSION, SOURCE))
     if observed and not options:
         # 純觀察者也能進決策表；signal_state=waiting 不累積成可成交回測樣本。
         band = observed["pressure_band"]
@@ -198,16 +203,24 @@ def analyze(bars, rs_rating=None):
     rank = {"priority": 3, "waiting": 2, "watch": 1}
     best = max(options, key=lambda s: (rank[s["status"]], s["score"],
                                       -(s["lin_bojin"]["age_days"] or 0)), default=None)
-    if best and observed:
-        best["lin_bojin"]["observation"] = observed
+    if best:
+        observations = [x for x in (observed, recovered) if x]
+        if observations:
+            observations.sort(key=lambda x: observation_rank(x), reverse=True)
+            best["lin_bojin"]["observation"] = observations[0]
+            best["lin_bojin"]["observations"] = observations
     return best
+
+
+def observation_rank(observed):
+    return {"challenge": 2, support_recovery.PATTERN: 1, "near": 0}.get(observed.get("type"), 0)
 
 
 def observation_items(response):
     items = [x for x in response.get("items", [])
              if x.get("state") != "ready" and (x.get("lin_bojin") or {}).get("observation", {}).get("eligible")
              and (number(x.get("eps")) or 0) > 0 and (number(x.get("amt20")) or 0) >= 20_000_000]
-    return sorted(items, key=lambda x: ((x["lin_bojin"]["observation"]["type"] == "challenge"),
+    return sorted(items, key=lambda x: (observation_rank(x["lin_bojin"]["observation"]),
                                        number(x.get("rs_rating"), 0),
                                        x["lin_bojin"]["observation"]["extension_pct"]), reverse=True)
 
@@ -220,7 +233,9 @@ def attach(response, scan):
     response["lin_bojin_config"] = {"label": LABEL, "version": VERSION, "source": SOURCE, "rules": RULES}
     observations = observation_items(response)
     response["lin_bojin_observation_count"] = len(observations)
-    for item in observations:
+    for item in response.get("items", []):
+        if item.get("state") == "ready" or not (item.get("lin_bojin") or {}).get("observation", {}).get("eligible"):
+            continue
         # 引擎只會配置 ready；也清除未配置者的試算股數，避免畫面誤顯觀察股的建議部位。
         plan = item.get("position_plan")
         if plan:

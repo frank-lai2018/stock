@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import * as XLSX from 'xlsx'
@@ -9,11 +9,14 @@ import DecisionResearchPanel from '../components/DecisionResearchPanel.vue'
 import GrowthResearchPanel from '../components/GrowthResearchPanel.vue'
 import LinBojinGuide from '../components/LinBojinGuide.vue'
 
+const initialQuery = new URLSearchParams(window.location.search)
+const initialLin = (initialQuery.get('gate') || 'lin_bojin') === 'lin_bojin'
 const router = useRouter()
 const loading = ref(false)
 const result = ref({ items: [], summary: {}, calibration: [], holdings: { items: [], industry_counts: {} } })
-const view = ref('selected')
+const view = ref(initialLin && initialQuery.get('view') === 'support_recovery' ? 'support_recovery' : 'selected')
 const activeTab = ref('today')
+const listHead = ref(null)
 const themeOptions = ref([])
 const themesLoading = ref(false)
 const themesFailed = ref(false)
@@ -33,11 +36,10 @@ function savedAccount() {
   }
 }
 
-const initialLin = new URLSearchParams(window.location.search).get('gate') === 'lin_bojin'
 const form = reactive({
   // momentum：篩選條件＋大盤站上 60 日線＋RS 排序、8% 停損 20 日到期；classic：原始規則（保留對照）
-  mode: initialLin ? 'trend_hold' : 'momentum',
-  // 動能模式的篩選條件：trend_template（預設）／breakout，對應後端 decision_center.GATES
+  mode: 'momentum',
+  // 預設動能模式＋強哥；條件在首次 load 前建立，第一次請求就套用基本面下限。
   gate: initialLin ? 'lin_bojin' : 'trend_template',
   theme_codes: [],
   combine: [],
@@ -56,9 +58,9 @@ const form = reactive({
   recent: 3,
   lookback: 5,
   expiry: 5,
-  eps_min: null,
-  revenue_yoy_min: null,
-  gross_margin_chg_min: null,
+  eps_min: 0,
+  revenue_yoy_min: 0,
+  gross_margin_chg_min: 0,
   limit: 200,
   ...savedAccount(),
 })
@@ -71,6 +73,7 @@ const shown = computed(() => {
   if (view.value === 'consensus') return items.filter((x) => x.consensus_count > 1)
   if (view.value === 'waiting') return items.filter((x) => x.state === 'waiting')
   if (view.value === 'observation') return items.filter((x) => isLinObservation(x))
+  if (view.value === 'support_recovery') return items.filter((x) => isSupportObservation(x))
   return items
 })
 
@@ -87,9 +90,16 @@ const combinationExcluded = computed(() => combinationFilter.value?.excluded_ite
 const growthConfig = computed(() => result.value.growth_quality_config || null)
 const linConfig = computed(() => result.value.lin_bojin_config || null)
 const linInfo = (row) => row.lin_bojin || (row.combination_checks || []).find((c) => c.code === 'lin_bojin')?.lin_data || {}
-const isLinObservation = (row) => row.state !== 'ready' && linInfo(row).observation?.eligible && Number(row.eps) > 0 && Number(row.amt20) >= 20000000
+const linObservations = (row) => linInfo(row).observations || (linInfo(row).observation ? [linInfo(row).observation] : [])
+const supportObservation = (row) => linObservations(row).find((o) => o.type === 'support_recovery')
+const isLinPending = (row) => row.state !== 'ready' && linInfo(row).observation?.eligible
+const isLinObservation = (row) => isLinPending(row) && Number(row.eps) > 0 && Number(row.amt20) >= 20000000
+const isSupportObservation = (row) => isLinObservation(row) && supportObservation(row)?.eligible
 const observationCount = computed(() => (result.value.items || []).filter(isLinObservation).length)
-watch(linConfig, (config) => { if (!config && view.value === 'observation') view.value = 'selected' })
+const supportObservationCount = computed(() => (result.value.items || []).filter(isSupportObservation).length)
+watch(linConfig, (config) => {
+  if (!config && form.gate !== 'lin_bojin' && ['observation', 'support_recovery'].includes(view.value)) view.value = 'selected'
+})
 const RANKINGS = { rs: 'RS 排序（基準）', growth_quality: '營收品質 → RS（實驗）' }
 const growthText = (row) => [row.growth_quality?.reason, ...(row.growth_quality?.warnings || [])].filter(Boolean).join('；')
 const canExport = computed(() => shown.value.length || combinationExcluded.value.length)
@@ -99,7 +109,8 @@ const displayThemeText = (row) => displayThemes(row).map((t) => t.name).join('�
 const combinationText = (row) => (row.combination_checks || []).map((c) =>
   `${c.label}：${c.passed ? '通過' : '未通過'}（${c.reason}）`).join('；')
 const emptyText = computed(() => {
-  if (view.value === 'observation') return '目前沒有符合週線壓力、趨勢與EPS>0的提前觀察股票；尚未確認買點，不配置部位'
+  if (view.value === 'support_recovery') return '目前篩選條件下沒有符合量縮收復支撐的股票；需最新單季EPS>0，尚未確認買點，不配置部位'
+  if (view.value === 'observation') return '目前沒有符合週線壓力或量縮收復支撐、趨勢與EPS>0的提前觀察股票；尚未確認買點，不配置部位'
   if (view.value === 'selected') return '目前沒有本次入選，可切換「全部可執行」或「全部候選」查看買點與原因'
   if (combinationFilter.value) return '目前沒有符合此檢視的組合候選；可切換「全部候選」，或查看下方未通過加強條件的原因'
   if (themeFilter.value) return '所選族群目前沒有符合此檢視的訊號，可切換「全部候選」或其他篩選條件'
@@ -139,7 +150,7 @@ const GATES = [
     rule: '強勢股放量黑 K 回測支撐、隔天紅 K 收復黑 K 半身；再隔一天盤中漲過紅 K 高點一檔才買' },
   { value: 'w_bottom', label: 'W 底測右底（實驗）', short: 'W 底測右底，隔日盤中過觸發價才買',
     rule: '強漲後回檔 8～15%、縮量回測左底；隔天盤中漲過當日高點一檔才買，開盤高於觸發價 2% 放棄' },
-  { value: 'lin_bojin', label: '強哥選股條件', short: '強哥圖卡研究版：日線型態／週線前高壓力帶＋提前觀察',
+  { value: 'lin_bojin', label: '強哥選股條件', short: '強哥圖卡研究版：日線型態／週線前高壓力帶／量縮收復支撐提前觀察',
     rule: '多方型態＋RS ≥70＋往上的20日線；三種買點擇一，隔日含滑價成交價不得高於頸線5%' },
 ]
 const COMBINATION_OPTIONS = [
@@ -156,6 +167,7 @@ const COMBINATION_OPTIONS = [
 const combinationOptions = computed(() => COMBINATION_OPTIONS.filter((c) =>
   c.value !== form.gate && !(form.gate === 'weekly' && c.value === 'weekly_structure')))
 const COMBINATION_PRESETS = [
+  { label: '量縮收復支撐（提前觀察）', gate: 'lin_bojin', codes: [], mode: 'trend_hold', view: 'support_recovery' },
   { label: '強哥＋趨勢持有60日', gate: 'lin_bojin', codes: [], mode: 'trend_hold' },
   { label: '強哥＋籌碼集中', gate: 'lin_bojin', codes: ['holder_concentration'], mode: 'trend_hold' },
   { label: '週線買點＋趨勢模板', gate: 'weekly', codes: ['trend_template'] },
@@ -165,13 +177,28 @@ const COMBINATION_PRESETS = [
   { label: '週線結構＋支撐轉強', gate: 'reclaim', codes: ['weekly_structure'] },
   { label: '週線結構＋W 底買點', gate: 'w_bottom', codes: ['weekly_structure'] },
 ]
-function applyCombination(preset) {
+const isPresetActive = (preset) => form.gate === preset.gate && (!preset.mode || form.mode === preset.mode)
+  && form.combine_logic === 'all' && form.ranking === 'rs'
+  && form.combine.length === preset.codes.length && preset.codes.every((code) => form.combine.includes(code))
+  && view.value === (preset.view || 'all')
+async function applyCombination(preset) {
+  // 先讓舊請求失效，避免切換途中收到的舊結果把觀察檢視重設。
+  ++seq
+  clearTimeout(timer)
+  loading.value = true
   if (preset.mode) form.mode = preset.mode
   form.gate = preset.gate
   form.combine = [...preset.codes]
   form.combine_logic = 'all'
   form.ranking = 'rs'
-  view.value = 'all'
+  view.value = preset.view || 'all'
+  // 等條件 watch 排定的計時器後，再由 load 清除它；每次點選只送一個新請求。
+  await nextTick()
+  const refreshed = await load()
+  if (refreshed && preset.view === 'support_recovery' && view.value === preset.view && activeTab.value === 'today') {
+    await nextTick()
+    listHead.value?.scrollIntoView({ behavior: 'auto', block: 'start' })
+  }
 }
 const isMomentum = computed(() => form.mode !== 'classic')
 const gateInfo = computed(() => GATES.find((g) => g.value === form.gate) || GATES[0])
@@ -213,9 +240,12 @@ async function load() {
     if (id === seq) {
       result.value = data
       loadedParams.value = params
+      return true
     }
+    return false
   } catch (e) {
     if (id === seq) ElMessage.error('今日決策載入失敗：' + (e?.response?.data?.detail || e.message))
+    return false
   } finally {
     if (id === seq) loading.value = false
   }
@@ -278,7 +308,7 @@ function calibrationName(key) {
 
 const MODE_LABELS = { momentum: '動能模式', trend_hold: '趨勢持有', classic: '原始規則' }
 const VIEW_LABELS = { selected: '本次入選', ready: '全部可執行', momentum: '通過動能篩選', consensus: '雙策略共識',
-  waiting: '等待確認', all: '全部候選' }
+  waiting: '等待確認', observation: '提前觀察', support_recovery: '量縮收復支撐', all: '全部候選' }
 // 進場條件（後端 entry_conditions）：等待確認的訊號要發生什麼事才會變成可執行；隔日盤中買進的觸發價、可執行型態突破的隔日開盤
 const firstCond = (x) => (x.entry_conditions || [])[0] || {}
 const condText = (x) => (x.entry_conditions || []).map((c) => `${c.label}：${c.lines.join('；')}`).join('｜')
@@ -321,6 +351,14 @@ function downloadXlsx() {
       ['週壓力下緣', (x) => xnum(linInfo(x).observation?.pressure_band?.low ?? linInfo(x).pressure_band?.low), 12, PRICE],
       ['週壓力上緣', (x) => xnum(linInfo(x).observation?.pressure_band?.high ?? linInfo(x).pressure_band?.high), 12, PRICE],
       ['週壓力測試次數', (x) => xnum(linInfo(x).observation?.pressure_band?.touch_count ?? linInfo(x).pressure_band?.touch_count, 0), 16],
+      ['收復支撐', (x) => xnum(supportObservation(x)?.support), 12, PRICE],
+      ['支撐收復訊號日', (x) => supportObservation(x)?.signal_date || '', 16],
+      ['上影測壓日期', (x) => supportObservation(x)?.test_date || '', 14],
+      ['測壓高點（觀察）', (x) => xnum(supportObservation(x)?.test_high), 18, PRICE],
+      ['訊號高點（觀察）', (x) => xnum(supportObservation(x)?.signal_high), 18, PRICE],
+      ['訊號低點（觀察）', (x) => xnum(supportObservation(x)?.signal_low), 18, PRICE],
+      ['支撐後續確認', (x) => supportObservation(x)?.confirmation || '', 60],
+      ['量能與交易限制提醒', (x) => supportObservation(x)?.volume_note || '', 60],
       ['強哥條件檢查', (x) => (linInfo(x).checks || []).map((c) => `${c.label}：${c.passed ? '通過' : '未通過'}（${c.reason}）`).join('；'), 80],
     ] : []),
     ...(r.growth_quality_config ? [
@@ -349,10 +387,10 @@ function downloadXlsx() {
     ['EPS YoY%', (x) => xnum(x.eps_yoy, 1), 9],
     ['營收YoY%', (x) => xnum(x.rev_yoy, 1), 9],
     ['毛利率季增(百分點)', (x) => xnum(x.gross_margin_chg, 1), 10],
-    ['參考進場', (x) => isLinObservation(x) ? '' : xnum(price(x).entry), 9, PRICE],
-    ['進場方式', (x) => isLinObservation(x) ? '等待買點確認' : (isBuyStop(price(x)) ? '隔日盤中過觸發價' : '隔日開盤'), 14],
-    ['追價上限', (x) => isLinObservation(x) ? '' : xnum(price(x).max_entry), 9, PRICE],
-    ['停損', (x) => isLinObservation(x) ? '' : xnum(price(x).stop), 9, PRICE],
+    ['參考進場', (x) => isLinPending(x) ? '' : xnum(price(x).entry), 9, PRICE],
+    ['進場方式', (x) => isLinPending(x) ? '等待買點確認' : (isBuyStop(price(x)) ? '隔日盤中過觸發價' : '隔日開盤'), 14],
+    ['追價上限', (x) => isLinPending(x) ? '' : xnum(price(x).max_entry), 9, PRICE],
+    ['停損', (x) => isLinPending(x) ? '' : xnum(price(x).stop), 9, PRICE],
     ['目標', (x) => xnum(price(x).target), 9, PRICE],
     ['R/R', (x) => xnum(price(x).rr), 6],
     ['出場規則', (x) => price(x).exit_rule || '', 26],
@@ -524,7 +562,10 @@ onMounted(() => { load(); loadThemeOptions() })
           <el-checkbox v-for="c in combinationOptions" :key="c.value" :value="c.value">{{ c.label }}</el-checkbox>
         </el-checkbox-group>
         <div class="theme-shortcuts">
-          <el-button v-for="preset in COMBINATION_PRESETS" :key="preset.label" size="small" @click="applyCombination(preset)">{{ preset.label }}</el-button>
+          <el-button v-for="preset in COMBINATION_PRESETS" :key="preset.label" size="small"
+                     :type="isPresetActive(preset) ? 'primary' : ''" :plain="!isPresetActive(preset)"
+                     :aria-pressed="isPresetActive(preset)" :loading="loading && isPresetActive(preset)"
+                     @click="applyCombination(preset)">{{ preset.label }}</el-button>
         </div>
         <div class="muted small">主買點必須可執行，再檢查勾選的加強條件；預設全部符合。週線結構只認已收完且有效的突破，接近壓力或本週暫時突破不算。籌碼集中比較最新與四期前比例，需五期完整週資料；近四期淨增加與連續增加不同。支撐轉強、W 底請選為主買點，再搭配週線條件。</div>
       </div>
@@ -676,7 +717,7 @@ onMounted(() => { load(); loadThemeOptions() })
       現有持股的估計停損風險已用盡總額度，暫不新增部位。帳戶淨值與可用現金請填入實際金額（會記在這台瀏覽器）；現有持股風險暫估市值的 8%。
     </el-alert>
 
-    <div class="list-head">
+    <div ref="listHead" class="list-head">
       <div class="list-actions">
         <el-radio-group v-model="view" size="small">
           <el-radio-button value="selected">本次入選</el-radio-button>
@@ -685,6 +726,7 @@ onMounted(() => { load(); loadThemeOptions() })
           <el-radio-button value="consensus">雙策略共識</el-radio-button>
           <el-radio-button value="waiting">等待確認</el-radio-button>
           <el-radio-button v-if="linConfig" value="observation">提前觀察（{{ observationCount }}）</el-radio-button>
+          <el-radio-button v-if="linConfig" value="support_recovery">量縮收復支撐（{{ supportObservationCount }}）</el-radio-button>
           <el-radio-button value="all">全部候選</el-radio-button>
         </el-radio-group>
         <el-button size="small" type="success" :disabled="loading || !canExport"
@@ -696,6 +738,12 @@ onMounted(() => { load(); loadThemeOptions() })
         <template v-if="result.total > result.count">（候選共 {{ result.total }} 檔，表格只列前 {{ result.count }} 檔）</template>
       </span>
     </div>
+
+    <el-alert v-if="view === 'support_recovery' && linConfig" type="info" :closable="false" show-icon class="notice"
+              :title="`量縮收復支撐｜提前觀察 ${supportObservationCount} 檔`">
+      上影線測壓後，量縮回檔並收復前五日支撐；需 RS≥70、站上往上的20日線、最新單季EPS&gt;0。
+      候選依行情日及目前篩選條件更新；僅列提前觀察，尚未確認買點、不配置部位。完整定義可展開下方「查看條件定義」。
+    </el-alert>
 
     <LinBojinGuide v-if="linConfig" :config="linConfig" />
 
@@ -763,13 +811,26 @@ onMounted(() => { load(); loadThemeOptions() })
         <template #default="{ row }">
           <b>{{ linInfo(row).setup_label || '尚無此買點' }}</b>
           <div v-if="isLinObservation(row)" class="small observation-note">
-            <el-tag size="small" type="warning" effect="plain">{{ linInfo(row).observation.label }}・尚未確認買點</el-tag>
-            <div>週壓力 {{ num(linInfo(row).observation.pressure_band.low, 2) }}～{{ num(linInfo(row).observation.pressure_band.high, 2) }}・{{ linInfo(row).observation.pressure_band.touch_count }} 次測試</div>
-            <div>距壓力上緣 {{ pct(linInfo(row).observation.extension_pct, 2) }}・觀察量比 {{ num(linInfo(row).observation.volume_ratio, 2) }}；不配置部位</div>
+            <div v-for="observed in linObservations(row)" :key="observed.type">
+              <el-tag size="small" type="warning" effect="plain">{{ observed.label }}・尚未確認買點</el-tag>
+              <template v-if="observed.type === 'support_recovery'">
+                <div>收復支撐 {{ num(observed.support, 2) }}・訊號 {{ observed.signal_date }}・追蹤第 {{ observed.age_days }} 日</div>
+                <div>上影測壓 {{ observed.test_date }}・高點 {{ num(observed.test_high, 2) }}</div>
+                <div>訊號高／低 {{ num(observed.signal_high, 2) }}／{{ num(observed.signal_low, 2) }}・訊號量比 {{ num(observed.volume_ratio, 2) }}</div>
+                <div>{{ observed.confirmation }}</div>
+                <div class="muted">{{ observed.volume_note }}</div>
+              </template>
+              <template v-else-if="observed.pressure_band">
+                <div>週壓力 {{ num(observed.pressure_band.low, 2) }}～{{ num(observed.pressure_band.high, 2) }}・{{ observed.pressure_band.touch_count }} 次測試</div>
+                <div>距壓力上緣 {{ pct(observed.extension_pct, 2) }}・觀察量比 {{ num(observed.volume_ratio, 2) }}；不配置部位</div>
+              </template>
+            </div>
           </div>
           <div v-else-if="linInfo(row).pressure_band" class="small">週壓力 {{ num(linInfo(row).pressure_band.low, 2) }}～{{ num(linInfo(row).pressure_band.high, 2) }}・{{ linInfo(row).pressure_band.touch_count }} 次測試</div>
-          <div class="small">{{ linInfo(row).pattern_name }}・頸線 {{ num(linInfo(row).neckline, 2) }}</div>
-          <div class="small">距頸線 {{ pct(linInfo(row).extension_pct, 2) }}・量比 {{ num(linInfo(row).volume_ratio, 2) }}</div>
+          <template v-if="linInfo(row).neckline != null">
+            <div class="small">{{ linInfo(row).pattern_name }}・頸線 {{ num(linInfo(row).neckline, 2) }}</div>
+            <div class="small">距頸線 {{ pct(linInfo(row).extension_pct, 2) }}・量比 {{ num(linInfo(row).volume_ratio, 2) }}</div>
+          </template>
           <div v-if="linInfo(row).breakout_date" class="small muted">突破 {{ linInfo(row).breakout_date }}・第 {{ linInfo(row).age_days }} 個交易日</div>
           <div v-for="c in linInfo(row).checks || []" :key="c.label" class="small" :class="c.passed ? 'down' : 'muted'">
             {{ c.passed ? '✓' : '待確認' }} {{ c.label }}（{{ c.reason }}）
@@ -795,7 +856,7 @@ onMounted(() => { load(); loadThemeOptions() })
       </el-table-column>
       <el-table-column label="交易計畫" width="170">
         <template #default="{ row }">
-          <template v-if="isLinObservation(row)">
+          <template v-if="isLinPending(row)">
             <div class="muted">提前觀察，尚未確認買點</div>
             <div class="small muted">確認後再產生進場與停損計畫；目前不配置部位</div>
           </template>
@@ -965,7 +1026,7 @@ h2 { margin: 0 0 4px; font-size: 24px; }
 .summary.consensus { border-left: 4px solid #e6a23c; }
 .summary.meta { border-left: 4px solid #606266; cursor: default; }
 .notice { margin-bottom: 10px; }
-.list-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 10px 0; flex-wrap: wrap; }
+.list-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 10px 0; flex-wrap: wrap; scroll-margin-top: 80px; }
 .list-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .strategy-line { display: grid; grid-template-columns: minmax(72px, max-content) 38px 1fr; align-items: center; gap: 5px; margin: 3px 0; }
 .consensus-text { color: #e6a23c; font-size: 12px; margin-top: 4px; }
