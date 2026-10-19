@@ -186,6 +186,7 @@ def run_chunk(payload):
     for sid, g in G["bars"].items():
         bars = g
         m = meta.get(sid, {})
+        near_cache = {}                                  # 強哥頸線鎖定：同一檔逐日沿用各日的等待突破型態
         for j, bar in enumerate(bars):
             t = bar["trade_date"]
             if t not in sig_set or j + 1 < 30:
@@ -220,7 +221,8 @@ def run_chunk(payload):
                 strategies.append(weekly)
             strategies += decision_center._buy_stop_strategies(win)       # 支撐轉強、W 底測右底
             setup = decision_center.lin_bojin.analyze(
-                bars[max(0, j - decision_center.lin_bojin.HISTORY_BARS + 1):j + 1], snap.get("rs_rating"))
+                bars[max(0, j - decision_center.lin_bojin.HISTORY_BARS + 1):j + 1], snap.get("rs_rating"),
+                near_cache=near_cache)
             if setup:
                 strategies.append(setup)
             if strategies:

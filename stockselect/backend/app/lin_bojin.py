@@ -1,18 +1,21 @@
 """強哥選股條件：依使用者提供的日線／週線圖卡歸納，並非本人公開公式。
 
 沿用多方波段型態的頸線；逐日重播時只把當日以前的 K 棒交給偵測器，
-突破後固定當時頸線，避免用後來的走勢重畫壓力。所有數值是研究參數。
+突破後固定當時頸線，避免用後來的走勢重畫壓力。突破前也鎖定等待中的頸線：
+型態偵測只看最近幾個波段低點，突破前墊高的低點會讓型態重算而消失（例：1815 富喬 2026-10-16）。
+所有數值是研究參數。
 """
 from . import support_recovery, swings, weekly_resistance
 from .execution import day, number
 
 KEY = "lin_bojin"
 LABEL = "強哥選股條件（圖卡研究版）"
-VERSION = "lin-bojin-cards-v3"
+VERSION = "lin-bojin-cards-v4"
 SOURCE = "依使用者提供的日線／週線圖卡歸納；數值為系統研究設定，非強哥本人官方公式"
 BARS_NEEDED = 70
 HISTORY_BARS = 320
 TRACK_DAYS = 20
+LOCK_DAYS = 10
 CHASE_PCT = .05
 FAIL_PCT = .02
 NEAR_PCT = .05
@@ -29,6 +32,7 @@ RULES = [
     {"item": "量縮收復支撐（實驗）", "rule": "RS≥70、站上往上的20日線；近3～15日曾有上影≥振幅50%、實體≤40%的測壓棒，測壓高點不低於此前10日高點且當時20日收盤漲幅≥10%。支撐取訊號日前5日低點、須在測壓後形成；低點短暫跌破支撐≤3%、收盤站回，紅K實體≥50%、收在振幅上方30%，量≤此前20日均量0.6倍。"},
     {"item": "支撐觀察追蹤", "rule": "訊號日起至後續3個交易日固定支撐、訊號高低點與測壓紀錄；後續低點觸及訊號低點或收盤跌回支撐即失效。越過訊號高點仍須核對成交價至訊號低點的8%結構風險與交易限制；僅列觀察、不配置部位。量比未區分處置／正常撮合，不把量縮當作惜售證據。通知仍須最新單季EPS>0及20日均額≥2千萬。"},
     {"item": "首次突破", "rule": "當日收盤由頸線下穿越到頸線上；量 ≥ 前 20 日均量 1.5 倍，紅 K 實體 ≥ 全振幅 50%、收盤位於振幅上方 30%。型態偵測另要求突破量通過其前 50 日均量門檻。"},
+    {"item": "頸線鎖定", "rule": "前 10 個交易日內曾列「等待頸線突破」的日線頸線，之後就算墊高的波段低點讓型態重算而消失，仍沿用該頸線：鎖定後第一次收盤站上、量 ≥ 前 50 日均量 1.5 倍，視同首次突破，其餘確認條件不變。"},
     {"item": "回測再轉強", "rule": "突破後第 2～20 個交易日，最近三根 K 棒至少一根低點在頸線 −2%～+3%；今日紅 K 收盤高於昨日最高價、位於振幅上方 30%，量 ≥ 前 20 日均量 1.2 倍。"},
     {"item": "跳空突破", "rule": "符合首次突破，另需昨日收盤未過頸線；今日開盤與最低價均高於昨日最高價，最低價也高於頸線，缺口當日未回補。"},
     {"item": "等待與作廢", "rule": "頸線下 5% 內可列等待突破；有效突破後尚未回測轉強則等待。突破後任一收盤低於固定頸線 2%，該次突破作廢。"},
@@ -68,6 +72,26 @@ def _near(bars):
             setup = swings.ALL[key](bars[-150:], recent=1)
             if setup and setup.get("dir") != "bear":
                 yield setup
+
+
+def _locked(bars, end, near_at):
+    """第 end 根收盤越過前 LOCK_DAYS 日內曾等待突破的頸線；near_at(d) 只用第 d 根以前的 K 棒。"""
+    cur, prev = bars[end], bars[end - 1]
+    if cur["close"] <= prev["close"] or _volume_ratio(bars[:end + 1], 50) < VOLUME_MULT:
+        return []
+    latest = {}
+    for d in range(max(1, end - LOCK_DAYS), end):
+        # 等待中的頸線在當日收盤上方 5% 內；收盤離今天的穿越區間太遠就不用重跑偵測器。
+        if not (1 - NEAR_PCT) * prev["close"] <= bars[d]["close"] < cur["close"]:
+            continue
+        for setup in near_at(d):
+            pivot = number(setup.get("neckline"))
+            if pivot and prev["close"] <= pivot < cur["close"]:
+                latest[pivot] = (d, setup)
+    return [{**setup, "neckline": pivot, "breakout_date": _iso(cur["trade_date"]),
+             "locked_from": _iso(bars[d]["trade_date"])}
+            for pivot, (d, setup) in latest.items()
+            if all(b["close"] <= pivot for b in bars[d + 1:end])]  # 鎖定後已收盤站上過就不是首次突破
 
 
 def _evaluate(bars, setup, age, rs, factor):
@@ -115,8 +139,10 @@ def _evaluate(bars, setup, age, rs, factor):
     score = round(30 + min(ratio / 2.5, 1) * 20 + max(0, min((rs or 0) / 100, 1)) * 20
                   + position * 10 + (10 if trend else 0) + (10 if 0 <= extension <= CHASE_PCT else 0), 1)
     info = {"version": VERSION, "setup_type": event, "setup_label": EVENTS[event],
-            "pattern_name": weekly_resistance.LABEL if setup["pattern"] == weekly_resistance.PATTERN else
-                swings.PATTERN_NAMES.get(setup["pattern"], setup["pattern"]),
+            "pattern_name": (weekly_resistance.LABEL if setup["pattern"] == weekly_resistance.PATTERN else
+                             swings.PATTERN_NAMES.get(setup["pattern"], setup["pattern"]))
+            + ("（鎖定頸線）" if setup.get("locked_from") else ""),
+            "locked_from": setup.get("locked_from"),
             "neckline": round(pivot / factor, 2), "breakout_date": setup.get("breakout_date") if age >= 0 else None,
             "age_days": age if age >= 0 else None, "extension_pct": round(extension * 100, 2),
             "volume_ratio": round(ratio, 2), "close_position_pct": round(position * 100, 1),
@@ -137,8 +163,11 @@ def _evaluate(bars, setup, age, rs, factor):
             "parts": {}, "pattern_prior": None, "lin_bojin": info}
 
 
-def analyze(bars, rs_rating=None):
-    """輸入僅截至掃描日的還原日 K；回傳最佳買點或等待狀態，不使用外部／未來資料。"""
+def analyze(bars, rs_rating=None, near_cache=None):
+    """輸入僅截至掃描日的還原日 K；回傳最佳買點或等待狀態，不使用外部／未來資料。
+
+    near_cache：同一檔逐日重播時沿用的 {日期: 當日等待突破的型態}，回測用；預設每次重算。
+    """
     bars = bars[-HISTORY_BARS:]
     if len(bars) < BARS_NEEDED:
         return None
@@ -169,6 +198,14 @@ def analyze(bars, rs_rating=None):
             week_cache[key] = weekly_resistance.bands(prefix)
         return week_cache[key]
 
+    near_cache = {} if near_cache is None else near_cache
+
+    def near_at(i):
+        key = _iso(normalized[i]["trade_date"])
+        if key not in near_cache:
+            near_cache[key] = list(_near(normalized[:i + 1]))
+        return near_cache[key]
+
     options = []
     # 當日突破、以及過去 20 個交易日的有效突破。每次都只用那一天以前的前綴。
     for age in range(min(TRACK_DAYS, min(150, len(normalized)) - BARS_NEEDED) + 1):
@@ -179,15 +216,18 @@ def analyze(bars, rs_rating=None):
             if (spread <= 0 or (last["close"] - last["open"]) / spread < .5
                     or (last["close"] - last["low"]) / spread < .7):
                 continue  # 回測買點的起點也必須是當時已確認的放量長紅突破。
+        if _volume_ratio(prefix) < VOLUME_MULT:
+            continue  # 突破日量須 ≥ 前 20 日均量 1.5 倍，與型態無關，先擋掉再跑偵測器。
         # 原日線分支仍以掃描日150根窗口的前綴重播；新增週線分支才使用320根歷史。
-        for setup in _confirmed(prefix[-(150 - age):]) + weekly_resistance.confirmed(prefix, known_bands(prefix)):
-            if _volume_ratio(prefix) < VOLUME_MULT:
-                continue
+        setups = _confirmed(prefix[-(150 - age):]) + weekly_resistance.confirmed(prefix, known_bands(prefix))
+        seen = {number(s.get("neckline")) for s in setups}
+        setups += [s for s in _locked(normalized, len(prefix) - 1, near_at) if s["neckline"] not in seen]
+        for setup in setups:
             result = _evaluate(normalized, setup, age, rs, factor)
             if result:
                 options.append(result)
     if not options:
-        for setup in _near(normalized):
+        for setup in near_at(len(normalized) - 1):
             result = _evaluate(normalized, setup, -1, rs, factor)
             if result:
                 options.append(result)

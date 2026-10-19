@@ -29,6 +29,13 @@ def retest():
                      bar(83, 100.8, 103.5, 100.5, 103, volume=1_400_000)]
 
 
+def washed():
+    # 79、80 日收在頸線 100 下方等待突破；83 日墊高的低點 89 到 86 日才確認，雙重底重算後消失；87 日帶量長紅越過 100。
+    return base()[:80] + [bar(80, 98.6, 99.4, 96.5, 97), bar(81, 97, 97.4, 93.5, 94), bar(82, 94, 94.4, 90.5, 91),
+                          bar(83, 91, 91.4, 89, 90), bar(84, 90, 92.5, 89.6, 92), bar(85, 92, 95.4, 91.6, 95),
+                          bar(86, 95, 97.4, 94.6, 97), bar(87, 97.5, 103.5, 97, 103, volume=2_000_000)]
+
+
 EMPTY = {"items": [], "stock_ids": set(), "industry_counts": {}}
 
 
@@ -119,6 +126,45 @@ class LinBojinTest(TestCase):
             lin.analyze(rows, 90)
         self.assertIn(rows[80]["trade_date"], detected_dates)
         self.assertEqual(rows, original)
+
+    def test_locked_neckline_catches_breakout_after_pattern_resets(self):
+        rows = washed()
+        seen = []
+        real = lin._near
+
+        def record(prefix):
+            seen.append(prefix[-1]["trade_date"])
+            return real(prefix)
+
+        # 當天偵測器已找不到型態（1815 富喬 2026-10-16 的情況），只剩前幾天鎖定的頸線。
+        with patch.object(lin, "_confirmed", return_value=[]), patch.object(lin, "_near", side_effect=record):
+            result = lin.analyze(rows, 90)
+        self.assertEqual((result["status"], result["stage"]), ("priority", "first"))
+        self.assertEqual(result["lin_bojin"]["neckline"], 100)
+        self.assertEqual(result["lin_bojin"]["locked_from"], rows[86]["trade_date"].isoformat())
+        self.assertIn("鎖定頸線", result["pattern_name"])
+        self.assertTrue(seen and max(seen) < rows[87]["trade_date"])   # 鎖定只看突破日以前的等待狀態
+        with patch.object(lin, "_confirmed", return_value=[]), patch.object(lin, "LOCK_DAYS", 0):
+            self.assertIsNone(lin.analyze(rows, 90))
+
+    def test_lock_window_volume_and_first_close_rules(self):
+        rows = washed()
+        near = lambda d: [{"pattern": "double_bottom", "neckline": 100.0}] if d == 80 else []  # noqa: E731
+        self.assertEqual([s["locked_from"] for s in lin._locked(rows, 87, near)], [rows[80]["trade_date"].isoformat()])
+        with patch.object(lin, "LOCK_DAYS", 6):
+            self.assertEqual(lin._locked(rows, 87, near), [])            # 7 個交易日前的頸線已過期
+        quiet = washed()
+        quiet[87]["volume"] = 1_000_000
+        self.assertEqual(lin._locked(quiet, 87, near), [])               # 沒有前 50 日均量 1.5 倍
+        rows[84] = bar(84, 92, 101, 91.6, 100.5)
+        self.assertEqual(lin._locked(rows, 87, near), [])                # 鎖定後已收盤站上過，不是首次突破
+
+    def test_shared_near_cache_gives_same_results_as_fresh_replay(self):
+        rows = washed()
+        cache = {}
+        for end in range(75, len(rows) + 1):
+            with self.subTest(day=end - 1):
+                self.assertEqual(lin.analyze(rows[:end], 90, near_cache=cache), lin.analyze(rows[:end], 90))
 
     def test_adjusted_coordinates_plan_and_execution_cap_agree(self):
         rows = base()
